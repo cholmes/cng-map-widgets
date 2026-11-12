@@ -9,6 +9,7 @@ import {
   dedupeByNameCountryLevel,
   capPerCountryLevelGroup,
   applyDiversity,
+  MAX_COLLAPSED_ROWS,
 } from '../src/ranking.js';
 
 const DEFAULT_CLASSES = ['exact', 'prefix', 'word-prefix'];
@@ -221,7 +222,7 @@ test('scoreOf returns a value in [0,1] and rewards exact+inside over substring+o
 
 test('dedupeByNameCountryLevel: collapses the reported bug -- eight identical "Bag"/IND/ADM4 rows become one, annotated with moreCount', () => {
   const villages = Array.from({ length: 8 }, (_, i) => ({
-    nameNorm: 'bag', country: 'IND', level: 4, featureId: `IND${i}`, areaKm2: undefined,
+    name: 'Bag', nameNorm: 'bag', country: 'IND', level: 4, featureId: `IND${i}`, areaKm2: undefined,
   }));
   const deduped = dedupeByNameCountryLevel(villages);
   assert.equal(deduped.length, 1, 'eight identical (nameNorm, country, level) rows collapse to one');
@@ -230,14 +231,46 @@ test('dedupeByNameCountryLevel: collapses the reported bug -- eight identical "B
 
 test('dedupeByNameCountryLevel: keeps the largest-area row as the representative', () => {
   const rows = [
-    { nameNorm: 'bag', country: 'IND', level: 4, featureId: 'small', areaKm2: 1.2 },
-    { nameNorm: 'bag', country: 'IND', level: 4, featureId: 'big', areaKm2: 40.9 },
-    { nameNorm: 'bag', country: 'IND', level: 4, featureId: 'no-area', areaKm2: undefined },
+    { name: 'Bag', nameNorm: 'bag', country: 'IND', level: 4, featureId: 'small', areaKm2: 1.2 },
+    { name: 'Bag', nameNorm: 'bag', country: 'IND', level: 4, featureId: 'big', areaKm2: 40.9 },
+    { name: 'Bag', nameNorm: 'bag', country: 'IND', level: 4, featureId: 'no-area', areaKm2: undefined },
   ];
   const deduped = dedupeByNameCountryLevel(rows);
   assert.equal(deduped.length, 1);
   assert.equal(deduped[0].featureId, 'big', 'the row with the largest area_km2 is kept, even though it was not first in input order');
   assert.equal(deduped[0].moreCount, 2);
+});
+
+// --- Expandable "+N more" follow-up (task 2) ---------------------------
+
+test('dedupeByNameCountryLevel: collapsed rows carry minimal (name, featureId, level) info, excluding the representative', () => {
+  const villages = Array.from({ length: 8 }, (_, i) => ({
+    name: 'Bag', nameNorm: 'bag', country: 'IND', level: 4, featureId: `IND${i}`, areaKm2: undefined,
+  }));
+  const deduped = dedupeByNameCountryLevel(villages);
+  assert.equal(deduped.length, 1);
+  assert.equal(deduped[0].moreCount, 7);
+  assert.equal(deduped[0].collapsed.length, 7, 'all seven collapsed rows are kept (under the cap)');
+  assert.ok(deduped[0].collapsed.every((c) => typeof c.name === 'string' && typeof c.featureId === 'string' && c.level === 4));
+  assert.ok(!deduped[0].collapsed.some((c) => c.featureId === deduped[0].featureId), 'the kept representative itself is never duplicated into collapsed[]');
+  assert.deepEqual(Object.keys(deduped[0].collapsed[0]).sort(), ['featureId', 'level', 'name'], 'collapsed entries carry exactly the minimal fields, nothing extra');
+});
+
+test('dedupeByNameCountryLevel: collapsed[] is capped at MAX_COLLAPSED_ROWS even though moreCount reports the true, uncapped count', () => {
+  const total = MAX_COLLAPSED_ROWS + 5;
+  const villages = Array.from({ length: total }, (_, i) => ({
+    name: 'Bag', nameNorm: 'bag', country: 'IND', level: 4, featureId: `IND${i}`, areaKm2: undefined,
+  }));
+  const deduped = dedupeByNameCountryLevel(villages);
+  assert.equal(deduped.length, 1);
+  assert.equal(deduped[0].moreCount, total - 1, 'moreCount is never capped');
+  assert.equal(deduped[0].collapsed.length, MAX_COLLAPSED_ROWS, 'collapsed[] is capped');
+});
+
+test('dedupeByNameCountryLevel: a row that collapses nothing has no collapsed[] at all', () => {
+  const rows = [{ name: 'Springfield', nameNorm: 'springfield', country: 'USA', level: 4, featureId: 'USA0' }];
+  const deduped = dedupeByNameCountryLevel(rows);
+  assert.equal(deduped[0].collapsed, undefined);
 });
 
 test('dedupeByNameCountryLevel: distinct names, countries, or levels are never collapsed together', () => {

@@ -36,6 +36,13 @@ export const DEFAULT_DIVERSITY = {
   maxPerGroup: 3,
 };
 
+/** How many collapsed rows `dedupeByNameCountryLevel` attaches to a
+ *  dedupe group's representative row, as `collapsed[]` (expandable "+N
+ *  more" follow-up, task 2). `moreCount` itself is never capped -- it is
+ *  always the group's true collapsed count -- only the array of
+ *  individually-addressable rows a UI can expand into is. */
+export const MAX_COLLAPSED_ROWS = 10;
+
 /**
  * Classify how `queryNorm` matches `nameNorm`, in priority order
  * (exact > prefix > word-prefix > substring). Returns null if none of the
@@ -334,9 +341,26 @@ export function scoreOf(rank) {
  * named "Bag" in India, ADM4, collapse to one "Bag (+7 more)" row instead
  * of flooding the result list.
  *
- * @template {{ nameNorm: string, country: string, level: number, areaKm2?: number }} T
+ * **Expandable "+N more" follow-up (task 2).** The pre-follow-up version
+ * of this function discarded every collapsed row outright -- `moreCount`
+ * told a UI *how many* were hidden, but gave it nothing to expand into.
+ * Every row collapsed into a group (other than the kept representative),
+ * up to `MAX_COLLAPSED_ROWS` of them, is now kept too, reduced to the
+ * minimal fields a UI needs to render and select one directly -- `name`,
+ * `featureId`, `level` -- as `collapsed[]` on the representative.
+ * `country` and `nameNorm` are deliberately omitted: they are, by
+ * construction, identical to the representative's own for every row in
+ * the group, so a UI reconstructing a selectable result from a collapsed
+ * entry gets them from the parent row it expanded, not duplicated here.
+ * `moreCount` itself is never capped by `MAX_COLLAPSED_ROWS` -- it stays
+ * the group's true count -- only `collapsed` (the array of individually
+ * expandable rows) is, so an absurdly large group (hundreds of
+ * identically-named hamlets) still reports its real size without forcing
+ * every one of them into memory/the DOM.
+ *
+ * @template {{ nameNorm: string, country: string, level: number, name: string, featureId: string, areaKm2?: number }} T
  * @param {readonly T[]} sorted
- * @returns {(T & { moreCount?: number })[]}
+ * @returns {(T & { moreCount?: number, collapsed?: { name: string, featureId: string, level: number }[] })[]}
  */
 export function dedupeByNameCountryLevel(sorted) {
   const dedupeKey = (r) => `${r.nameNorm}\u0000${r.country}\u0000${r.level}`;
@@ -366,7 +390,15 @@ export function dedupeByNameCountryLevel(sorted) {
         bestArea = area;
       }
     }
-    out.push(group.length > 1 ? { ...rep, moreCount: group.length - 1 } : rep);
+    if (group.length > 1) {
+      const collapsed = group
+        .filter((g) => g !== rep)
+        .slice(0, MAX_COLLAPSED_ROWS)
+        .map((g) => ({ name: g.name, featureId: g.featureId, level: g.level }));
+      out.push({ ...rep, moreCount: group.length - 1, collapsed });
+    } else {
+      out.push(rep);
+    }
   }
   return out;
 }
@@ -404,10 +436,15 @@ export function capPerCountryLevelGroup(rows, maxPerGroup) {
  * capped-out groups make room for the next-ranked *distinct* groups rather
  * than shrinking the result count.
  *
- * @template {{ nameNorm: string, country: string, level: number, areaKm2?: number }} T
+ * A row the dedupe step collapses carries its `collapsed[]` siblings
+ * through capping unchanged -- `capPerCountryLevelGroup` only ever drops
+ * whole (already-deduped) rows, never reaches inside one, so a group that
+ * survives the cap keeps every collapsed row it had.
+ *
+ * @template {{ nameNorm: string, country: string, level: number, name: string, featureId: string, areaKm2?: number }} T
  * @param {readonly T[]} sorted
  * @param {{ dedupe?: boolean, maxPerGroup?: number|null }} [options]
- * @returns {(T & { moreCount?: number })[]}
+ * @returns {(T & { moreCount?: number, collapsed?: { name: string, featureId: string, level: number }[] })[]}
  */
 export function applyDiversity(sorted, options = {}) {
   const { dedupe = DEFAULT_DIVERSITY.dedupe, maxPerGroup = DEFAULT_DIVERSITY.maxPerGroup } = options;
