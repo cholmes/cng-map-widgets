@@ -155,9 +155,10 @@ export class GeocoderControl {
         this._onPick(Number(li.dataset.index));
       }
     });
-    document.addEventListener('click', (e) => {
+    this._onDocumentClick = (e) => {
       if (!container.contains(e.target)) this._closeList();
-    });
+    };
+    document.addEventListener('click', this._onDocumentClick);
 
     // Progressive select() (design doc §1/§3.2): `'area:upgraded'` fires
     // after `select({ resolution: 'both' })`'s background fetch replaces
@@ -179,6 +180,10 @@ export class GeocoderControl {
   }
 
   onRemove() {
+    if (this._onDocumentClick) {
+      document.removeEventListener('click', this._onDocumentClick);
+      this._onDocumentClick = null;
+    }
     this._unsubscribeUpgrade?.();
     this._outline?.remove();
     this._map = null;
