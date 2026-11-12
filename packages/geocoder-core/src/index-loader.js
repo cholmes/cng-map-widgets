@@ -91,14 +91,12 @@ export async function loadFullIndex(parquetUrl, fetchImpl) {
     });
   }
   const buf = await res.arrayBuffer();
-  const columns = [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS];
   let rows;
   try {
     rows = await hyparquet.parquetReadObjects({ file: buf, compressors });
   } catch (cause) {
     throw new CnmwError('Failed to decode index parquet.', 'INDEX_SCHEMA_MISMATCH', { cause });
   }
-  void columns;
   if (rows.length > 0) assertSchema(rows[0]);
   const nameNorms = rows.map((r) => r.name_norm);
   // Builder guarantee check (design doc §6.3 item 1): ascending, byte-wise.
