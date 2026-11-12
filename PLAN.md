@@ -154,6 +154,17 @@ numbers, recommended file recipe (this doubles as the upstream advocacy doc).
 > version coupling: one pipeline builds both, keyed by `shapeID`.
 
 ### E3 — Geocoder widget *(opus design, sonnet implement)*
+
+> **Design DONE 2026-11-12** — `docs/design/widgets-architecture.md`: Area
+> contract (display vs filter geometry, antimeridian via bboxes[]),
+> declarative DownloadRequest spec shared with the Python QGIS plugin,
+> `@cnmw/*` package design, zero-build CDN packaging (geocoder ~139KB min+gz
+> incl. hyparquet), index interface (plain parquet, byte-wise UTF-8 sort,
+> catalog_version pinning). 13 open items each with a shipping default; two
+> flagged for Chris: (1) one pinned hyparquet version per release train must
+> be CI-enforced (portolan-browser pins 1.26.0, E1 used 1.33.0); (2) if
+> sql.js can't produce valid GeoPackage, gpkg via gdal3.js is 2–8MB and
+> stops being a sane default — E5 must measure before committing.
 `packages/geocoder-core`: framework-agnostic TS — input handling, index
 loading, search, ranking; emits an `Area` (geometry + bbox + metadata).
 `packages/maplibre` + `packages/openlayers`: thin adapters (control +
