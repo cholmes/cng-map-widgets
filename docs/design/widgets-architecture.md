@@ -1136,6 +1136,10 @@ export interface GeocoderOptions {
    *  when the index's declared size is <= `fullLoadMaxBytes`, else `range`. */
   readonly loadStrategy?: 'full' | 'range' | 'auto';   // default 'auto'
   readonly fullLoadMaxBytes?: number;                  // default 5_242_880 (design call #9)
+  /** Range path only: footer tail read size. Default 65_536, widened once on
+   *  a miss. Not hyparquet's 512 KB default, which E1 measured as ~20% of a
+   *  2.5 MB index spent reading metadata. */
+  readonly initialFetchSize?: number;
 
   readonly limit?: number;              // default 10
   readonly minPrefixLength?: number;    // default 1
@@ -1792,6 +1796,17 @@ running in a user's browser changes without anyone publishing anything. The
 build fails if any CDN URL in a `.cdn.js` artifact lacks an exact
 `@major.minor.patch`.
 
+**The version-unification obligation this creates.** Benefit (1) above is real
+only if every `@cnmw` package pins the *same* hyparquet URL — and the
+ecosystem is already divergent: `portolan-browser` has `hyparquet@1.26.0` +
+`hyparquet-compressors@1.1.1`, while E1's harness pinned `1.33.0` + `1.1.3`
+from jsdelivr. So: **one hyparquet version per `@cnmw` release train**, declared
+once in the repo root and injected into every package's alias map by the build,
+with CI failing on a mismatch between any two packages. A consumer stuck on a
+different version repoints it with one import-map line (§4.3) — which is the
+other reason the import map ships. Picking the shared version is a release
+chore, not a design question; the constraint is that it be exactly one.
+
 **The costs, and what pays for them:**
 
 - *CDN availability.* jsdelivr down means our packages fail to load. Paid for by
@@ -2158,10 +2173,18 @@ re-asserted by geocoder-core on load (cheaply, from the footer alone):
    strategy on a file that does not declare it (`INDEX_SCHEMA_MISMATCH`), and
    falls back to `full` with a warning rather than binary-searching an
    undeclared order.
-3. **Row groups.** Target **2,000–4,000 rows per group**. At ~53K rows
-   (ADM0+1+2) that is 14–27 groups. Explicitly *not* one group — the single-
-   row-group layout is the exact pathology E0 found in every tge-labs file and
-   the reason this sidecar exists.
+3. **Row groups — a byte target, not a row count.** Target **100–150 KB per
+   row group**, which at the measured ~53 bytes/row for this schema is ≈2,048
+   rows. E1 measured this directly: at ~49.5K rows, 2,048-row groups beat
+   8,192-row groups on every scripted query — roughly half the latency and
+   half the bytes (106–430 KB vs 429–869 KB on a first query) — with no
+   measured downside, because the binary search over groups is O(log n) either
+   way and the extra statistics cost a few hundred footer bytes. A byte target
+   rather than a row count is what keeps per-query fetch size *constant as the
+   index grows*, which is the only reason the range path is worth having.
+   Explicitly **never one group**: E1's single-row-group variant had to fetch
+   and decode all 2.6 MB for a 3-match query, reproducing at index scale the
+   exact pathology E0 found in every tge-labs file.
 4. **Statistics.** `name_norm` min/max present on every row group and **not
    truncated**. If the writer truncates long values, the builder must flag it in
    the manifest (`stats_truncated: true`) and geocoder-core then widens its
@@ -2174,13 +2197,36 @@ re-asserted by geocoder-core on load (cheaply, from the footer alone):
 7. **Dictionary encoding** on `country`, `source`, `level`, `name_lang`,
    `geometry_ref.file`.
 8. **Size budget.** ≤ 3 MB for the default shipped index (design call #9).
-   geocoder-core's `auto` strategy picks `full` at ≤ 5 MB and `range` above —
-   so the default ships on the full-load path, and the fieldmaps ADM3/4 future
+   E1 measured **2.50 MB** for ADM0+ADM2 (49,530 rows, 7 columns, zstd), so the
+   budget holds with room for ADM1. geocoder-core's `auto` strategy picks
+   `full` at ≤ 5 MB and `range` above — so the default ships on the full-load
+   path, and the fieldmaps ADM3/4 future (E1 extrapolates ~16 MB at 300K rows)
    crosses into `range` without an API change.
-9. **CORS + ranges.** The host must send `Access-Control-Allow-Origin`,
-   `Accept-Ranges: bytes`, and expose `Content-Range` and `Content-Length`
-   via `Access-Control-Expose-Headers`. source.coop does. A 200 response to a
-   `Range` request → `RANGE_NOT_SUPPORTED`, and `auto` degrades to `full`.
+
+9. **Footer read size.** The manifest declares `index.size` and
+   `index.row_groups`, so the range path can read the footer with one exactly-
+   sized tail request. This matters: hyparquet's default speculative footer
+   fetch is 512 KB, which E1 measured as ~20% of the whole 2.5 MB index spent
+   just reading metadata. geocoder-core therefore passes an explicit
+   `initialFetchSize` on the range path — 64 KB, widening once on a miss —
+   rather than taking the default. (The full-load path is unaffected; it
+   fetches the file.)
+
+10. **No null names.** `name` and `name_norm` must be non-null on every row.
+    The builder drops unnamed features and reports the count: E1 found **37 of
+    49,349 CGAZ ADM2 rows have a null `shapeName`** (mostly Turkmenistan, a few
+    Japan units). An unnamed feature cannot be found by name, so excluding it
+    is correct — but the count belongs in the manifest
+    (`dropped_unnamed: 37`) and in the upstream bug report, not silently in a
+    `WHERE` clause.
+11. **CORS + ranges.** The host must send `Access-Control-Allow-Origin`,
+    `Accept-Ranges: bytes`, and expose `Content-Range` and `Content-Length`
+    via `Access-Control-Expose-Headers`. source.coop does. A 200 response to a
+    `Range` request → `RANGE_NOT_SUPPORTED`, and `auto` degrades to `full`.
+    E1's harness needed a custom `serve.py` because `python3 -m http.server`
+    answers a `Range` request with a 200 and the whole file — worth knowing,
+    because that is precisely the failure this check catches, and it fails
+    silently as "the range path is mysteriously slow" rather than as an error.
 
 ### 6.4 Version pinning: `shapeID` + catalog version
 
@@ -2283,8 +2329,8 @@ implementation.
 |---|---|---|---|
 | **O1** | npm scope. `@cnmw` is short (matters in CDN URLs) but cryptic; availability unverified. | an `npm view` check and Chris's preference | **`@cnmw`**, with `@cn-widgets` as fallback. Package *names* (`geocoder-core`, `download-core`, …) are settled either way. |
 | **O2** | `filterVertexCeiling = 10,000`. | E5 measuring per-row point-in-polygon cost at 1k/10k/50k vertices against a real FTW/FIRMS download | **10,000.** Raise it if E5 shows the cost is negligible; the mechanism (auto-simplify + reported `areaDeltaRatio`) does not change either way. |
-| **O3** | `loadStrategy: 'auto'` threshold, 5 MB. | E1's measured cold-focus time for a 3 MB and a 5 MB index on broadband vs. 4G | **5 MB**, per design call #9. If E1 shows 3 MB already misses the 1 s budget on a median connection, drop to 2 MB and make `range` the default for everything. |
-| **O4** | Whether `searchSync` is worth its API surface. | E1's per-keystroke numbers: if async `search()` lands at 20 ms, the extra microtask is noise | **Ship it**, documented as an optimization with a `state`-guarded throw. Cheap to add, expensive to retrofit into a typeahead's render path. |
+| **O3** | ~~`loadStrategy: 'auto'` threshold, 5 MB.~~ **Resolved by E1.** | — | **5 MB, confirmed.** E1: the 2.50 MB index full-loads in 203 ms (8 ms fetch + 196 ms decode, localhost) and answers warm keystrokes in 0.0–0.1 ms; the range path adds round trips for no benefit at this size. Extrapolated, a 300K-row index is ~16 MB and would full-load in ~1.2 s, already past the cold budget — so 5 MB sits correctly between the two. **Residual unknown:** E1's cold number is localhost; the 1 s budget is "on broadband", so the real cold-focus fetch of 2.5 MB over the public path is still unmeasured. Default stands; re-check in E6 against source.coop. |
+| **O4** | ~~Whether `searchSync` is worth its API surface.~~ **Resolved by E1.** | — | **Ship it.** E1 measured warm full-load search at **0.0 ms p50, 0.1 ms p95** — a binary search over an in-memory array. At that cost the promise is not an optimization detail, it *is* the per-keystroke cost, and an `await` per keystroke also forces the caller's render into a later microtask. Keep the `state`-guarded throw. |
 | **O5** | GeoPackage: sql.js vs gdal3.js. The weight gap is ~0.5 MB vs ~2–8 MB. | E5 measuring both wasm payloads and whether a hand-written sql.js GeoPackage writer passes `ogrinfo`/QGIS validation | **sql.js**, writing the GeoPackage tables ourselves. GeoPackage is a documented SQLite schema; we only need the vector-features profile. gdal3.js becomes a second plugin (`@cnmw/format-gdal`) for anyone who wants its other drivers and will pay for them. |
 | **O6** | Non-4326 datasets. Design call #4 makes `Area` 4326-only, but a dataset in 3857 or a UTM zone is common. | whether E6/E7 hit one in practice | **Refuse with `DATASET_CRS_UNSUPPORTED`**, naming the CRS and the `ogr2ogr` command that fixes it. Reprojecting *features* needs proj in core; reprojecting the *area* to the dataset's CRS needs proj too and silently changes what "intersects" means near the edges. Revisit as `@cnmw/reproject` (a thin `proj4` wrapper — `portolan-browser` already depends on `proj4`). |
 | **O7** | Exact clip implementation. `intersects` needs only point-in-polygon; `clip` needs real polygon intersection. | E5 choosing between a ~15 KB `polygon-clipping` dependency in `download-core` vs. requiring `@cnmw/engine-duckdb` | **Ship `clip` as a small opt-in plugin** (`@cnmw/clip`, registering a clipper), so core stays at its 30 KB budget and `clip` does not imply a 3–9 MB DuckDB. Already the shape of §1.4's `dissolver` and §3.4's registration seam. |
@@ -2301,6 +2347,15 @@ implementation.
 
 - Design calls #1–#12, the "near-instant" budgets, the default index URL, and
   the data-source decisions: `PLAN.md`.
+- The index measurements folded into §6.3 and open items O3/O4 — 2.50 MB for
+  49,530 rows, 203 ms cold full-load, 0.0 ms warm keystroke, rg2048 beating
+  rg8192 roughly 2:1, the single-row-group variant re-reading the whole file,
+  hyparquet's 512 KB default footer fetch, the 37 null `shapeName` rows, and
+  the ~16 MB / ~1.2 s extrapolation at 300K rows:
+  `experiments/e1-search-index/RESULTS.md`. That experiment's index is
+  provisional (ADM0+ADM2, built from the tge-labs mirror); the official
+  sidecar comes from the `portolan-mirrors/geoboundaries` catalog, and §6 is
+  the contract it must satisfy.
 - CGAZ single-row-group pathology, the mislabeled ADM1 file, the ~53K feature
   scale, the licensing table, and the fact that every tge-labs file is single-
   row-group: `PLAN.md` and `experiments/e0-data-recon/RESULTS.md`.
