@@ -1,0 +1,18 @@
+{
+  "name": "@cnmw/openlayers",
+  "version": "0.1.0-experiment",
+  "description": "OpenLayers adapter: accessible search combobox control, outline (Area) layer, viewport provider, antimeridian-aware fit, and the EPSG:4326<->view-projection bridge OL needs that MapLibre's GeoJSON-native sources do not.",
+  "type": "module",
+  "sideEffects": false,
+  "private": true,
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "peerDependencies": {
+    "ol": "^10.0.0"
+  },
+  "dependencies": {
+    "@cnmw/spec": "0.1.0-experiment"
+  }
+}
