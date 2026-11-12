@@ -1,0 +1,29 @@
+{
+  "type": "FeatureCollection",
+  "properties": {
+    "note": "Deliberately damaged, for the upload-demo Playwright verification: a Point (dropped as non-areal), and a polygon whose ring has a Z coordinate, a duplicated consecutive point, is left unclosed, and is wound clockwise (exterior should be counterclockwise per RFC 7946). @cnmw/upload-core should repair all of it and report every repair kind."
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "a stray point, not an area" },
+      "geometry": { "type": "Point", "coordinates": [-122.4, 37.8] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "East Bay (needs repair)" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-122.5, 37.7, 10],
+            [-122.5, 37.9, 10],
+            [-122.5, 37.9, 10],
+            [-122.3, 37.9, 10],
+            [-122.3, 37.7, 10]
+          ]
+        ]
+      }
+    }
+  ]
+}

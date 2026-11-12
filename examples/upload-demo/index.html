@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cn-geocoding E4 demo — upload + OpenLayers</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.11.0/ol.css" />
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #panel {
+    position: absolute; top: 10px; right: 10px; z-index: 5; width: 320px;
+    background: rgba(255,255,255,0.96); border: 1px solid #ccc; border-radius: 6px;
+    padding: 10px 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); max-height: 70vh; overflow-y: auto;
+  }
+  #panel h2 { font-size: 13px; margin: 0 0 6px; }
+  #status { font-size: 12px; color: #333; margin-bottom: 8px; }
+  #dropzone {
+    border: 2px dashed #999; border-radius: 6px; padding: 14px; text-align: center;
+    font-size: 12px; color: #555; margin-bottom: 8px; transition: background 0.15s, border-color 0.15s;
+  }
+  #dropzone.dragover { background: #eef5ff; border-color: #1a73e8; color: #1a73e8; }
+  #notices { font-size: 12px; }
+  #notices ul { margin: 4px 0; padding-left: 18px; }
+  #notices li { margin-bottom: 2px; }
+  .notice-warning { color: #8a5a00; }
+  .notice-repair { color: #555; }
+  .ol-control.cnmw-geocoder-ol { z-index: 6; }
+</style>
+<!--
+  Zero-build ESM, no bundler, same pattern as examples/geocoder-demo
+  (design doc §4.3's "published import map", here pointed at this repo's
+  own packages/ since nothing is published yet). `ol` is this package's
+  peer dependency, loaded from a single pinned, exact jsdelivr version
+  via the "ol/" prefix mapping (design doc §4.2: never a floating
+  specifier) -- every `import ... from 'ol/xxx.js'` inside @cnmw/openlayers
+  and in this page resolves through this one entry. `rbush` is `ol`'s own
+  transitive dependency (ol/source/Vector.js's spatial index), not a
+  cnmw one -- pulled pre-bundled (its own `quickselect` dependency
+  included) via jsdelivr's `+esm` endpoint, same technique
+  @cnmw/geocoder-core's cdn.js already uses for hyparquet-compressors.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cnmw/spec": "../../packages/spec/src/index.js",
+    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cnmw/upload-core": "../../packages/upload-core/src/index.js",
+    "@cnmw/openlayers": "../../packages/openlayers/src/index.js",
+    "ol/": "https://cdn.jsdelivr.net/npm/ol@10.11.0/",
+    "rbush": "https://cdn.jsdelivr.net/npm/rbush@4.0.1/+esm"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h2>cn-geocoding — upload + OpenLayers (E4)</h2>
+  <div id="status">Loading map…</div>
+  <div id="dropzone" tabindex="0">Drag &amp; drop a GeoJSON file here (or click to choose one)</div>
+  <input id="file-input" type="file" accept=".geojson,application/geo+json,application/json" style="display:none" />
+  <div id="notices"></div>
+</div>
+
+<script type="module">
+import { Geocoder } from '@cnmw/geocoder-core';
+import { areaFromFile, attachDropTarget } from '@cnmw/upload-core';
+import { GeocoderControl, addAreaLayer } from '@cnmw/openlayers';
+
+import Map from 'ol/Map.js';
+import View from 'ol/View.js';
+import TileLayer from 'ol/layer/Tile.js';
+import OSM from 'ol/source/OSM.js';
+import { fromLonLat } from 'ol/proj.js';
+
+const statusEl = document.getElementById('status');
+const noticesEl = document.getElementById('notices');
+const dropzoneEl = document.getElementById('dropzone');
+const fileInputEl = document.getElementById('file-input');
+
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+function renderWarnings(label, warnings) {
+  if (!warnings || warnings.length === 0) {
+    noticesEl.innerHTML = `<strong>${label}</strong><div>No repairs or simplification were needed.</div>`;
+    return;
+  }
+  const items = warnings
+    .map((w) => {
+      if (w.code === 'repaired') {
+        const repairList = w.repairs.map((r) => `<li class="notice-repair">${r.kind} (count: ${r.count}${r.axis ? `, axis: ${r.axis}` : ''}${r.types ? `, types: ${r.types.join(', ')}` : ''})</li>`).join('');
+        return `<li class="notice-warning">repaired:<ul>${repairList}</ul></li>`;
+      }
+      if (w.code === 'simplified' || w.code === 'degraded-to-bbox') {
+        const d = w.detail;
+        return `<li class="notice-warning">${w.code}: ${d.inputVertices} → ${d.outputVertices} vertices (area delta ${(d.areaDeltaRatio * 100).toFixed(2)}%)</li>`;
+      }
+      if (w.code === 'overlapping-features') return `<li class="notice-warning">overlapping-features: ${w.count} pair(s) overlap</li>`;
+      if (w.code === 'assumed-4326') return `<li class="notice-warning">assumed-4326 (declared: ${w.declared})</li>`;
+      return `<li class="notice-warning">${w.code}</li>`;
+    })
+    .join('');
+  noticesEl.innerHTML = `<strong>${label}</strong><ul>${items}</ul>`;
+}
+
+const map = new Map({
+  target: 'map',
+  layers: [new TileLayer({ source: new OSM() })],
+  view: new View({ center: fromLonLat([-121.9, 37.9]), zoom: 7 }),
+});
+
+// -- Geocoder (search) half: reuses examples/geocoder-demo's provisional
+// index/manifest via a relative path -- see examples/geocoder-demo/
+// build-data.sql for how to rebuild it. Proves @cnmw/openlayers'
+// GeocoderControl + projection bridge against the same data
+// geocoder-demo's MapLibre version uses.
+const geocoder = new Geocoder({
+  indexUrl: '../geocoder-demo/data/index.json',
+  limit: 8,
+});
+geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
+geocoder.on('load', (info) => setStatus(`Index ready: ${info.rows} places, ${info.strategy}-load, ${info.loadMs.toFixed(0)} ms.`));
+geocoder.on('select', ({ result, area, elapsedMs }) => {
+  setStatus(`Selected "${result.name}" (${result.country}, ADM${result.level}) — ${area.vertexCount.display} vertices, ${elapsedMs.toFixed(0)} ms.`);
+  renderWarnings('Search result', area.provenance.simplification ? [{ code: 'simplified', detail: area.provenance.simplification }] : []);
+});
+
+const searchControl = new GeocoderControl({ geocoder, placeholder: 'Search for a place…' });
+map.addControl(searchControl);
+setStatus('Map loaded. Type a place name (e.g. "fiji"), or drop a GeoJSON file below.');
+
+// -- Upload half: a second, distinctly-colored outline layer so a search
+// result and an uploaded area are both visible at once.
+const uploadOutline = addAreaLayer(map, { lineColor: '#e8710a', fillColor: '#e8710a' });
+
+function handleUploadResult(result) {
+  uploadOutline.setArea(result.area);
+  uploadOutline.fit({ padding: 60 });
+  renderWarnings(`Uploaded "${result.area.name}"`, result.warnings);
+  setStatus(`Uploaded "${result.area.name}": ${result.area.provenance.upload.featureCount} feature(s) kept, combine=${result.area.provenance.combine}.`);
+}
+function handleUploadError(err) {
+  setStatus(`Upload error: ${err.code} — ${err.message}`);
+  renderWarnings('Upload failed', []);
+}
+
+attachDropTarget(dropzoneEl, handleUploadResult, {
+  onError: handleUploadError,
+});
+dropzoneEl.addEventListener('dragenter', () => dropzoneEl.classList.add('dragover'));
+dropzoneEl.addEventListener('dragleave', () => dropzoneEl.classList.remove('dragover'));
+dropzoneEl.addEventListener('drop', () => dropzoneEl.classList.remove('dragover'));
+dropzoneEl.addEventListener('click', () => fileInputEl.click());
+dropzoneEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') fileInputEl.click();
+});
+fileInputEl.addEventListener('change', async () => {
+  const file = fileInputEl.files?.[0];
+  if (!file) return;
+  try {
+    handleUploadResult(await areaFromFile(file));
+  } catch (err) {
+    handleUploadError(err);
+  }
+  fileInputEl.value = '';
+});
+
+window.__cnmwUploadDemo = { map, geocoder, searchControl, uploadOutline };
+</script>
+</body>
+</html>
