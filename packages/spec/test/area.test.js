@@ -87,3 +87,66 @@ test('buildArea degrades filter geometry to bbox-only when simplification cannot
   assert.equal(area.filterGeometry, null);
   assert.equal(area.provenance.simplification.degradedToBbox, true);
 });
+
+// `maxSyncInputVertices` (fix history: "Canada ADM0 select() blocks the
+// main thread for ~24s" -- see simplify.js). buildArea passes it through
+// to both of its internal simplification passes.
+
+function denseRing(n, radius = 1) {
+  const ring = [];
+  for (let i = 0; i < n; i++) {
+    const theta = (2 * Math.PI * i) / n;
+    ring.push([Math.cos(theta) * radius, Math.sin(theta) * radius]);
+  }
+  ring.push(ring[0]);
+  return ring;
+}
+
+test('buildArea without maxSyncInputVertices simplifies a largeish display geometry for real (unchanged default)', () => {
+  const geometry = { type: 'Polygon', coordinates: [denseRing(3000, 0.01)] };
+  const area = buildArea({
+    name: 'big',
+    geometry,
+    source: 'upload',
+    features: [],
+    filterVertexCeiling: 200,
+  });
+  assert.equal(area.filterGeometry !== null, true);
+  assert.equal(area.provenance.simplification.method, 'visvalingam');
+  assert.equal(area.provenance.simplification.degradedToBbox, false);
+});
+
+test('buildArea with maxSyncInputVertices degrades filterGeometry to bbox-only on a large display geometry, without running the sync search', () => {
+  // Same geometry as above, but opting into the vertex-count guard --
+  // this is what geocoder-core's select() passes for its synchronous
+  // (non-"both"-upgrade) builds, e.g. Canada's 68,973-vertex display ring.
+  const geometry = { type: 'Polygon', coordinates: [denseRing(3000, 0.01)] };
+  const area = buildArea({
+    name: 'big',
+    geometry,
+    source: 'upload',
+    features: [],
+    filterVertexCeiling: 200,
+    maxSyncInputVertices: 1500,
+  });
+  assert.equal(area.filterGeometry, null);
+  assert.equal(area.provenance.simplification.method, 'bbox');
+  assert.equal(area.provenance.simplification.degradedToBbox, true);
+  // bboxes[] remain the honest filter basis (design doc §1.3).
+  assert.ok(area.bboxes.length >= 1);
+});
+
+test('buildArea with maxSyncInputVertices still simplifies for real when the display geometry is small', () => {
+  const geometry = { type: 'Polygon', coordinates: [denseRing(1200, 0.01)] };
+  const area = buildArea({
+    name: 'small',
+    geometry,
+    source: 'upload',
+    features: [],
+    filterVertexCeiling: 100,
+    maxSyncInputVertices: 1500,
+  });
+  assert.equal(area.filterGeometry !== null, true);
+  assert.equal(area.provenance.simplification.method, 'visvalingam');
+  assert.equal(area.provenance.simplification.degradedToBbox, false);
+});

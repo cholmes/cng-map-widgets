@@ -1,5 +1,47 @@
 // @cnmw/spec -- Visvalingam-Whyatt simplification + the tolerance search
 // described in design doc §1.3.
+//
+// `maxSyncInputVertices` / `MAX_SYNC_SIMPLIFY_VERTICES` (fix history,
+// "Canada ADM0 select() blocks the main thread for ~24s"): the binary
+// search below runs up to 20 full Visvalingam passes, each O(m) per
+// removal over the *current* alive-point count -- O(m^2) worst case per
+// pass, because at least one trial (the highest tried tolerance) always
+// removes down to the minimum 3 points regardless of `vertexCeiling`, so
+// the cost is driven by the *input* size, not by how close the input
+// already is to the ceiling. Measured directly against this
+// implementation (worst case: `vertexCeiling` set to 10% of the input, so
+// every trial does real work):
+//
+//   input vertices | wall time
+//   ---------------|----------
+//   1,000          |    38 ms
+//   1,500          |    87 ms
+//   2,000          |   152 ms
+//   3,000          |   339 ms
+//   5,000          |   921 ms
+//   10,000         | 3,852 ms
+//
+// and inputs only modestly *above* a realistic 10,000-vertex
+// `filterVertexCeiling` are just as expensive as a large ratio: 10,500
+// vertices (500 over the ceiling) still costs ~4.2s, because the
+// high-tolerance binary-search trial above still strips the ring down to
+// (almost) nothing. There is no "a little over the ceiling is cheap"
+// regime once real reduction is needed -- only "input is small" is cheap.
+// `MAX_SYNC_SIMPLIFY_VERTICES` (1,500) is the largest input size that
+// stays comfortably under 100ms even in the worst-case-ratio trial above;
+// a caller that passes `maxSyncInputVertices` opts into skipping the
+// search entirely (degrading straight to bbox, design doc §1.3's
+// `degradedToBbox`) once the input exceeds it, rather than ever running
+// the O(m^2) search on it. The parameter defaults to `undefined` (no
+// guard, original unbounded behavior) so existing callers that already
+// accept running this search on moderate inputs (e.g. `@cnmw/upload-core`,
+// which has no interactive-latency budget the way a map click does) are
+// unaffected; `@cnmw/geocoder-core`'s `select()` -- the main-thread-latency-
+// sensitive caller -- opts in via `buildArea({ maxSyncInputVertices })`.
+// Use `simplifyToVertexCeilingAsync` (`simplify-async.js`) for the O(m log
+// m), chunked/yielding version that's actually safe to run on raw
+// full-resolution geometry regardless of size.
+export const MAX_SYNC_SIMPLIFY_VERTICES = 1500;
 
 /**
  * Planar (degree-space) area of a triangle, doubled (we only ever compare
@@ -122,10 +164,13 @@ function simplifyAtTolerance(geometry, areaTolerance) {
  * field name is kept as the design doc specifies.
  *
  * @param {GeoJSON.Polygon|GeoJSON.MultiPolygon} geometry
- * @param {{ vertexCeiling: number, areaDeltaWarnRatio?: number, areaDeltaMaxRatio?: number }} opts
+ * @param {{ vertexCeiling: number, areaDeltaWarnRatio?: number, areaDeltaMaxRatio?: number, maxSyncInputVertices?: number }} opts
+ *   `maxSyncInputVertices`: opt-in guard (see `MAX_SYNC_SIMPLIFY_VERTICES` above) -- when the input
+ *   exceeds it, skip the O(m^2) search and degrade straight to bbox. `undefined` (the default):
+ *   no guard, run the search regardless of input size (the original, unbounded behavior).
  * @returns {{
  *   geometry: GeoJSON.Polygon|GeoJSON.MultiPolygon,
- *   method: 'visvalingam'|'none',
+ *   method: 'visvalingam'|'none'|'bbox',
  *   toleranceDeg: number,
  *   inputVertices: number,
  *   outputVertices: number,
@@ -134,7 +179,7 @@ function simplifyAtTolerance(geometry, areaTolerance) {
  * }}
  */
 export function simplifyToVertexCeiling(geometry, opts) {
-  const { vertexCeiling, areaDeltaMaxRatio = 0.05 } = opts;
+  const { vertexCeiling, areaDeltaMaxRatio = 0.05, maxSyncInputVertices } = opts;
   const inputVertices = vertexCount(geometry);
   const originalArea = totalArea(geometry);
 
@@ -147,6 +192,23 @@ export function simplifyToVertexCeiling(geometry, opts) {
       outputVertices: inputVertices,
       areaDeltaRatio: 0,
       degradedToBbox: false,
+    };
+  }
+
+  if (maxSyncInputVertices != null && inputVertices > maxSyncInputVertices) {
+    // Too large to run the O(m^2) search synchronously without risking a
+    // multi-second (or worse) main-thread block -- see this module's
+    // header comment for the measurements. Degrade immediately rather
+    // than ever attempting it; a caller that wants the real answer on
+    // input this size should use `simplifyToVertexCeilingAsync` instead.
+    return {
+      geometry,
+      method: 'bbox',
+      toleranceDeg: 0,
+      inputVertices,
+      outputVertices: inputVertices,
+      areaDeltaRatio: 0,
+      degradedToBbox: true,
     };
   }
 

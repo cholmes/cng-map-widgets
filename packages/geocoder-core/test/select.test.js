@@ -91,6 +91,46 @@ function makeDeps({ manifest, resolveDelayMs = 1, simplifyDelayMs = 1 }) {
 const RESULT_A = { featureId: 'A', name: 'Alpha', level: 0, country: 'ZZZ', bbox: [0, 0, 1, 1] };
 const RESULT_B = { featureId: 'B', name: 'Beta', level: 0, country: 'ZZZ', bbox: [0, 0, 1, 1] };
 
+/**
+ * Deps for the "interim/cheap filter" routing tests below (fix history:
+ * "Canada ADM0 select() blocks the main thread for ~24s"): unlike
+ * `makeDeps()`, the boundary fetch returns a geometry big enough
+ * (`vertexCount`) to trip `buildArea`'s `maxSyncInputVertices` guard --
+ * geocoder-core's default filterVertexCeiling is 10,000, so anything over
+ * @cnmw/spec's `MAX_SYNC_SIMPLIFY_VERTICES` (1,500) but under 10,000 is
+ * enough to force a real (non-early-return) attempt that the guard then
+ * intercepts. `simplifyToVertexCeilingAsync` here is a *working* fake
+ * (not the always-'none' one `makeDeps` uses): it actually reports a
+ * smaller output, so a test can tell "upgraded for real" apart from "no
+ * upgrade happened" by `vertexCount.filter` changing.
+ * @param {{ manifest: object, vertexCount: number, resolveDelayMs?: number, simplifyDelayMs?: number }} opts
+ */
+function makeOversizedDeps({ manifest, vertexCount, resolveDelayMs = 1, simplifyDelayMs = 1 }) {
+  return {
+    loadManifest: async () => manifest,
+    loadFullIndex: async () => ({ rows: [], nameNorms: [] }),
+    openRangeIndex: async () => ({ groups: [], rows: 0 }),
+    async resolveGeometry(result, boundaryUrl, catalogVersion, fetchImpl, onVersionSkew, onWarning, options = {}) {
+      await delay(resolveDelayMs);
+      options.signal?.throwIfAborted();
+      return { geometry: squarePolygon(vertexCount), bbox: [0, 0, 1, 1] };
+    },
+    async simplifyToVertexCeilingAsync(geometry, options = {}) {
+      await delay(simplifyDelayMs);
+      options.signal?.throwIfAborted();
+      return {
+        geometry,
+        method: 'visvalingam',
+        toleranceDeg: 0.001,
+        inputVertices: vertexCount,
+        outputVertices: 7, // distinguishable from both the input size and squarePolygon(9)'s fake-"full" marker
+        areaDeltaRatio: 0.001,
+        degradedToBbox: false,
+      };
+    },
+  };
+}
+
 test('select(): defaults to display resolution, no background upgrade', async () => {
   const deps = makeDeps({ manifest: makeManifest({ withDisplay: true }) });
   const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
@@ -183,6 +223,97 @@ test('select(): a second select() supersedes the first\'s pending background upg
 
   assert.deepEqual(upgradedFor, ['B'], "only the superseding (second) selection's upgrade should ever fire");
   assert.equal(errors.length, 0, 'a superseded upgrade is silently dropped, not surfaced as an error');
+});
+
+test('select({ resolution: "display" }) on an oversized geometry: synchronous build degrades filterGeometry to bbox, then a filter-only background upgrade fills it in', async () => {
+  const deps = makeOversizedDeps({ manifest: makeManifest({ withDisplay: true }), vertexCount: 15000 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  const order = [];
+  geocoder.on('select', (p) => order.push({ event: 'select', ...p }));
+  geocoder.on('area:upgraded', (p) => order.push({ event: 'area:upgraded', ...p }));
+
+  const initialArea = await geocoder.select(RESULT_A, { resolution: 'display' });
+  assert.equal(order.length, 1);
+  assert.equal(initialArea.provenance.resolution, 'display');
+  // The vertex-count guard tripped synchronously (15,000 input vertices
+  // -- over the default filterVertexCeiling of 10,000, so no early
+  // return, but also well over MAX_SYNC_SIMPLIFY_VERTICES): filterGeometry
+  // degrades to bbox-only immediately rather than ever running the
+  // O(m^2) sync search.
+  assert.equal(initialArea.filterGeometry, null);
+  assert.equal(initialArea.vertexCount.filter, 0);
+  assert.equal(initialArea.provenance.simplification.degradedToBbox, true);
+  // 'display' resolution still gets a background upgrade when this
+  // happens -- see geocoder.js's `kickFilterOnlyUpgradeIfNeeded` -- so a
+  // consumer never permanently loses a real filterGeometry just because
+  // it picked the default resolution.
+  assert.equal(initialArea.provenance.pendingUpgrade, true);
+
+  await delay(50); // let the filter-only background upgrade finish
+
+  assert.equal(order.length, 2, "'area:upgraded' must fire exactly once after 'select'");
+  assert.equal(order[1].event, 'area:upgraded');
+  const upgraded = order[1].area;
+  assert.notEqual(upgraded.filterGeometry, null);
+  assert.equal(upgraded.vertexCount.filter, 7);
+  assert.equal(upgraded.provenance.pendingUpgrade, false);
+  // Display geometry (and its resolution/variant) is untouched by a
+  // filter-only upgrade -- no full-resolution file was ever fetched.
+  assert.equal(upgraded.geometry, initialArea.geometry);
+  assert.equal(upgraded.provenance.resolution, 'display');
+});
+
+test('select({ resolution: "display" }) on a small geometry: no guard, no background upgrade (unchanged behavior)', async () => {
+  const deps = makeOversizedDeps({ manifest: makeManifest({ withDisplay: true }), vertexCount: 50 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  const upgrades = [];
+  geocoder.on('area:upgraded', (p) => upgrades.push(p));
+
+  const area = await geocoder.select(RESULT_A, { resolution: 'display' });
+  assert.notEqual(area.filterGeometry, null);
+  assert.equal(area.provenance.pendingUpgrade, false);
+
+  await delay(30);
+  assert.equal(upgrades.length, 0, 'a small geometry must not trigger any background upgrade');
+});
+
+test('select({ resolution: "full" }) on an oversized geometry: synchronous build degrades filterGeometry to bbox, then a filter-only background upgrade fills it in', async () => {
+  const deps = makeOversizedDeps({ manifest: makeManifest({ withDisplay: true }), vertexCount: 15000 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  const order = [];
+  geocoder.on('select', (p) => order.push({ event: 'select', ...p }));
+  geocoder.on('area:upgraded', (p) => order.push({ event: 'area:upgraded', ...p }));
+
+  const initialArea = await geocoder.select(RESULT_A, { resolution: 'full' });
+  assert.equal(initialArea.provenance.resolution, 'full');
+  assert.equal(initialArea.filterGeometry, null);
+  assert.equal(initialArea.provenance.pendingUpgrade, true);
+
+  await delay(50);
+
+  assert.equal(order.length, 2);
+  const upgraded = order[1].area;
+  assert.notEqual(upgraded.filterGeometry, null);
+  assert.equal(upgraded.vertexCount.filter, 7);
+  assert.equal(upgraded.provenance.pendingUpgrade, false);
+  assert.equal(upgraded.provenance.resolution, 'full'); // _runFilterOnlyUpgrade never touches `resolution`
+});
+
+test('select(): a second select() supersedes a pending filter-only background upgrade too', async () => {
+  const deps = makeOversizedDeps({ manifest: makeManifest({ withDisplay: true }), vertexCount: 15000, simplifyDelayMs: 15 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  const upgradedFor = [];
+  const errors = [];
+  geocoder.on('area:upgraded', (p) => upgradedFor.push(p.result.featureId));
+  geocoder.on('error', (e) => errors.push(e));
+
+  await geocoder.select(RESULT_A, { resolution: 'display' }); // kicks off A's filter-only upgrade (not yet finished)
+  await geocoder.select(RESULT_B, { resolution: 'display' }); // must supersede A's upgrade before it completes
+
+  await delay(100);
+
+  assert.deepEqual(upgradedFor, ['B']);
+  assert.equal(errors.length, 0);
 });
 
 test('select(): close() cancels a pending background upgrade', async () => {

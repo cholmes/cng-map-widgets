@@ -24,7 +24,7 @@ export {
 } from './bbox.js';
 export { normalizeName } from './normalize.js';
 export { wkbToGeoJson, wkbToGeoJsonAsync } from './wkb.js';
-export { visvalingamRing, ringArea, simplifyToVertexCeiling, vertexCount, totalArea } from './simplify.js';
+export { visvalingamRing, ringArea, simplifyToVertexCeiling, vertexCount, totalArea, MAX_SYNC_SIMPLIFY_VERTICES } from './simplify.js';
 export { visvalingamRingAsync, simplifyToVertexCeilingAsync } from './simplify-async.js';
 export { yieldToMain, forEachChunked } from './yield.js';
 export { CnmwError, CancelledError, CeilingExceededError, isCnmwError } from './errors.js';

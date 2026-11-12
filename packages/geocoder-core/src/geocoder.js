@@ -1,9 +1,9 @@
 // @cnmw/geocoder-core -- the Geocoder class (design doc §3.2, §6).
 
-import { CnmwError, normalizeName, buildArea, simplifyToVertexCeilingAsync } from '@cnmw/spec';
+import { CnmwError, normalizeName, buildArea, simplifyToVertexCeilingAsync, MAX_SYNC_SIMPLIFY_VERTICES } from '@cnmw/spec';
 import { Emitter } from './events.js';
 import { loadManifest, resolveManifestUrl, loadFullIndex, openRangeIndex, searchRangeIndex, prefixRange } from './index-loader.js';
-import { rankRow, compareRanked, scoreOf } from './ranking.js';
+import { rankRow, compareRanked, scoreOf, applyDiversity, DEFAULT_EXACT_LEVEL_PROMOTION, DEFAULT_DIVERSITY } from './ranking.js';
 import { resolveGeometry } from './geometry-resolver.js';
 import { GenerationGuard } from './generation-guard.js';
 
@@ -16,6 +16,7 @@ const DEFAULT_RANKING = {
   viewportBoost: 1,
   nearFactor: 2,
   matchClasses: ['exact', 'prefix', 'word-prefix'],
+  exactLevelPromotion: DEFAULT_EXACT_LEVEL_PROMOTION,
 };
 
 function defaultNormalize(s) {
@@ -244,7 +245,12 @@ export class Geocoder {
       if (levels && !levels.includes(row.level)) continue;
       if (countries && !countries.includes(row.country)) continue;
       const rowBBox = [row.bbox.xmin, row.bbox.ymin, row.bbox.xmax, row.bbox.ymax];
-      const rank = rankRow({ nameNorm: row.name_norm, level: row.level, bbox: rowBBox, featureId: row.feature_id }, queryNorm, rankOpts);
+      const areaKm2 = typeof row.area_km2 === 'number' && !Number.isNaN(row.area_km2) ? row.area_km2 : undefined;
+      const rank = rankRow(
+        { nameNorm: row.name_norm, level: row.level, bbox: rowBBox, featureId: row.feature_id, areaKm2 },
+        queryNorm,
+        rankOpts,
+      );
       if (rank === null) continue;
       ranked.push({
         featureId: row.feature_id,
@@ -252,7 +258,16 @@ export class Geocoder {
         nameNorm: row.name_norm,
         level: row.level,
         country: row.country,
+        // Optional context columns (design doc §3.2 amendment, "Index
+        // columns"): Overture's division names index carries `parent_name`
+        // (e.g. "Rajasthan" for a locality), geoBoundaries' CGAZ names
+        // index carries `country_name` (e.g. "India" alongside the ISO
+        // `country` code). Both are `undefined` when the loaded index has
+        // neither column -- `hyparquet`'s decoded row object simply won't
+        // have the key, so this is a plain `undefined`, not a parse error.
         parentName: row.parent_name ?? undefined,
+        countryName: row.country_name ?? undefined,
+        areaKm2,
         bbox: rowBBox,
         source: row.source,
         rank,
@@ -263,7 +278,18 @@ export class Geocoder {
       });
     }
     ranked.sort(compareRanked);
-    return ranked.slice(0, limit);
+
+    // Result diversity (design doc §3.2 amendment, "Result diversity"):
+    // collapse (nameNorm, country, level) duplicates to one row annotated
+    // with `moreCount`, then cap at `maxPerGroup` rows per (country, level)
+    // before the final slice to `limit` -- so a capped-out group makes room
+    // for the next-ranked *distinct* group rather than just shrinking the
+    // result count. This is what turns "eight identical Bag/IND/ADM4 rows"
+    // into one "Bag (+7 more)" row, freeing up slots for Baghdad.
+    const diversityOptions = { ...DEFAULT_DIVERSITY, ...this._options.diversity, ...options.diversity };
+    const diversified = applyDiversity(ranked, diversityOptions);
+
+    return diversified.slice(0, limit);
   }
 
   /**
@@ -315,6 +341,15 @@ export class Geocoder {
     const displayVertexCeiling = options.displayVertexCeiling ?? this._options.geometry?.displayVertexCeiling ?? 200_000;
     const onWarning = (warning) => this._emitter.emit('warning', warning);
 
+    // `maxSyncInputVertices`: opt in to @cnmw/spec's vertex-count guard on
+    // every synchronous build below (fix history, "Canada ADM0 select()
+    // blocks the main thread for ~24s" -- buildArea's filter-geometry pass
+    // ran an O(m^2) search directly on the 68,973-vertex display geometry).
+    // A build whose input is small enough simplifies for real, exactly as
+    // before; one that isn't degrades straight to `filterGeometry: null`
+    // (bboxes-only, design doc §1.3's `degradedToBbox`) instead of ever
+    // running the slow search -- see `kickFilterOnlyUpgrade` below for how
+    // that gap is closed without ever blocking the main thread.
     const buildSelectedArea = (geometry, bbox, variantKey, boundaryUrl, pendingUpgrade) =>
       buildArea({
         name: result.name,
@@ -334,6 +369,7 @@ export class Geocoder {
         attribution: this._attribution,
         filterVertexCeiling,
         displayVertexCeiling,
+        maxSyncInputVertices: MAX_SYNC_SIMPLIFY_VERTICES,
         provenanceExtra: {
           resolution,
           pendingUpgrade,
@@ -348,6 +384,36 @@ export class Geocoder {
         },
       });
 
+    // Shared by the 'full' and 'display' branches below: when the
+    // synchronous build above degraded `filterGeometry` to `null` (the
+    // vertex-count guard tripped, or a genuine area-delta failure), kick a
+    // *filter-only* background upgrade -- the async O(m log m) simplifier
+    // (design doc task: "the main thread never blocks >50ms") run on the
+    // geometry already in hand, no extra network fetch. This is the choice
+    // documented in the task's item 2 for 'display'-only resolution
+    // (rather than leaving it permanently bbox-degraded): 'display' is the
+    // default resolution, so leaving every largeish selection's
+    // filterGeometry bbox-only forever would be a correctness regression
+    // for any `download-core` consumer filtering against this Area, not
+    // just a performance one. The same gap exists for 'full' resolution
+    // (its input can be just as large), so it gets the identical fix. Mirrors
+    // `_runUpgrade`'s cancellation/generation handling but skips
+    // `resolveGeometry` entirely, since there is nothing new to fetch.
+    const kickFilterOnlyUpgradeIfNeeded = (area, geometry) => {
+      if (!area.provenance.pendingUpgrade) return area;
+      const controller = new AbortController();
+      this._selectGuard.attach(controller);
+      this._runFilterOnlyUpgrade(result, geometry, area, generation, controller, {
+        filterVertexCeiling,
+        userSignal: options.signal,
+      }).catch((err) => {
+        if (!this._selectGuard.isCurrent(generation)) return; // superseded: silent
+        if (err?.name === 'AbortError' || err?.code === 'CANCELLED') return;
+        this._emitter.emit('error', err);
+      });
+      return area;
+    };
+
     if (resolution === 'full') {
       const boundaryUrl = resolveManifestUrl(this._manifestUrl, entry.full.url);
       const { geometry, bbox } = await this._deps.resolveGeometry(result, boundaryUrl, manifest.catalog_version, this._fetch, onVersionSkew, onWarning, {
@@ -355,19 +421,25 @@ export class Geocoder {
         signal: options.signal,
         entry,
       });
-      const area = buildSelectedArea(geometry, bbox, 'full', boundaryUrl, false);
+      let area = buildSelectedArea(geometry, bbox, 'full', boundaryUrl, false);
+      if (area.filterGeometry === null) {
+        area = { ...area, provenance: { ...area.provenance, pendingUpgrade: true } };
+      }
       const elapsedMs = performance.now() - t0;
       this._emitter.emit('select', { result, area, elapsedMs });
-      return area;
+      return kickFilterOnlyUpgradeIfNeeded(area, geometry);
     }
 
     if (resolution === 'display') {
       const boundaryUrl = resolveManifestUrl(this._manifestUrl, entry.display.url);
       const { geometry, bbox } = await this._deps.resolveGeometry(result, boundaryUrl, manifest.catalog_version, this._fetch, onVersionSkew, onWarning, { entry });
-      const area = buildSelectedArea(geometry, bbox, 'display', boundaryUrl, false);
+      let area = buildSelectedArea(geometry, bbox, 'display', boundaryUrl, false);
+      if (area.filterGeometry === null) {
+        area = { ...area, provenance: { ...area.provenance, pendingUpgrade: true } };
+      }
       const elapsedMs = performance.now() - t0;
       this._emitter.emit('select', { result, area, elapsedMs });
-      return area;
+      return kickFilterOnlyUpgradeIfNeeded(area, geometry);
     }
 
     // resolution === 'both': return the display Area immediately, then
@@ -450,6 +522,57 @@ export class Geocoder {
       provenance: {
         ...baseArea.provenance,
         resolution: 'full',
+        pendingUpgrade: false,
+        simplification: {
+          method: filterResult.method,
+          toleranceDeg: filterResult.toleranceDeg,
+          inputVertices: filterResult.inputVertices,
+          outputVertices: filterResult.outputVertices,
+          areaDeltaRatio: filterResult.areaDeltaRatio,
+          degradedToBbox: filterResult.degradedToBbox,
+        },
+      },
+    };
+    this._selectGuard.detach(controller);
+    const elapsedMs = performance.now() - t0;
+    this._emitter.emit('area:upgraded', { result, area: upgraded, elapsedMs });
+  }
+
+  /**
+   * Filter-only background upgrade for the 'full' and 'display' resolution
+   * paths (see `kickFilterOnlyUpgradeIfNeeded` in `select()`): same shape
+   * as `_runUpgrade`, but there is no boundary file to fetch -- `geometry`
+   * is whatever `select()` already resolved (the full-resolution geometry
+   * for 'full', the display-simplified geometry for 'display') -- so this
+   * goes straight to the async simplifier. Used only when the synchronous
+   * build's vertex-count guard (or a genuine area-delta failure) left
+   * `filterGeometry: null`.
+   * @param {import('./types.js').SearchResult} result
+   * @param {GeoJSON.Polygon|GeoJSON.MultiPolygon} geometry the geometry to re-simplify (already in hand).
+   * @param {import('@cnmw/spec').Area} baseArea
+   * @param {number} generation
+   * @param {AbortController} controller
+   * @param {{ filterVertexCeiling: number, userSignal?: AbortSignal }} opts
+   */
+  async _runFilterOnlyUpgrade(result, geometry, baseArea, generation, controller, opts) {
+    const t0 = performance.now();
+    const abortSignal = controller.signal;
+
+    const filterResult = await this._deps.simplifyToVertexCeilingAsync(geometry, {
+      vertexCeiling: opts.filterVertexCeiling,
+      areaDeltaMaxRatio: 0.05,
+      signal: abortSignal,
+    });
+    opts.userSignal?.throwIfAborted();
+    if (!this._selectGuard.isCurrent(generation)) return; // superseded while simplifying
+
+    const filterGeometry = filterResult.degradedToBbox ? null : filterResult.geometry;
+    const upgraded = {
+      ...baseArea,
+      filterGeometry,
+      vertexCount: { ...baseArea.vertexCount, filter: filterGeometry ? filterResult.outputVertices : 0 },
+      provenance: {
+        ...baseArea.provenance,
         pendingUpgrade: false,
         simplification: {
           method: filterResult.method,

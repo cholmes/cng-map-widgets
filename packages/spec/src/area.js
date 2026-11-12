@@ -35,6 +35,7 @@ export function generateAreaId() {
  *   displayVertexCeiling?: number,
  *   areaDeltaWarnRatio?: number,
  *   areaDeltaMaxRatio?: number,
+ *   maxSyncInputVertices?: number,
  * }} input
  * @returns {import('./types.js').Area}
  */
@@ -52,6 +53,18 @@ export function buildArea(input) {
     displayVertexCeiling = 200_000,
     areaDeltaWarnRatio = 0.01,
     areaDeltaMaxRatio = 0.05,
+    // Opt-in cheap/"interim" mode (fix history, "Canada ADM0 select()
+    // blocks the main thread for ~24s"): when set, both simplification
+    // passes below skip the O(m^2) sync search once their input exceeds
+    // this many vertices and degrade straight to bbox instead -- see
+    // `simplify.js`'s `MAX_SYNC_SIMPLIFY_VERTICES` for the measurements
+    // behind the default a caller typically passes here. `undefined` (the
+    // default): no guard, run the sync search regardless of input size --
+    // the original behavior, still used by callers with no interactive-
+    // latency budget (e.g. `@cnmw/upload-core`). `@cnmw/geocoder-core`'s
+    // `select()` passes `MAX_SYNC_SIMPLIFY_VERTICES` for its synchronous
+    // (non-"both"-upgrade) builds.
+    maxSyncInputVertices,
   } = input;
 
   if (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon') {
@@ -65,12 +78,14 @@ export function buildArea(input) {
   const displayResult = simplifyToVertexCeiling(geometry, {
     vertexCeiling: displayVertexCeiling,
     areaDeltaMaxRatio: 1, // display never degrades to bbox; just caps vertices
+    maxSyncInputVertices,
   });
   const displayGeometry = displayResult.geometry;
 
   const filterResult = simplifyToVertexCeiling(displayGeometry, {
     vertexCeiling: filterVertexCeiling,
     areaDeltaMaxRatio,
+    maxSyncInputVertices,
   });
 
   /** @type {AreaGeometry|null} */
