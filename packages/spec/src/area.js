@@ -7,6 +7,24 @@ import { CnmwError } from './errors.js';
 /** @typedef {import('./bbox.js').BBox} BBox */
 /** @typedef {GeoJSON.Polygon|GeoJSON.MultiPolygon} AreaGeometry */
 
+/**
+ * One attribution entry carried in `Area.provenance.attribution` (design
+ * doc §1.2). **Additive typedef** (geocoder-core follow-up task 3): this
+ * package never built or validated the shape before -- `buildArea` just
+ * passed whatever array it was given straight through -- so this is
+ * documentation only, not a new runtime check. `shareAlike` is the
+ * canonical (camelCase) field name; a raw manifest entry spells it
+ * `share_alike` (snake_case) instead, which is why
+ * `@cnmw/geocoder-core`'s manifest ingestion normalizes to this shape
+ * before it ever reaches `buildArea`.
+ * @typedef {{
+ *   text: string,
+ *   url?: string,
+ *   license?: string,
+ *   shareAlike: boolean,
+ * }} AreaAttribution
+ */
+
 export const AREA_VERSION = 1;
 
 let idCounter = 0;
@@ -29,7 +47,7 @@ export function generateAreaId() {
  *   features: Array<Record<string, unknown>>,
  *   combine?: 'single'|'collect'|'dissolve',
  *   geometryVariant?: 'full'|'display-simplified'|'unknown',
- *   attribution?: Array<Record<string, unknown>>,
+ *   attribution?: AreaAttribution[],
  *   provenanceExtra?: Record<string, unknown>,
  *   filterVertexCeiling?: number,
  *   displayVertexCeiling?: number,

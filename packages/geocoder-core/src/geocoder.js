@@ -2,7 +2,17 @@
 
 import { CnmwError, normalizeName, buildArea, simplifyToVertexCeilingAsync, MAX_SYNC_SIMPLIFY_VERTICES } from '@cnmw/spec';
 import { Emitter } from './events.js';
-import { loadManifest, resolveManifestUrl, loadFullIndex, openRangeIndex, searchRangeIndex, prefixRange } from './index-loader.js';
+import {
+  loadManifest,
+  resolveManifestUrl,
+  loadFullIndex,
+  openRangeIndex,
+  searchRangeIndex,
+  findCandidateGroups,
+  prefixRange,
+  DEFAULT_RANGE_GROUP_CONCURRENCY,
+  DEFAULT_RANGE_MAX_CANDIDATE_GROUPS,
+} from './index-loader.js';
 import { rankRow, compareRanked, scoreOf, applyDiversity, DEFAULT_EXACT_LEVEL_PROMOTION, DEFAULT_ALT_LEVEL_DEMOTION, DEFAULT_DIVERSITY } from './ranking.js';
 import { resolveGeometry, openBoundaryFile } from './geometry-resolver.js';
 import { GenerationGuard } from './generation-guard.js';
@@ -60,9 +70,47 @@ function initialFetchSizeOf(entry) {
 }
 
 /** @typedef {import('@cnmw/spec').BBox} BBox */
+/** @typedef {import('@cnmw/spec').AreaAttribution} AreaAttribution */
 
 export const DEFAULT_INDEX_URL = './data/index.json';
 export const VERSION = '0.1.0';
+
+/**
+ * Attribution normalization (follow-up task 3): every manifest shipped so
+ * far declares each attribution entry's share-alike flag as `share_alike`
+ * (snake_case, matching the rest of the manifest's field naming), but the
+ * design doc's documented `AreaAttribution` shape (§1.2) names it
+ * `shareAlike` (camelCase, matching every other field on the type). Both
+ * adapters already defend against either spelling at the point they read
+ * it (`a.shareAlike ?? a.share_alike`) -- this is what makes that defense
+ * unnecessary going forward: normalize once, here, on ingestion, so
+ * `Geocoder#attribution`/`IndexInfo.attribution`/every `Area.provenance.
+ * attribution` built from it actually carries the documented camelCase
+ * field. The raw entry (including its original `share_alike` key, and
+ * anything else a manifest attached) is kept alongside it via a shallow
+ * spread -- cheap, and it costs nothing to let an adapter that still reads
+ * the raw key keep working.
+ * @param {readonly Record<string, unknown>[]} rawAttribution
+ * @returns {AreaAttribution[]}
+ */
+function normalizeAttribution(rawAttribution) {
+  return rawAttribution.map((entry) => ({
+    ...entry,
+    shareAlike: Boolean(entry.shareAlike ?? entry.share_alike ?? false),
+  }));
+}
+
+// Range-mode progressive search (follow-up task 4, "range-mode query
+// latency"): how many of this query's candidate row groups
+// `_searchRangeRowsFirstWave` waits for before resolving `search()`'s own
+// promise, vs. finishing the rest in the background as a completion wave
+// (`_scheduleRangeCompletionWave`). Matches `searchRangeIndex`'s own
+// `concurrency`/`maxGroups` defaults exactly -- the point of the first
+// wave being "the first `concurrency`-sized batch" is that bounded
+// concurrency already makes that batch land in roughly one group's worth
+// of latency, not `concurrency` times that.
+const RANGE_GROUP_CONCURRENCY = DEFAULT_RANGE_GROUP_CONCURRENCY;
+const RANGE_MAX_CANDIDATE_GROUPS = DEFAULT_RANGE_MAX_CANDIDATE_GROUPS;
 
 const DEFAULT_RANKING = {
   viewportBoost: 1,
@@ -145,6 +193,15 @@ export class Geocoder {
 
     this._loadPromise = null;
     this._searchGeneration = 0;
+
+    // Range-mode progressive search (follow-up task 4): set by
+    // `_searchRangeRowsFirstWave` for the duration of one `search()` call
+    // only, when that call's first wave didn't cover every (capped)
+    // candidate row group -- `search()` reads and clears it immediately
+    // after `_runSearch` returns, before anything else can run (no
+    // `await` in between), so it is never read stale across calls despite
+    // living on `this`.
+    this._rangeCompletionPromise = null;
 
     // Progressive select() (design doc §1/§3.2, task "fetch/attach the
     // full-res geometry in the background"): a background upgrade whose
@@ -302,7 +359,7 @@ export class Geocoder {
     }
 
     const loadMs = performance.now() - t0;
-    this._attribution = manifest.attribution ?? [];
+    this._attribution = normalizeAttribution(manifest.attribution ?? []);
     this._info = {
       url: this._manifestUrl,
       source: manifest.source,
@@ -406,6 +463,25 @@ export class Geocoder {
    * `prominent_index` at all, or the main index is already `_mainReady`
    * by the time this runs, there is only ever one wave, tagged `'final'`
    * -- unchanged behaviour from before this existed.
+   *
+   * **Range-mode progressive search (follow-up task 4, "range-mode query
+   * latency").** Orthogonal to the two-wave mechanism above, and only
+   * relevant once the main index is itself `_mainReady` and range-
+   * strategy: a low-selectivity prefix can match more candidate row
+   * groups than `_searchRangeRowsFirstWave` waits for before resolving
+   * this call (see that method and `searchRangeIndex`'s own doc comment
+   * for the measured before/after). When that happens, this promise
+   * still resolves with the first wave's -- possibly incomplete --
+   * answer, the `'results'` event for it is tagged `wave: 'final'` as
+   * usual (it *is* the main index answering, just not finished doing so
+   * yet), and a **further** `'results'` event (also `wave: 'final'`)
+   * fires once every candidate group is in, following the exact same
+   * grows-only re-emission rule as the two-wave mechanism: it fires only
+   * if the fuller answer actually adds a row the first wave didn't have.
+   * If the query's candidate groups exceeded `searchRangeIndex`'s cap,
+   * the returned array (and every `'results'` event's `results`) carries
+   * an own `truncated: true` property -- absent otherwise -- so a UI can
+   * say so rather than silently showing an incomplete list as complete.
    * @param {string} prefix
    * @param {import('./types.js').SearchOptions} [options]
    */
@@ -422,13 +498,28 @@ export class Geocoder {
 
     const t0 = performance.now();
     const results = await this._runSearch(prefix, options);
+    // Read and clear immediately: nothing else can run between
+    // `_runSearch` returning and this line (no `await`), so a
+    // same-instance call already in flight for a *different* query can
+    // never have overwritten this before it's captured here.
+    const rangeCompletion = this._rangeCompletionPromise;
+    this._rangeCompletionPromise = null;
     if (generation !== this._searchGeneration) return [];
 
     const elapsedMs = performance.now() - t0;
     const isFinal = this._mainReady || !this._hasProminent;
     this._emitter.emit('results', { query: prefix, results, elapsedMs, wave: isFinal ? 'final' : 'prominent' });
 
-    if (!isFinal) this._scheduleSecondWave(prefix, options, generation, results, t0);
+    if (rangeCompletion) {
+      // `isFinal` is always true whenever `rangeCompletion` is set (it is
+      // only ever set from the range-mode branch of `_searchRows`, which
+      // only runs once `_mainReady`) -- so this and the two-wave
+      // `_scheduleSecondWave` branch below are mutually exclusive for any
+      // one `search()` call, never double-scheduling a background wave.
+      this._scheduleRangeCompletionWave(prefix, options, generation, results, t0, rangeCompletion);
+    } else if (!isFinal) {
+      this._scheduleSecondWave(prefix, options, generation, results, t0);
+    }
 
     return results;
   }
@@ -447,12 +538,56 @@ export class Geocoder {
         if (generation !== this._searchGeneration) return; // superseded by a later search() call
         options.signal?.throwIfAborted();
         const wave2Results = await this._runSearch(prefix, options);
+        // A re-run that itself lands in range mode's own first-wave/
+        // completion-wave split schedules its own completion wave via
+        // the same side channel `search()` reads -- but nobody is awaiting
+        // *this* call's `search()`-level machinery to do that, so drain it
+        // here instead, exactly as `search()` itself would.
+        const nestedRangeCompletion = this._rangeCompletionPromise;
+        this._rangeCompletionPromise = null;
         if (generation !== this._searchGeneration) return;
-        if (!resultsAddRows(wave1Results, wave2Results)) return; // nothing new: never re-emit an identical answer
-        const elapsedMs = performance.now() - t0;
-        this._emitter.emit('results', { query: prefix, results: wave2Results, elapsedMs, wave: 'final' });
+        if (resultsAddRows(wave1Results, wave2Results)) {
+          const elapsedMs = performance.now() - t0;
+          this._emitter.emit('results', { query: prefix, results: wave2Results, elapsedMs, wave: 'final' });
+        }
+        if (nestedRangeCompletion) {
+          this._scheduleRangeCompletionWave(prefix, options, generation, wave2Results, t0, nestedRangeCompletion);
+        }
       })
       .catch(() => {}); // AbortError (user signal) or an abandoned generation: silently dropped, same as search() itself
+  }
+
+  /**
+   * The background half of range-mode progressive search (follow-up task
+   * 4): wait for every (capped) candidate row group to finish fetching --
+   * `rangeCompletionPromise`, the full `searchRangeIndex` call
+   * `_searchRangeRowsFirstWave` kicked off -- then re-rank the complete
+   * row set and emit a further `'results'` event, but only if it actually
+   * adds a row the wave already shown didn't have. Mirrors
+   * `_scheduleSecondWave` exactly, just triggered by "the rest of this
+   * query's own row groups landed" instead of "the main index finished
+   * loading".
+   * @param {string} prefix
+   * @param {import('./types.js').SearchOptions} options
+   * @param {number} generation
+   * @param {import('./types.js').SearchResult[]} previousResults
+   * @param {number} t0
+   * @param {Promise<object[]>} rangeCompletionPromise
+   */
+  _scheduleRangeCompletionWave(prefix, options, generation, previousResults, t0, rangeCompletionPromise) {
+    rangeCompletionPromise
+      .then(async (allRows) => {
+        if (generation !== this._searchGeneration) return; // superseded by a later search() call
+        options.signal?.throwIfAborted();
+        const queryNorm = this._normalize(prefix);
+        const limit = options.limit ?? this._options.limit ?? 10;
+        const finalResults = this._rankAndFilter(allRows, queryNorm, options, limit);
+        if (generation !== this._searchGeneration) return;
+        if (!resultsAddRows(previousResults, finalResults)) return; // nothing new: never re-emit an identical answer
+        const elapsedMs = performance.now() - t0;
+        this._emitter.emit('results', { query: prefix, results: finalResults, elapsedMs, wave: 'final' });
+      })
+      .catch(() => {}); // AbortError (user signal) or an abandoned generation: silently dropped, same as _scheduleSecondWave
   }
 
   async _runSearch(prefix, options) {
@@ -478,13 +613,74 @@ export class Geocoder {
         const [start, end] = prefixRange(this._full.nameNorms, queryNorm);
         return this._full.rows.slice(start, end);
       }
-      if (this._range) return searchRangeIndex(this._range, queryNorm);
+      if (this._range) return this._searchRangeRowsFirstWave(queryNorm);
     }
     if (this._prominentFull) {
       const [start, end] = prefixRange(this._prominentFull.nameNorms, queryNorm);
       return this._prominentFull.rows.slice(start, end);
     }
     return [];
+  }
+
+  /**
+   * Range-mode row fetch for one query, bounded-concurrency and
+   * progressive (follow-up task 4, "range-mode query latency" -- see
+   * `searchRangeIndex`'s doc comment in index-loader.js for the measured
+   * before/after this whole mechanism is built on). Resolves as soon as
+   * the first `RANGE_GROUP_CONCURRENCY`-sized batch of this query's
+   * candidate row groups has landed (or every one of them, if there are
+   * fewer than that, or none at all) -- which, thanks to bounded
+   * concurrency, lands in roughly one group's own fetch latency, not
+   * `RANGE_GROUP_CONCURRENCY` times that. If candidate groups remain
+   * after that first batch, sets `this._rangeCompletionPromise` to the
+   * underlying `searchRangeIndex` call's full promise, which `search()`
+   * reads immediately afterward to schedule the background completion
+   * wave (`_scheduleRangeCompletionWave`) that fills in the rest.
+   * @param {string} queryNorm
+   * @returns {Promise<object[]>}
+   */
+  _searchRangeRowsFirstWave(queryNorm) {
+    const handle = this._range;
+    const allCandidates = findCandidateGroups(handle.groups, queryNorm);
+    const truncated = allCandidates.length > RANGE_MAX_CANDIDATE_GROUPS;
+    const totalGroups = truncated ? RANGE_MAX_CANDIDATE_GROUPS : allCandidates.length;
+    const firstBatchTarget = Math.min(RANGE_GROUP_CONCURRENCY, totalGroups);
+
+    if (totalGroups === 0) {
+      this._rangeCompletionPromise = null;
+      return Promise.resolve([]);
+    }
+
+    let settledFirst = false;
+    let resolveFirst;
+    const firstWavePromise = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+
+    const donePromise = searchRangeIndex(handle, queryNorm, {
+      concurrency: RANGE_GROUP_CONCURRENCY,
+      maxGroups: RANGE_MAX_CANDIDATE_GROUPS,
+      onBatch: (rowsSoFar, info) => {
+        if (settledFirst || info.completed < firstBatchTarget) return;
+        settledFirst = true;
+        const snapshot = rowsSoFar.slice();
+        if (info.truncated) snapshot.truncated = true;
+        resolveFirst(snapshot);
+      },
+    });
+    // `searchRangeIndex` itself never rejects for "no match" (an empty
+    // array is a normal result, not an error) -- only for a genuine fetch
+    // failure. Leaving that unhandled here (nothing has awaited
+    // `donePromise` yet if the first wave never settles) would surface as
+    // an unhandled rejection; `search()`'s own `.catch` on the scheduled
+    // completion wave handles it once something *does* await it, but the
+    // first-wave path above may never reach that await at all if
+    // `searchRangeIndex` itself throws before calling `onBatch` enough
+    // times. This mirrors `_mainReadyPromise`'s `.catch` in `_doLoad`.
+    donePromise.catch(() => {});
+
+    this._rangeCompletionPromise = firstBatchTarget < totalGroups ? donePromise : null;
+    return firstWavePromise;
   }
 
   /**
@@ -514,6 +710,29 @@ export class Geocoder {
     const countries = options.countries ?? this._options.countries;
     const rankOpts = { ...this._rankingOptions, viewport: options.viewport };
 
+    // `primaryName` resolution (follow-up task 1): an alt row's `alt_of`
+    // column holds its primary row's `feature_id`. Resolved honestly,
+    // from data already in memory for *this* call -- never a per-result
+    // network round trip:
+    //  - `localNameById` indexes every row this query already fetched
+    //    (both full- and range-load mode). This rarely contains an alt
+    //    row's primary, though: an alt spelling's own `name_norm` (what
+    //    this query matched) usually sorts nowhere near its primary
+    //    name's, so the two are seldom in the same fetched slice/row
+    //    group -- but it costs nothing to check first when they are.
+    //  - `fullNameById` is the full-load-mode fallback: when the whole
+    //    index is already resident in memory anyway (`this._full` set),
+    //    a lazily-built, cached `feature_id -> name` map over *all* of it
+    //    is also free to consult -- see `_getFullIdToNameMap`. There is
+    //    no equivalent fallback in range mode: a primary outside the row
+    //    group(s) this query happened to fetch is left `undefined`,
+    //    exactly as documented on `SearchResult.primaryName` -- adding
+    //    one would mean a second network fetch per alt result, which the
+    //    task is explicit this must not do.
+    const localNameById = new Map();
+    for (const row of rows) localNameById.set(row.feature_id, row.name);
+    const fullNameById = this._full ? this._getFullIdToNameMap() : null;
+
     const ranked = [];
     for (const row of rows) {
       if (levels && !levels.includes(row.level)) continue;
@@ -531,6 +750,7 @@ export class Geocoder {
       const population = typeof row.population === 'number' && !Number.isNaN(row.population) ? row.population : undefined;
       const placeClass = typeof row.class === 'string' ? row.class : undefined;
       const isAlt = row.alt_of != null;
+      const primaryName = isAlt ? localNameById.get(row.alt_of) ?? fullNameById?.get(row.alt_of) : undefined;
       const rank = rankRow(
         { nameNorm: row.name_norm, level: row.level, bbox: rowBBox, featureId: row.feature_id, areaKm2, population, class: placeClass, isAlt },
         queryNorm,
@@ -540,6 +760,12 @@ export class Geocoder {
       ranked.push({
         featureId: row.feature_id,
         name: row.name,
+        // **Added by the follow-up "primaryName on alt matches" task.**
+        // The primary row's display name, present only for a match
+        // against an alt-name row (`isAlt`) whose primary was cheaply
+        // resolvable (see above) -- `undefined` otherwise, including
+        // every non-alt row, for which this is simply inapplicable.
+        primaryName,
         nameNorm: row.name_norm,
         level: row.level,
         country: row.country,
@@ -580,7 +806,40 @@ export class Geocoder {
     const diversityOptions = { ...DEFAULT_DIVERSITY, ...this._options.diversity, ...options.diversity };
     const diversified = applyDiversity(ranked, diversityOptions);
 
-    return diversified.slice(0, limit);
+    const limited = diversified.slice(0, limit);
+    // Range-mode group cap (follow-up task 4, "range-mode query latency"):
+    // `rows` carries its own `truncated` flag (set by `searchRangeIndex`/
+    // `_searchRangeRowsFirstWave` below) when this query's candidate row
+    // groups exceeded `RANGE_MAX_CANDIDATE_GROUPS` and were capped rather
+    // than all fetched. Propagated onto the *returned* array -- not any
+    // one row -- since it describes the completeness of the result set as
+    // a whole, not any particular result. `undefined`/absent (every
+    // full-load and prominent-only query, and any range query that never
+    // hit the cap) leaves `limited.truncated` simply unset.
+    if (rows.truncated) limited.truncated = true;
+    return limited;
+  }
+
+  /**
+   * Lazily build and cache a `feature_id -> name` map over the *entire*
+   * full-loaded index, for `primaryName` resolution above when the
+   * current query's own matched-rows slice doesn't happen to include an
+   * alt row's primary (the common case: an alt spelling's own
+   * `name_norm` rarely shares the query's prefix with its primary
+   * name's). Only reachable in `'full'` load mode, where the whole index
+   * is already resident in memory anyway -- this is one linear pass over
+   * data already paid for, not a new fetch, and it is built at most once
+   * per `load()` (cached on the handle itself), not once per query.
+   * @returns {Map<string, string>|null}
+   */
+  _getFullIdToNameMap() {
+    if (!this._full) return null;
+    if (!this._full._idToNameMap) {
+      const map = new Map();
+      for (const row of this._full.rows) map.set(row.feature_id, row.name);
+      this._full._idToNameMap = map;
+    }
+    return this._full._idToNameMap;
   }
 
   /**
@@ -908,6 +1167,7 @@ export class Geocoder {
     this._mainReadyPromise = null;
     this._boundaryHandleCache = new Map();
     this._footerPrefetchStarted = false;
+    this._rangeCompletionPromise = null;
     this._setState('idle');
   }
 }

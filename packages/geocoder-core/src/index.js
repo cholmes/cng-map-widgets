@@ -22,6 +22,13 @@ export {
   DEFAULT_EXACT_LEVEL_PROMOTION,
   DEFAULT_ALT_LEVEL_DEMOTION,
   DEFAULT_DIVERSITY,
+  MAX_COLLAPSED_ROWS,
 } from './ranking.js';
-export { prefixRange, findCandidateGroups, searchRangeIndex } from './index-loader.js';
+export {
+  prefixRange,
+  findCandidateGroups,
+  searchRangeIndex,
+  DEFAULT_RANGE_GROUP_CONCURRENCY,
+  DEFAULT_RANGE_MAX_CANDIDATE_GROUPS,
+} from './index-loader.js';
 export { GenerationGuard } from './generation-guard.js';
