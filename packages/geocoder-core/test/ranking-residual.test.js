@@ -95,3 +95,50 @@ test('search(): class ladder (city > town > village > hamlet) decides when popul
   const results = await geocoder.search('springfield');
   assert.deepEqual(results.map((r) => r.featureId), ['CITY', 'VILLAGE', 'HAMLET']);
 });
+
+// --- Alt-demotion follow-up (design doc §3.2 amendment, "alt-demotion",
+// 2026-11-12), end to end through search(): the live reproduction against
+// the published Overture catalog -- searching "bag" returned alt-language
+// spellings of Bahrain/Bahamas (ADM0, `alt_of` set) ranked above
+// Bağcılar/Bagua (ADM2, primary) and above Baghdad, because the
+// pre-amendment `isAlt` tiebreak (previous block, above) only applied
+// once two rows already tied on raw `level` -- which an ADM0 alt row and
+// an ADM1+ primary row never do. This block is the synthetic shape of
+// that exact scenario, plus the "typing the full alt name must not be
+// penalized" exemption (Deutschland/中国/Bahamas), run through the real
+// `search()` -> `_rankAndFilter()` pipeline rather than `ranking.js` in
+// isolation. ---------------------------------------------------------
+
+test('search(): "bag" -- a level-0 alt match (translated country name) no longer unconditionally outranks a level-1 primary match', async () => {
+  const rows = [
+    row('Bagraain', 'bagraain', 'BHR', 0, 'ALT-NOISE', { alt_of: 'bahrain-primary-uuid' }), // real shape: Bahrain's alt name happens to prefix-match "bag"
+    row('Bagdad Province', 'bagdad province', 'IRQ', 1, 'PRIMARY-ADM1'), // alt_of absent: primary
+  ];
+  const geocoder = makeGeocoder(rows, { limit: 10, diversity: { dedupe: false, maxPerGroup: null } });
+  const results = await geocoder.search('bag');
+  assert.equal(results[0].featureId, 'PRIMARY-ADM1', 'the ADM1 primary should now rank first, not the demoted ADM0 alt-name noise');
+});
+
+test('search(): "deutschland" -- an exact match against an alt-name row for a country is not penalized (stays promoted like any exact match)', async () => {
+  const rows = [
+    row('Deutschland', 'deutschland', 'DEU', 0, 'DEU-EXACT-ALT', { alt_of: 'germany-primary-uuid' }), // German endonym stored as an alt row
+    row('Deutschlandsberg', 'deutschlandsberg', 'AUT', 4, 'AUT-PREFIX-PRIMARY'), // unrelated Austrian town, primary, prefix match
+  ];
+  const geocoder = makeGeocoder(rows, { limit: 10, diversity: { dedupe: false, maxPerGroup: null } });
+  const results = await geocoder.search('deutschland');
+  assert.equal(results[0].featureId, 'DEU-EXACT-ALT', 'the exact alt-name match for the country itself must win, same as an exact primary match would');
+});
+
+test('search(): altLevelDemotion is configurable via GeocoderOptions.ranking, like exactLevelPromotion', async () => {
+  const rows = [
+    row('Bagraain', 'bagraain', 'BHR', 0, 'ALT-NOISE', { alt_of: 'bahrain-primary-uuid' }),
+    row('Bagdad Province', 'bagdad province', 'IRQ', 1, 'PRIMARY-ADM1'),
+  ];
+  const geocoder = makeGeocoder(rows, {
+    limit: 10,
+    diversity: { dedupe: false, maxPerGroup: null },
+    ranking: { altLevelDemotion: 0 }, // opt out: restores the pre-amendment ordering
+  });
+  const results = await geocoder.search('bag');
+  assert.equal(results[0].featureId, 'ALT-NOISE', 'with the demotion disabled, raw level alone decides again: ADM0 before ADM1');
+});

@@ -20,6 +20,14 @@ export const VIEWPORT_RANK = { inside: 0, overlap: 1, near: 2, outside: 3 };
  *  2026-11-12 amendment. See `compareRanked`'s doc comment. */
 export const DEFAULT_EXACT_LEVEL_PROMOTION = 1;
 
+/** Default admin-level demotion applied to a `prefix`/`word-prefix`/
+ *  `substring` match against an alt-name row (`isAlt`), per the
+ *  2026-11-12 "alt-demotion" follow-up amendment -- the mirror image of
+ *  `DEFAULT_EXACT_LEVEL_PROMOTION` above. An `exact` match against an
+ *  alt-name row is deliberately exempt (demotion `0`): see `rankRow`'s
+ *  doc comment for why. */
+export const DEFAULT_ALT_LEVEL_DEMOTION = 1;
+
 /** Default result-diversity options (design doc §3.2 amendment, "Result
  *  diversity"): collapse exact (name_norm, country, level) duplicates to
  *  one row, then cap at 3 rows per (country, level) group. */
@@ -84,6 +92,7 @@ export function computeViewportRank(featureBBox, viewport, nearFactor) {
  *   nearFactor: number,
  *   matchClasses: readonly MatchClass[],
  *   exactLevelPromotion?: number,
+ *   altLevelDemotion?: number,
  * }} options
  * @returns {{ matchClass: MatchClass, level: number, effLevel: number, levelAdjusted: number, viewportRank: ViewportRank, nameLength: number, areaKm2: number|undefined, population: number|undefined, class: string|undefined, isAlt: boolean } | null}
  */
@@ -92,6 +101,8 @@ export function rankRow(row, queryNorm, options) {
   if (matchClass === null) return null;
   const viewportRank = computeViewportRank(row.bbox, options.viewport, options.nearFactor);
   const boostEligible = viewportRank === 'inside' || viewportRank === 'overlap';
+  const isAlt = Boolean(row.isAlt);
+  const isExact = matchClass === 'exact';
 
   // Bounded exact-match promotion (2026-11-12 amendment): an `exact` match
   // is treated as if it sat `exactLevelPromotion` admin levels higher
@@ -99,8 +110,25 @@ export function rankRow(row, queryNorm, options) {
   // is what lets an exact ADM3 "Paris" beat a `prefix`/`word-prefix` match
   // one level up (an ADM1/ADM2 noise row), without letting an exact ADM4
   // "Bag" beat an ADM0 country three levels up -- see `compareRanked`.
-  const promotion = matchClass === 'exact' ? (options.exactLevelPromotion ?? DEFAULT_EXACT_LEVEL_PROMOTION) : 0;
-  const effLevel = Math.max(0, row.level - promotion);
+  const promotion = isExact ? (options.exactLevelPromotion ?? DEFAULT_EXACT_LEVEL_PROMOTION) : 0;
+
+  // Bounded alt-row demotion (2026-11-12 "alt-demotion" follow-up,
+  // mirroring the promotion above): a `prefix`/`word-prefix`/`substring`
+  // match against an alt-name row (`isAlt`) is treated as if it sat
+  // `altLevelDemotion` admin levels *lower* (farther from ADM0) than it
+  // really does. This is what lets a primary-name match one level up tie
+  // -- and then win the `isAlt` tiebreak in `compareRanked` -- against an
+  // alt-name match that would otherwise out-rank it purely on its
+  // division's raw level (the residual the 2026-11-12 ranking-residual
+  // follow-up's `isAlt` tiebreak measured but could not reach on its own,
+  // since that tiebreak only applies once every level-based component
+  // already ties). **Exempted for an `exact` match** (`isExact` guards
+  // this below): typing the alt name in full -- "Deutschland", "中国" --
+  // is a deliberate, high-confidence query in that language, and
+  // penalizing it would be exactly backwards from what alt names are for.
+  const demotion = isAlt && !isExact ? (options.altLevelDemotion ?? DEFAULT_ALT_LEVEL_DEMOTION) : 0;
+
+  const effLevel = Math.max(0, row.level - promotion + demotion);
   const levelAdjusted = effLevel - (boostEligible ? options.viewportBoost : 0);
 
   return {
@@ -113,7 +141,7 @@ export function rankRow(row, queryNorm, options) {
     areaKm2: typeof row.areaKm2 === 'number' && !Number.isNaN(row.areaKm2) ? row.areaKm2 : undefined,
     population: typeof row.population === 'number' && !Number.isNaN(row.population) ? row.population : undefined,
     class: typeof row.class === 'string' ? row.class : undefined,
-    isAlt: Boolean(row.isAlt),
+    isAlt,
   };
 }
 
@@ -173,21 +201,21 @@ function prominenceKey(rank) {
  *    same rung as a lower-match-class row's unpromoted level -- this is
  *    where the bounded promotion actually resolves in the exact match's
  *    favour.
- * 4. `level` -- the true, unpromoted admin level. Final level-based
- *    tiebreak for anything still tied (normally redundant with (2)/(3),
- *    but kept as the honest "ADM0 before ADM1" fallback the original spec
- *    asked for).
- * 5. `isAlt` -- **added by the ranking-residual follow-up** (task 5): at
- *    equal level, a match against a primary-name row ranks above the
- *    identical match against an alt-name row for the same underlying
- *    feature (`alt_of` non-null on the matched row). `isAlt` is `false`
- *    for every row on an index with no `alt_of` column, so this is a
- *    no-op until one is populated with alt-name rows that actually tie on
- *    (1)-(4) with their own primary row -- which, today, none do (the
- *    primary and its alt rows differ in `nameNorm`, so they are different
- *    *query matches* far more often than they land in the same result
- *    set at all).
- * 6. **Prominence** -- also added by the ranking-residual follow-up:
+ * 4. `isAlt` -- **moved here by the 2026-11-12 alt-demotion follow-up**
+ *    (originally component (5), after raw `level`; see "Why `isAlt` moved
+ *    above raw `level`" below for why that placement didn't work). At
+ *    equal `effLevel`/`matchClass` -- which now includes an alt-name
+ *    `prefix`/`word-prefix`/`substring` match's own bounded, one-level
+ *    *demotion* (`altLevelDemotion`, mirroring `exactLevelPromotion`; see
+ *    `rankRow`) -- a match against a primary-name row ranks above the
+ *    identical match against an alt-name row. `isAlt` is `false` for
+ *    every row on an index with no `alt_of` column, so this (and the
+ *    demotion that feeds it) is a no-op on such an index.
+ * 5. `level` -- the true, unpromoted/undemoted admin level. Final
+ *    level-based tiebreak for anything still tied (normally redundant
+ *    with (2)-(4), but kept as the honest "ADM0 before ADM1" fallback the
+ *    original spec asked for).
+ * 6. **Prominence** -- added by the ranking-residual follow-up:
  *    `population` descending when the row carries one, else a fixed
  *    `class` ladder (`city` > `town` > `village` > `hamlet` > anything
  *    else/absent) -- see `prominenceKey`. Slots ahead of `areaKm2`
@@ -219,6 +247,28 @@ function prominenceKey(rank) {
  * case (a one-level gap) without manufacturing a false win for an exact
  * ADM4 match against an ADM0/ADM1 noise row three or four levels away.
  *
+ * Why `isAlt` moved above raw `level` (the 2026-11-12 alt-demotion
+ * follow-up): the ranking-residual follow-up's original placement -- an
+ * `isAlt` tiebreak *after* raw `level` -- only ever triggered when two
+ * rows already had the exact same level, which measured live against the
+ * published Overture catalog, essentially never happens for the actual
+ * bug (an alt-name row for an *unrelated, shallower* feature outranking a
+ * deeper primary/alt match for the one the user meant): a level-0 alt
+ * row's raw level (0) is less than a level-1+ row's, so the old ordering
+ * -- `level` before `isAlt` -- picked the level-0 alt row every time,
+ * never even reaching the `isAlt` check. `effLevel` now applies the same
+ * bounded, one-level demotion to a non-exact alt match that it already
+ * applies as a *promotion* to an exact match (see `rankRow`), so a
+ * level-0 alt row demotes to `effLevel` 1 -- tying a genuine level-1
+ * primary match, if one exists for the query, rather than beating it
+ * outright. Once that tie exists, it has to be resolved by `isAlt` *before*
+ * the raw-level tiebreak reopens the exact gap the demotion just closed
+ * (raw `level` is still 0 vs. 1) -- hence the reordering. Like the
+ * exact-match promotion, this is bounded to one level: it fixes a
+ * level-0-alt-vs-level-1-primary tie, not a level-0-alt-vs-level-4-primary
+ * one four levels away, which is the same honest limit as before --
+ * documented, with the live measurements, in the design doc.
+ *
  * @param {{ rank: ReturnType<typeof rankRow>, nameNorm: string, featureId: string }} a
  * @param {{ rank: ReturnType<typeof rankRow>, nameNorm: string, featureId: string }} b
  * @returns {number}
@@ -232,9 +282,14 @@ export function compareRanked(a, b) {
   const mcB = MATCH_CLASS_RANK[b.rank.matchClass];
   if (mcA !== mcB) return mcA - mcB;
 
-  if (a.rank.level !== b.rank.level) return a.rank.level - b.rank.level;
-
+  // isAlt before raw level (2026-11-12 alt-demotion follow-up; see "Why
+  // isAlt moved above raw level" below): checking raw level first would
+  // undo the demotion `effLevel` just applied, since a demoted alt row's
+  // raw level is still shallower than the primary it was demoted to tie
+  // with.
   if (a.rank.isAlt !== b.rank.isAlt) return (a.rank.isAlt ? 1 : 0) - (b.rank.isAlt ? 1 : 0);
+
+  if (a.rank.level !== b.rank.level) return a.rank.level - b.rank.level;
 
   const [tierA, prominenceA] = prominenceKey(a.rank);
   const [tierB, prominenceB] = prominenceKey(b.rank);

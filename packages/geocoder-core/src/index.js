@@ -20,6 +20,7 @@ export {
   MATCH_CLASS_RANK,
   VIEWPORT_RANK,
   DEFAULT_EXACT_LEVEL_PROMOTION,
+  DEFAULT_ALT_LEVEL_DEMOTION,
   DEFAULT_DIVERSITY,
 } from './ranking.js';
 export { prefixRange, findCandidateGroups, searchRangeIndex } from './index-loader.js';

@@ -1184,6 +1184,14 @@ export interface RankingOptions {
    *  ADM0) level. `0` disables the promotion entirely (pure level-first).
    *  Default `1`. */
   readonly exactLevelPromotion?: number;
+  /** **Added 2026-11-12** (the "alt-demotion" follow-up amendment below).
+   *  The mirror image of `exactLevelPromotion`: how many admin levels a
+   *  `prefix`/`word-prefix`/`substring` match against an alt-name row
+   *  (`alt_of` non-null) is pushed *down* -- farther from ADM0 -- before
+   *  level order is decided. An `exact` match against an alt-name row is
+   *  never demoted (see `rankRow`'s doc comment). `0` disables the
+   *  demotion entirely. Default `1`. */
+  readonly altLevelDemotion?: number;
 }
 
 export type MatchClass = 'exact' | 'prefix' | 'word-prefix' | 'substring';
@@ -1396,36 +1404,49 @@ export const VERSION: string;
 
 **The ranking rule, normatively.** *(Amended 2026-11-12 — see the amendment
 below for the bug report, the alternatives measured, and why this is the
-order; further amended the same day by the "Ranking-residual follow-up"
-amendment after it, which adds components (5)/(6) below.)* Results are
-sorted by this tuple, ascending, with every component a total order:
+order; amended again the same day by "Ranking-residual follow-up", which
+added `isAlt`/prominence; amended a third time, also the same day, by
+"alt-demotion", which folds a bounded alt-row demotion into `effLevel` and
+moves `isAlt` earlier — see that amendment for why the ranking-residual
+follow-up's placement of `isAlt` didn't reach the case it was built for.)*
+Results are sorted by this tuple, ascending, with every component a total
+order:
 
 1. `levelAdjusted` = `effLevel − (viewportBoost if viewport is 'inside' or 'overlap' else 0)`.
-2. `effLevel` = `max(0, level − exactLevelPromotion)` when `matchClass` is
-   `'exact'`, else `level` unchanged. `exactLevelPromotion` defaults to `1`
-   (`RankingOptions.exactLevelPromotion`) — the *bounded promotion* the
-   amendment introduces; see below for why it's bounded rather than
-   unlimited (the pre-amendment behaviour) or zero (level-first with no
-   promotion at all, also tried and also wrong).
+2. `effLevel` = `max(0, level − promotion + demotion)`, where `promotion`
+   is `exactLevelPromotion` (default `1`) when `matchClass` is `'exact'`,
+   else `0`; and `demotion` is `altLevelDemotion` (default `1`) when the
+   row is alt-named (`alt_of` non-null) **and** `matchClass` is *not*
+   `'exact'`, else `0`. The two adjustments are mutually exclusive per row
+   (`promotion` only applies to `exact`, `demotion` only to non-`exact`),
+   so they never combine. `promotion` is the *bounded promotion* the first
+   amendment introduced (an exact match reads as up to one level shallower
+   than it is); `demotion` is its mirror, added by "alt-demotion" (a
+   non-exact alt-name match reads as up to one level *deeper*). See below,
+   and that amendment, for why each is bounded to exactly one level and
+   why an `exact` alt match is exempt from the demotion.
 3. `matchClassRank` — `exact` 0, `prefix` 1, `word-prefix` 2, `substring`
    3. Reached only once (1)/(2) have already tied — which is exactly when
    an `exact` match's promoted `effLevel` lands on the same rung as a
    shallower `prefix`/`word-prefix`/`substring` match's own level. That tie
    is where the bounded promotion actually resolves in the exact match's
    favour; `matchClassRank` never dominates the order on its own anymore.
-4. `level` — the true, unpromoted admin level. Final level-based tiebreak
-   for anything (1)–(3) left tied; normally redundant with (2)/(3), kept as
-   the honest "ADM0 before ADM1" fallback the original spec asked for.
-5. **`isAlt`** — **added by the ranking-residual follow-up.** `false`
-   (primary-name row) before `true` (alt-name row, `alt_of` non-null): at
-   equal level, a match against a feature's primary name outranks the
-   identical match against one of its alt names. Pending data: `alt_of`
-   is populated (E8), but today's alt-name rows virtually never land in
-   the same `(levelAdjusted, effLevel, matchClassRank, level)` bucket as
-   their own primary row — they usually have a *different* `nameNorm`, so
-   they're different query matches, not ties — so this is observably a
-   no-op until an index ships alt rows that actually collide this way.
-6. **Prominence** — also added by the ranking-residual follow-up: tier 0
+4. **`isAlt`** — `false` (primary-name row) before `true` (alt-name row,
+   `alt_of` non-null). **Moved here, ahead of raw `level`, by the
+   "alt-demotion" amendment** (originally placed after `level` by the
+   ranking-residual follow-up; see that amendment for why that placement
+   never actually fired for the bug it was meant to catch). At equal
+   `effLevel`/`matchClassRank` — which, after (2)'s demotion, now
+   routinely includes a demoted alt-name match tying a primary match one
+   level up — the primary wins. Checking `isAlt` *before* raw `level`
+   matters: a demoted alt row's raw level is still shallower than the
+   primary it was demoted to tie with, so checking `level` first would
+   immediately re-open the gap the demotion just closed.
+5. `level` — the true, unpromoted/undemoted admin level. Final level-based
+   tiebreak for anything (1)–(4) left tied; normally redundant with
+   (2)–(4), kept as the honest "ADM0 before ADM1" fallback the original
+   spec asked for.
+6. **Prominence** — added by the ranking-residual follow-up: tier 0
    is `population` descending (a row with a real population always beats
    one without, regardless of the loser's `class`); tier 1 (no
    `population`) falls back to a fixed `class` ladder — `city` > `town` >
@@ -1433,12 +1454,15 @@ sorted by this tuple, ascending, with every component a total order:
    `areaKm2` (next), because population/class-of-place is a better
    importance signal *across* feature kinds (a capital city vs. a
    country) than area is — see "Known residual limitation" below for why
-   `areaKm2` alone gets exactly that comparison backwards. **Both
-   `population` and `class` are still pending, unpopulated columns on
-   every index shipped so far** (Overture has not filled either in), so
-   every row ties here today and this step is a complete no-op, falling
-   straight through to (7) — see the "Ranking-residual follow-up"
-   amendment for the measured confirmation.
+   `areaKm2` alone gets exactly that comparison backwards. **Live as of
+   the "alt-demotion" amendment**: the published Overture catalog now
+   populates both `population` and `class` on a real fraction of rows
+   (confirmed live: Baghdad's city row carries `population: 7216040`,
+   `class: 'city'`), so this step is no longer the no-op the
+   ranking-residual follow-up shipped it as — see the measured tables
+   below for concrete before/after examples (e.g. "London" now correctly
+   favours Greater London's 8.9M population over a same-named small US
+   town once both tie on level).
 7. `areaKm2` descending, `null`/`undefined` sorted last — the importance
    signal added by the first amendment: among rows tied on (1)–(6), the
    bigger (or more completely attributed) feature wins. A point-only
@@ -1757,6 +1781,179 @@ population/class too is a reasonable future refinement but is not part
 of this follow-up's scope, and changing it changes which *concrete* row
 represents a deduped group, a bigger behavioural change than reordering
 ties. Left as is.
+
+### Amendment, 2026-11-12 — alt-demotion follow-up: `isAlt` moved ahead of raw `level`
+
+**The live reproduction.** Measured directly against the now-published
+`portolan-mirrors/cn-gazetteer-overture` catalog (the demo's `?index=overture`
+shortcut): searching "bag" put four alt-language spellings of Bahrain/Bahamas
+(ADM0, `alt_of` non-null) in positions 1–4, above Bağcılar/Bagua (ADM2,
+primary) and far above Baghdad. The ranking-residual follow-up above had
+already added the `isAlt` tiebreak for exactly this kind of case — but
+placed it *after* raw `level` (component (5) in that amendment's numbering).
+That placement never fires for this bug: an ADM0 alt row's raw level (0) is
+less than an ADM1+ row's, so `level` decides the comparison outright and
+`isAlt` is never reached. "Alt rows inherit their division's level
+privilege" — a country's alt-name translation gets to use that country's
+ADM0 level even though, as a *name match*, it's exactly as arbitrary as any
+other alt-name hit.
+
+**The fix: a bounded, one-level demotion, mirroring the existing bounded
+promotion.** A `prefix`/`word-prefix`/`substring` match against an alt-name
+row is now treated as if its `effLevel` sat `altLevelDemotion` (default `1`)
+levels *deeper* than its raw level — the exact mirror of how an `exact`
+match is already treated as `exactLevelPromotion` levels *shallower*. `isAlt`
+moves from component (5) to component (4), ahead of raw `level` — necessary,
+not cosmetic: once the demotion ties a level-0 alt row with a level-1
+primary at `effLevel` 1, checking raw `level` before `isAlt` would
+immediately re-open the exact 1-level gap the demotion just closed, and the
+alt row would win anyway on the old component (4). **An `exact` match
+against an alt-name row is exempt from the demotion** (gets the normal
+exact-match *promotion* instead): typing the full alt name in another
+language — "Deutschland", "中国" — is a deliberate, high-confidence query,
+and demoting it would be exactly backwards from what alt names exist for.
+
+**Why bounded to one level, not more.** Identical reasoning to
+`exactLevelPromotion`'s bound (see the first amendment): a one-level
+demotion fixes a level-0-alt-vs-level-1-primary tie (closes exactly the gap
+the live "bag" reproduction's `isAlt`-never-reached bug exposed) without
+manufacturing a win for a level-4 primary four levels away — see "Known
+residual limitation", revised below, for the honest, measured result of
+that bound on "bag" specifically.
+
+**A second, independent improvement, measured along the way: prominence is
+no longer a no-op.** The ranking-residual follow-up above shipped
+`population`/`class` as pending columns, unpopulated on every index at the
+time. The published Overture catalog now populates both on a real fraction
+of rows — confirmed live: Baghdad's city row carries `population: 7216040`,
+`class: 'city'`; Bahrain's alt-name row carries `population: 1234571`. This
+is not something this amendment's code changed (component (6) above was
+already correctly wired), but it means component (6) now actually decides
+real comparisons for the first time, and several of the measured
+improvements below (the "London" case especially) come from prominence
+alone, not from the alt-demotion fix. Both effects are measured together
+below because they ship in the same catalog refresh and the tables are the
+honest state of the live system either way.
+
+**Measured, live, against `?index=overture`** (the demo's default MapLibre
+viewport — Northern California — is active for every query below, since
+that's what a real user of this demo sees; the one case it visibly matters,
+"london", is called out):
+
+*"bag"* — top 8, unchanged in kind from the first amendment's table (the
+residual limitation below is still live), but with a concrete improvement
+inside it: Bağcılar (a real İstanbul district, ADM2, primary) and Bagua (a
+real Peruvian province, ADM2, primary) now appear in positions 5–6, where
+before this amendment they were crowded out by more ADM1 alt-noise
+(Myanmar's "Bago" translations). The demotion is doing real work here; it
+just isn't enough, alone, to clear four levels of gap down to Baghdad.
+
+| # | name | context | country · level | note |
+|---|---|---|---|---|
+| 1 | Bagraain | — | BHR · ADM0 | alt (Bahrain) |
+| 2 | Bagaman Sared | — | BHS · ADM0 | alt (Bahamas) |
+| 3 | Bagam orollari | — | BHS · ADM0 | alt (Bahamas) |
+| 4 | Bagama Adalary | — | BHS · ADM0 | alt (Bahamas) |
+| 5 | Bağcılar | İstanbul | TUR · ADM2 | primary |
+| 6 | Bagua | Amazonas | PER · ADM2 | primary |
+| 7 | Baguirmi | Chari-Baguirmi | TCD · ADM2 | primary |
+| 8 | Bagata | Kwilu | COD · ADM2 | primary |
+
+Measured precisely, not just eyeballed: "Baghdad" (`name='Baghdad'`,
+`country='IRQ'`, `class='city'`, `population=7216040`) is a level-4 alt row
+(its primary name is Arabic) — a **4-level** gap from ADM0, outside the
+1-level bound by design. "Baghdad Governorate" (`country='IRQ'`, level 1,
+alt) is only a **1-level** gap and *is* reachable: it now lands at position
+37 of 413 in the fully diversified result list (capped to 3 of its ~33
+language-spelling variants by the existing `(country, level)` cap) — a real
+improvement in absolute terms (previously un-findable; its raw sorted
+position pre-this-amendment, uncapped, was 579 of 5159), but still well
+outside `limit: 8`. See "Known residual limitation" below.
+
+*"deutschland"* — exact alt match for the country itself wins outright,
+confirming the exemption:
+
+| # | name | country · level | note |
+|---|---|---|---|
+| 1 | Deutschland | DEU · ADM0 | **exact**, alt (German endonym) |
+| 2 | Deutschlandsberg | AUT · ADM4 | prefix, primary (an unrelated Austrian town) |
+
+*"zhongguo"* (pinyin) and *"中国"* (hanzi) — exact alt match for China wins
+outright in both scripts:
+
+| # | name | country · level | note |
+|---|---|---|---|
+| 1 | Zhōngguó | CHN · ADM0 | **exact**, alt |
+| 2 | Zhongguo | CHN · ADM4 (+2 more) | exact, alt (unrelated villages, same romanized spelling) |
+| 3 | Zhongguocun | CHN · ADM4 (+1 more) | prefix, alt |
+| 4 | Zhongguojiangcun | CHN · ADM4 | prefix, alt |
+
+| # | name | country · level |
+|---|---|---|
+| 1 | 中国 | CHN · ADM0 — **exact**, alt |
+| 2–5 | 中国集村 / 中国热带农业科学院试验场七队 / 九队 / 中国城 | CHN/RUS · ADM4, unrelated villages that happen to prefix-match |
+
+*"bahamas"* — exact alt match wins, ahead of even the primary "The Bahamas"
+(a `word-prefix` match, since the primary name has the article):
+
+| # | name | country · level | note |
+|---|---|---|---|
+| 1 | Bahamas | BHS · ADM0 | **exact**, alt (the plain English name is stored as alt; the primary is "The Bahamas") |
+| 2 | Bahâmasa | BHS · ADM0 | prefix, alt |
+| 3 | Bahamasi | BHS · ADM0 | prefix, alt |
+
+*"paris"* — no regression from the first amendment's table; exact "Paris,
+France" still wins outright, now ahead of even more ADM1/ADM2 noise than
+before since prominence is live:
+
+| # | name | context | country · level |
+|---|---|---|---|
+| 1 | Paris | Île-de-France | **FRA · ADM2** |
+| 2 | Paris | Paris | FRA · ADM3 |
+| 3 | Paris Paris | الوادي الجديد | EGY · ADM2 |
+| 4 | Päris-Soome | Suomi / Finland | FIN · ADM1 |
+| 5 | Paris | Paris (+3 more) | FRA · ADM4 |
+| 6 | Paris | Howard County (+26 more) | USA · ADM4 |
+
+*"london"* — no regression; exact "London" (Ontario) still wins outright at
+ADM2. One instructive, *intentional* interaction with the demo's own
+viewport boost, not this amendment: with no viewport, "London" (Westminster,
+GBR, `population: 8908083`) is the clear #2 by prominence, ahead of every
+same-named US town. With the demo's default Northern-California viewport
+active, "London, Tulare County, California" (a real place inside that
+viewport) gets `viewportBoost`ed ahead of it instead — the system correctly
+prioritizing what's literally on the user's screen, the documented, intended
+purpose of the viewport boost (§3.2, component (1)), confirmed by replaying
+the same query through `search()` with and without a `viewport` option and
+observing exactly that one row's position change. Not a ranking-residual or
+alt-demotion effect; noted here only so a future reader comparing this
+table against a live run with a different map centre doesn't mistake it for
+one.
+
+| # | name | context | country · level | note |
+|---|---|---|---|---|
+| 1 | London | Ontario | **CAN · ADM2** | exact |
+| 2 | London | Tulare County (+18 more) | USA · ADM4 | exact, **viewport-boosted** (demo's default view) |
+| 3 | London | Westminster | GBR · ADM4 | exact, `population: 8908083` — ranks #2 with no viewport active |
+| 4 | London | London | CAN · ADM4 | exact, `population: 422324` |
+
+**Known residual limitation — revised.** The first amendment's residual
+limitation ("bag"/"san" still don't surface Baghdad/San Francisco within
+`limit: 8`) is now *measurably smaller*, not closed: Baghdad's best
+1-level-gap candidate (the governorate) moved from un-findable to position
+37 of 413; Bağcılar/Bagua (real ADM2 primaries) now clear the Bahrain/
+Bahamas ADM0 noise entirely, which they didn't before. What remains
+unreachable is Baghdad's own best-known (city, English-language) match — a
+4-level gap no *bounded* demotion closes, by design, for the same reason
+the exact-match promotion is bounded: an unbounded version would simply
+reintroduce a different false win (here, an alt-name city match beating a
+primary country name it has no real claim to outrank). Closing the
+remaining gap needs the same thing the first amendment already named:
+weighting by `population`/`prominence` *across* the level hierarchy itself,
+not just as a same-level tiebreak — out of scope for a bounded,
+one-level-at-a-time fix. `new Geocoder({ ranking: { altLevelDemotion: 0 } })`
+restores the pre-amendment ordering exactly, for a caller that needs to A/B
+the two.
 
 Usage:
 

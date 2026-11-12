@@ -3,7 +3,7 @@
 import { CnmwError, normalizeName, buildArea, simplifyToVertexCeilingAsync, MAX_SYNC_SIMPLIFY_VERTICES } from '@cnmw/spec';
 import { Emitter } from './events.js';
 import { loadManifest, resolveManifestUrl, loadFullIndex, openRangeIndex, searchRangeIndex, prefixRange } from './index-loader.js';
-import { rankRow, compareRanked, scoreOf, applyDiversity, DEFAULT_EXACT_LEVEL_PROMOTION, DEFAULT_DIVERSITY } from './ranking.js';
+import { rankRow, compareRanked, scoreOf, applyDiversity, DEFAULT_EXACT_LEVEL_PROMOTION, DEFAULT_ALT_LEVEL_DEMOTION, DEFAULT_DIVERSITY } from './ranking.js';
 import { resolveGeometry, openBoundaryFile } from './geometry-resolver.js';
 import { GenerationGuard } from './generation-guard.js';
 
@@ -69,6 +69,7 @@ const DEFAULT_RANKING = {
   nearFactor: 2,
   matchClasses: ['exact', 'prefix', 'word-prefix'],
   exactLevelPromotion: DEFAULT_EXACT_LEVEL_PROMOTION,
+  altLevelDemotion: DEFAULT_ALT_LEVEL_DEMOTION,
 };
 
 function defaultNormalize(s) {

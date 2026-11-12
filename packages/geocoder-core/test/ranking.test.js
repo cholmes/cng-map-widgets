@@ -363,3 +363,102 @@ test('compareRanked: with no population/class/isAlt data on either row (every in
   const sorted = [smallArea, bigArea].sort(compareRanked);
   assert.deepEqual(sorted.map((r) => r.featureId), ['BIG', 'SMALL'], 'areaKm2 (descending) must still be reached and decide, exactly as before this task');
 });
+
+// --- Alt-demotion follow-up (design doc §3.2 amendment, "alt-demotion",
+// 2026-11-12): the ranking-residual follow-up's `isAlt` tiebreak above
+// only ever triggers when two rows already tie on raw `level` -- measured
+// live against the published Overture catalog, searching "bag" returned
+// alt-language spellings of Bahrain/Bahamas (ADM0, `alt_of` set) ranked
+// above Bağcılar/Bagua (ADM2, primary) and above Baghdad itself (buried
+// deeper still), because `level` was reached and decided *before* `isAlt`
+// ever got a chance to. This block tests the fix: a bounded, one-level
+// `effLevel` demotion for a non-exact alt match (mirroring the existing
+// exact-match *promotion*), with `isAlt` moved ahead of raw `level` in the
+// comparator so the demotion isn't immediately undone by the very
+// tiebreak it was meant to feed into -- and the explicit exemption for an
+// `exact` alt match (typing "Deutschland" or "中国" in full must not be
+// penalized for being an alt-language name). ---------------------------
+
+test('rankRow: a non-exact alt match is demoted one level (effLevel = level + altLevelDemotion)', () => {
+  const row = { nameNorm: 'bagraain', level: 0, bbox: [0, 0, 1, 1], featureId: 'A', isAlt: true };
+  const rank = rankRow(row, 'bag', { ...rankOpts, altLevelDemotion: 1 }); // 'bagraain' startsWith 'bag' -> prefix
+  assert.equal(rank.matchClass, 'prefix');
+  assert.equal(rank.effLevel, 1); // 0 + 1 (demoted), not promoted (not exact)
+  assert.equal(rank.level, 0, 'the true, undemoted level is still reported');
+});
+
+test('rankRow: an exact alt match is exempt from demotion -- it still gets the exact-match promotion instead', () => {
+  const row = { nameNorm: 'deutschland', level: 0, bbox: [0, 0, 1, 1], featureId: 'A', isAlt: true };
+  const rank = rankRow(row, 'deutschland', { ...rankOpts, exactLevelPromotion: 1, altLevelDemotion: 1 });
+  assert.equal(rank.matchClass, 'exact');
+  assert.equal(rank.effLevel, 0, 'max(0, 0 - 1 promotion + 0 demotion): clamped at 0, never demoted for being exact+alt');
+});
+
+test('rankRow: a primary row is never demoted, exact or not', () => {
+  const row = { nameNorm: 'bagua', level: 2, bbox: [0, 0, 1, 1], featureId: 'A', isAlt: false };
+  const rank = rankRow(row, 'bag', rankOpts); // prefix match, not alt
+  assert.equal(rank.effLevel, 2, 'no promotion (not exact), no demotion (not alt)');
+});
+
+test('rankRow: altLevelDemotion defaults to 1 when not specified in options', () => {
+  const row = { nameNorm: 'bagraain', level: 0, bbox: [0, 0, 1, 1], featureId: 'A', isAlt: true };
+  const rank = rankRow(row, 'bag', rankOpts); // rankOpts has no altLevelDemotion set
+  assert.equal(rank.effLevel, 1);
+});
+
+test('compareRanked: a level-0 alt noise match now ties (not beats) a level-1 primary match, and the primary wins the tie', () => {
+  // The literal reported shape: "Bagraain" (Bahrain, ADM0, alt, prefix
+  // match on "bag") vs a hypothetical ADM1 primary match one level down.
+  // Before this fix, raw level (0 < 1) decided outright and the alt noise
+  // won; now the demotion ties them at effLevel 1, and `isAlt` (checked
+  // before raw level) picks the primary.
+  const altAdm0 = ranked('bagraain', 0, 'ALT-NOISE', { query: 'bag', isAlt: true });
+  const primaryAdm1 = ranked('bagdad province', 1, 'PRIMARY-ADM1', { query: 'bag', isAlt: false });
+  assert.equal(altAdm0.rank.effLevel, 1);
+  assert.equal(primaryAdm1.rank.effLevel, 1);
+  assert.ok(compareRanked(primaryAdm1, altAdm0) < 0, 'the ADM1 primary should now sort before the demoted ADM0 alt-name noise');
+});
+
+test('compareRanked: FLIPPED by this amendment -- a level-0 alt match no longer unconditionally beats a level-1+ primary match', () => {
+  // Same two rows as above, asserting the OLD (pre-amendment) direction
+  // now fails: this is the literal bug ("alt rows inherit their
+  // division's LEVEL privilege") the live reproduction measured.
+  const altAdm0 = ranked('bagraain', 0, 'ALT-NOISE', { query: 'bag', isAlt: true });
+  const primaryAdm1 = ranked('bagdad province', 1, 'PRIMARY-ADM1', { query: 'bag', isAlt: false });
+  assert.ok(!(compareRanked(altAdm0, primaryAdm1) < 0), 'the pre-amendment ordering (alt-noise first, by raw level alone) must no longer hold');
+});
+
+test('compareRanked: the demotion is bounded to one level -- a level-0 alt match still beats a level-2 primary match (gap of 2)', () => {
+  // Mirrors the exact-promotion bound (compareRanked: exact does NOT beat
+  // prefix two levels up, in the earlier amendment's tests): just as an
+  // exact match is only promoted one level, a non-exact alt match is only
+  // demoted one level. This is the honest limitation measured live
+  // against "bag" on the real Overture catalog: Bahrain/Bahamas (ADM0,
+  // alt) still out-rank Bağcılar/Bagua-style ADM2 primaries, and Baghdad
+  // itself (its best English-language match is ADM4, alt, four levels
+  // down) remains out of easy reach -- see the design doc's measured
+  // table for the honest, documented residual.
+  const altAdm0 = ranked('bagraain', 0, 'ALT-NOISE', { query: 'bag', isAlt: true });
+  const primaryAdm2 = ranked('bagua', 2, 'PRIMARY-ADM2', { query: 'bag', isAlt: false });
+  assert.equal(altAdm0.rank.effLevel, 1); // demoted from 0
+  assert.equal(primaryAdm2.rank.effLevel, 2); // undemoted
+  assert.ok(compareRanked(altAdm0, primaryAdm2) < 0, 'a 2-level gap exceeds the bounded demotion: the ADM0 alt match still wins');
+});
+
+test('compareRanked: within a demotion-created tie, a primary beats an alt-exact match too if the alt-exact match is not actually at the same effLevel -- exact-alt exemption does not create a FALSE tie', () => {
+  // "Deutschland" (exact, alt, ADM0) should behave exactly like a primary
+  // exact match at ADM0 would: promoted, not demoted. It must still beat
+  // a same-level primary prefix/word-prefix match, same as any exact
+  // match would (the pre-existing bounded-promotion rule), confirming the
+  // exemption doesn't degrade an exact alt match's ranking at all.
+  const exactAltAdm0 = ranked('deutschland', 0, 'DEU-EXACT-ALT', { query: 'deutschland', isAlt: true });
+  const prefixPrimaryAdm1 = ranked('deutschlandsberg', 1, 'AUT-PREFIX-PRIMARY', { query: 'deutschland', isAlt: false });
+  assert.equal(exactAltAdm0.rank.effLevel, 0, 'exact alt match: promoted like any exact match, not demoted');
+  assert.ok(compareRanked(exactAltAdm0, prefixPrimaryAdm1) < 0, 'the exact alt-name match for "Deutschland" should still win, exactly as an exact primary match would');
+});
+
+test('rankRow: altLevelDemotion: 0 disables the demotion entirely (opt-out)', () => {
+  const row = { nameNorm: 'bagraain', level: 0, bbox: [0, 0, 1, 1], featureId: 'ALT-NOISE', isAlt: true };
+  const rankNoOp = rankRow(row, 'bag', { ...rankOpts, altLevelDemotion: 0 });
+  assert.equal(rankNoOp.effLevel, 0, 'effLevel unchanged when altLevelDemotion is explicitly 0');
+});
