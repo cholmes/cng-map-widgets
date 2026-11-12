@@ -342,6 +342,186 @@ every documented snippet now runs against real published data, not fixtures.
   three artifacts (`.js` / `.cdn.js` / `.bundle.js`) with `.d.ts` — nothing
   below needs it, but npm consumers will.
 
+## Status snapshot (2026-11-13, pre-publish hardening pass)
+
+The consolidated follow-up to the overnight audits above. Every numbered
+drift item from the 2026-11-12 snapshot is now either fixed or demoted to a
+clearly-marked "specified, not implemented" section of the design doc
+(**new §8**), so the doc no longer describes behaviour that does not
+exist.
+
+**API correctness**
+
+1. **A `blocked` handle's `result` now rejects** with `CeilingExceededError`
+   (`context.breaches`/`limits`/`estimate`) instead of never settling, and
+   **`acceptCeiling()` returns the continued run's promise** — `result`
+   became a getter over a per-run deferred, since a promise settles once
+   but the run does not end. Drift #1, the worst one for an automated
+   caller, is gone; `AGENTS.md`'s rule telling callers to work around it is
+   replaced by the real contract. Consumers updated: all three download
+   demos (a `CEILING_EXCEEDED` rejection is no longer rendered as a
+   failure; the `state` event reports a decline), `docs/verify-snippets.mjs`.
+   **portolan-browser's `AreaDownload.vue` needs a one-line change — see
+   "Needs Chris" below.**
+2. **Cancellation reports `CANCELLED`.** `parquet-io.js` now checks
+   `signal.aborted` when a footer or row read throws, so an abort no longer
+   surfaces as `NETWORK` (planning) or `DATASET_UNRESOLVED` (row read).
+   It tests the *signal*, not the error type, because a caller-supplied
+   `fetch` may reject with anything. Drift #6.
+3. **`SearchResult` survives `JSON.stringify`.** `geometry_ref.row` is
+   parquet `INT64` → `BigInt`, which made `JSON.stringify(result)` throw;
+   both `INT64` columns are now coerced at the result boundary. **This
+   turned up a second, worse bug of the same shape:** WOF types
+   `population` as `INT64` too, so the `typeof === 'number'` guard read it
+   as absent on *every* row — silently reducing the ranking comparator's
+   whole prominence component to a measured no-op on the index that
+   populates it most widely. Drift #5.
+4. **Format load state is observable.** `onFormatState(handler) =>
+   unsubscribe` on the download-core registry, fired on registration and on
+   every lazy `load()` transition. Replaces portolan-browser's polling
+   (it was bumping a reactivity counter to re-read `formats()`).
+
+**Ranking (geocoder-core)**
+
+5. **The Brooklyn case: fixed, measured, and it needed two fixes.** With
+   the decode bug above fixed but the comparator untouched, "brooklyn" was
+   *unchanged in kind* — the borough still absent from the top 8, because
+   components (1)/(2) decide on level before prominence is reached. So:
+   a **bounded one-level population promotion** (threshold **100,000**,
+   `DEFAULT_POPULATION_PROMOTION_THRESHOLD`, overridable; `Infinity` opts
+   out), mirroring the existing exact-match promotion and alt demotion, and
+   **prominence moved ahead of raw `level`** — necessary for the same
+   structural reason `isAlt` moved in the previous amendment: *any
+   adjustment whose purpose is to manufacture a tie must have that tie
+   resolved before raw `level`*, or raw level re-opens the gap.
+   Brooklyn-the-borough: absent → **#1**. Baghdad-the-city on Overture:
+   #7 → **#1**, closing half of the residual the previous two amendments
+   documented as unreachable. No regression on bag / paris / london /
+   san francisco / springfield; the threshold is a measured trade (every
+   neighbouring value is worse in a named way — full sweep in the
+   amendment), not a round number. One gate found by measurement: a row
+   that took the alt demotion does not also take the population promotion,
+   or Bagraain returns to #1 on "bag".
+6. **`DEFAULT_INDEX_URL` is the published geoBoundaries manifest**
+   (design call #10), not the relative dev path `'./data/index.json'` that
+   404'd for every consumer. geoBoundaries rather than Overture so a
+   default nobody chose cannot impose ODbL share-alike terms. A two-element
+   `indexUrl` array now refuses with **`INDEX_MULTI_SOURCE_UNSUPPORTED`**
+   instead of *silently* loading the default — drift #3's real hazard was
+   the silence, not the missing feature.
+
+**Performance (download-core)**
+
+10. **Parallel row-group reads: 11x, measured end to end.**
+    `maxConcurrentRequests` was documented with a default of 12 and read by
+    nothing. Row groups are now fetched by that many workers over one
+    shared cursor (the 8c1308c worker-pool shape), with `onBatch` still
+    delivered in strict row-group order by a single loop, read-ahead
+    bounded so one slow group cannot pull the plan into memory, `pause()`
+    gating the *workers* and not just delivery, and worker errors captured
+    rather than rethrown. Measured on the real s2 Kenya query (825
+    row-group reads, no covering so nothing prunes): **736.9 s sequential
+    → 65.5 / 67.1 / 73.9 s at the default**, with *identical* requests
+    (825), read bytes (208,463,067), rows (6,822) and batch count (8) —
+    the speedup changed nothing about the answer. Sweep: 1 → 106 s,
+    4 → 23 s, 12 → 9.5 s, 24 → 5.0 s on a fixed 96-group slice, and 24 was
+    still scaling. `maxConcurrentRequests: 1` through the new code matches
+    the old engine (106.1 s vs 106.5 s mean), so the pool is free when off.
+    Isolated: 8 reads serial 10.07 s vs concurrent 1.59 s, against a
+    per-row filter loop costing 14 ms per 6,144-row group — on this path
+    latency really is round trip, which is what the sentinel-2 precedent
+    claimed and this confirms.
+11. **Predicate pushdown** (`where[]` against row-group min/max) as a new
+    `row-group-where` stage, always reported. Sound-only: the 11 ops
+    statistics can decide prune (`=`, `!=`, `<`, `<=`, `>`, `>=`, `in`,
+    `not_in`, `between`, `is_null`, `is_not_null`); `like`/`ilike`, any
+    leaf under a `not`, and list/struct subscripts never do, and every
+    unknown — missing stats, type mismatch, non-ASCII strings (parquet
+    orders BYTE_ARRAY by byte, JS by UTF-16 code unit) — keeps the row
+    group. Measured on FIRMS Africa 2024-01 with `brightness >= 500`:
+    **649 → 147 row groups, 82.2 s → 18.0 s, 77.6% fewer bytes, identical
+    59 rows out.** And the honest other half: four of six real predicates
+    tried pruned *nothing* (FIRMS `confidence_pct >= 95`, FIRMS
+    `satellite = 'N'`, s2 `eo:cloud_cover <= 1`, s2 `tile_id like`), one
+    pruned 2%. Pushdown pays when the predicate column correlates with row
+    order; on hilbert-sorted or unsorted files it does not. Good
+    upstream-advocacy material: a mirror sorted on a commonly filtered
+    column would convert those no-ops.
+12. **Honest output-size estimates.** `estimateBytes` gains an additive
+    third `ctx` argument carrying `avgGeometryBytes` — average
+    *uncompressed* geometry bytes per row, from footer statistics only, so
+    the estimate stays metadata-only. All 12 implementations across 6
+    packages updated, each with a measured per-format expansion factor, and
+    each package now shares one estimator between its plugin and its lazy
+    descriptor so the two cannot drift. On 218 CGAZ ADM0 boundaries,
+    modelled ÷ written went from **0.006 → 1.01 (GeoJSON)** and
+    **0.001 → 1.01 (CSV)**; FTW Liechtenstein 0.24 → 1.05 and 0.06 → 1.03.
+    Before this, a 19 MB CSV modelled as 26 kB could never breach an
+    `outputBytes` ceiling — the ceiling was decorative on exactly the data
+    it exists for. Two residuals documented rather than hidden: a
+    per-file average under-models a non-representative slice (0.41x on
+    CGAZ ADM1's biggest-first rows — the unsafe direction), and GeoParquet
+    over-models compressible geometry up to 3x (the safe direction).
+13. **A real row-level bug found in passing and fixed:** `predicate.js`'s
+    `compareScalar` coerced a float to `BigInt` via `Math.trunc` when the
+    other side was a `BigInt`, so **`0n < 0.5` evaluated `false`** — every
+    `INT64` column compared against a fractional threshold filtered
+    wrongly — and a `BigInt` vs a non-numeric string *threw*. Found only
+    because the new pruner's soundness test requires the pruner and the
+    row evaluator to agree.
+14. `limit: 0` used to emit one row (the old loop pushed, then tested).
+    It now emits none. Judged a bug fix; flagged in case Chris disagrees.
+
+**Documentation (design doc + 8 READMEs)**
+
+15. **New §8, "Specified here, not implemented"**, with each entry also
+   marked at its own declaration: `indexUrl`-as-array, `createDrawTool`,
+   `load:progress`, `GeocoderControlOptions.geocoder`'s default and
+   `geocoderOptions` (deliberate — honoring them would make the adapters
+   import a parquet reader), `boundaryUrls`, `initialFetchSize`. Decided
+   per item on evidence; `createDrawTool` is the clearest demote (it is
+   pointer-interaction UI, and a half-working draw tool is worse than the
+   documented escape hatch).
+16. Corrected: `rank.viewportRank` (the doc said `viewport`; nothing ever
+   produced that field), the two `UPLOAD_*` error codes and the
+   `deduped-points` repair kind added to §3.5/§1.2, and standalone
+   `estimate()`'s `outputBytes` marked model-only (`download()` recomputes
+   it from the real format plugin, and *that* is what the ceiling uses).
+17. **Found while verifying, not in the brief:** the attribution
+   `share_alike`/`shareAlike` casing wart (drift #2) was already fixed in
+   code by commit 3ef699d — an `Area` carries both keys, in agreement —
+   while the README, `AGENTS.md` and a `verify-snippets.mjs` assertion all
+   still pinned the old broken behaviour. Docs corrected to match.
+
+**Needs Chris**
+
+- **portolan-browser's `AreaDownload.vue` needs a change before it works
+  against this build.** It does `const result = await requestHandle.result`
+  inside a `try`, so a ceiling breach now lands in the `catch`, shows a
+  download error, and the `finally` nulls `this.handle` — after which the
+  "Download anyway" button calls `acceptCeiling()` on nothing. The fix is
+  to catch `CEILING_EXCEEDED` specifically, wait for the user's decision,
+  and resume from `handle.acceptCeiling()`'s returned promise (the three
+  demos in this repo now do exactly that, and are worth copying). While in
+  there: its `formatsVersion` counter can be driven by the new
+  `onFormatState` subscription instead of only being bumped in `finally`,
+  which is also what makes a *failed* format load show up in the picker.
+  Branch is local and unpushed, so nothing is broken for anyone yet.
+- **Two API lies found and left unfixed** (outside this pass's scope, both
+  in the root README's known-issues table now): `inferTableFromSchema`
+  flattens struct children, so a dataset with a `bbox` struct and no
+  declared `table` fails its read; and `filter.columns.dropGeometry` is a
+  silent no-op because `buildBatch` always populates `batch.geometry`.
+  Both are small fixes; say the word.
+- **`limit: 0`** now returns zero rows instead of one. Called it a bug fix.
+- The **measurement discrepancy I thought I had found is not real** —
+  worth recording because it nearly went into the doc as a finding. A
+  `before-seq-full825` row in the raw measurement log is labelled
+  "seq" but was recorded with `conc: "default"`, i.e. 12 workers; reading
+  it as the sequential baseline made the full-query speedup look like
+  1.11x. The genuine sequential run (`full825-seq`, `conc: 1`) is 736.9 s,
+  and everything reconciles at 11x. Measurement labels are load-bearing.
+
 ### hyparquet findings (upstream-feedback candidates)
 1. GeoParquet auto-decode: files with `geo` kv-metadata get geometry
    silently replaced by decoded GeoJSON; `utf8: false` is ignored for that

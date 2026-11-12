@@ -28,6 +28,7 @@ a Blob fallback; zero-build CDN-consumable ESM.**
 5. [Adapter contracts](#5-adapter-contracts)
 6. [Index file interface](#6-index-file-interface)
 7. [Open items](#7-open-items)
+8. [Specified here, not implemented](#8-specified-here-not-implemented)
 
 ---
 
@@ -267,6 +268,12 @@ export type AreaRepair =
   | { kind: 'dropped-empty'; count: number }
   | { kind: 'dropped-z'; count: number }
   | { kind: 'clamped-coordinate'; count: number; axis: 'lon' | 'lat' }
+  /** **Added to this union 2026-11-12.** Produced by
+   *  `@cnmw/upload-core`'s repair.js ("removed N duplicate consecutive
+   *  points") since that package shipped; the union had no slot for it, so
+   *  it was a documented deviation in the code rather than a kind here.
+   *  Folding it into an unrelated kind would have been the dishonest fix. */
+  | { kind: 'deduped-points'; count: number }
   | { kind: 'dropped-feature'; count: number; reason: string };
 
 export interface DrawProvenance {
@@ -1143,10 +1150,13 @@ component", not a fork.
 
 export interface GeocoderOptions {
   /** Default: `DEFAULT_INDEX_URL` — the published
-   *  portolan-mirrors/geoboundaries sidecar (design call #10). An array means
-   *  several sources searched together; results carry `source`. Merging and
-   *  dedupe across sources is explicitly out of scope (design call #6): the
-   *  results are concatenated and ranked, duplicates included. */
+   *  portolan-mirrors/geoboundaries-catalog names manifest (design call #10).
+   *  **PLANNED, not implemented — §8:** the array form (several sources
+   *  searched together, results carrying `source`, concatenated and ranked
+   *  with duplicates included per design call #6). A one-element array is
+   *  accepted as equivalent to the string; two or more now refuse with
+   *  `INDEX_MULTI_SOURCE_UNSUPPORTED` rather than silently loading the
+   *  default instead. */
   readonly indexUrl?: string | readonly string[];
 
   /** `full` fetches the whole index once (design call #9's default path);
@@ -1156,7 +1166,12 @@ export interface GeocoderOptions {
   readonly fullLoadMaxBytes?: number;                  // default 5_242_880 (design call #9)
   /** Range path only: footer tail read size. Default 65_536, widened once on
    *  a miss. Not hyparquet's 512 KB default, which E1 measured as ~20% of a
-   *  2.5 MB index spent reading metadata. */
+   *  2.5 MB index spent reading metadata.
+   *  **PLANNED, not implemented — §8:** superseded in practice by the
+   *  manifest contract. The footer read size comes from each file entry's
+   *  declared `footer_metadata_bytes` (`initialFetchSizeOf` in geocoder.js),
+   *  which is exact per file rather than one global guess; this option is
+   *  accepted and ignored. */
   readonly initialFetchSize?: number;
 
   readonly limit?: number;              // default 10
@@ -1313,7 +1328,10 @@ export interface SearchResult {
      *  anything that isn't an `exact` match. */
     readonly effLevel: number;
     readonly levelAdjusted: number;
-    readonly viewport: 'inside' | 'overlap' | 'near' | 'outside';
+    /** Renamed in this doc 2026-11-12 to match the code, which has always
+     *  called it `viewportRank` (`ranking.js`'s `rankRow`); this line said
+     *  `viewport`, and nothing ever produced a field by that name. */
+    readonly viewportRank: 'inside' | 'overlap' | 'near' | 'outside';
     readonly nameLength: number;
   };
   /** **Added 2026-11-12.** Present only when `applyDiversity`'s dedupe step
@@ -1336,7 +1354,13 @@ export interface SearchResult {
    *  true size without forcing every one of its rows into memory/the DOM. */
   readonly collapsed?: readonly { readonly name: string; readonly featureId: string; readonly level: number }[];
   /** Advisory locator for the geometry fetch fast path (§6.3). Never
-   *  authoritative: `select()` verifies `featureId` after reading. */
+   *  authoritative: `select()` verifies `featureId` after reading.
+   *  `row` is parquet `INT64`, which hyparquet decodes as a `BigInt`; it is
+   *  converted to a plain `number` at the result boundary so that a
+   *  `SearchResult` survives `JSON.stringify()` (it did not before
+   *  2026-11-12 — one `BigInt` in the graph makes `JSON.stringify` throw).
+   *  A value too large to be a safe integer keeps its `BigInt` precision
+   *  and carries a `toJSON` instead. */
   readonly geometryRef?: { readonly file: string; readonly rowGroup?: number; readonly row?: number };
 }
 
@@ -1346,7 +1370,10 @@ export interface GeometryResolverOptions {
    *  `both` fetches display for `Area.geometry` and full for
    *  `Area.filterGeometry`. Default `display`. */
   readonly resolution?: 'display' | 'full' | 'both';
-  /** Override the boundary file URLs the index sidecar declares. */
+  /** Override the boundary file URLs the index sidecar declares.
+   *  **PLANNED, not implemented — §8:** boundary URLs always come from the
+   *  manifest (`resolveManifestUrl(manifestUrl, entry.full.url)`); this
+   *  option is accepted and ignored. */
   readonly boundaryUrls?: Readonly<Record<number, string>>;
   readonly filterVertexCeiling?: number;   // default 10_000
   readonly displayVertexCeiling?: number;  // default 200_000
@@ -1442,6 +1469,10 @@ export declare class Geocoder {
 
 export interface GeocoderEvents {
   'state': { state: GeocoderState };
+  /** **PLANNED, not implemented — §8.** Never emitted: nothing counts
+   *  bytes against `content-length` on either the manifest or the index
+   *  fetch. Subscribing succeeds (the emitter does not validate names) and
+   *  the handler simply never fires. */
   'load:progress': { bytes: number; total: number | null };
   'load': IndexInfo;
   /** `wave` **added by two-wave search** (manifest contract addition
@@ -1475,6 +1506,13 @@ export interface GeocoderEvents {
 
 export type Unsubscribe = () => void;
 
+/** **Changed 2026-11-12.** The published geoBoundaries CGAZ names manifest,
+ *  `https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json`
+ *  (design call #10). It was `'./data/index.json'` — a relative development
+ *  path that 404s for any consumer outside this repo's demo directory, and
+ *  which `.gitignore`'s `data/` rule excludes even inside it. geoBoundaries
+ *  (CC-BY-4.0) rather than the Overture index, deliberately: a default
+ *  nobody chose must not impose ODbL share-alike terms (design call #11). */
 export const DEFAULT_INDEX_URL: string;
 export const VERSION: string;
 ```
@@ -1485,23 +1523,37 @@ order; amended again the same day by "Ranking-residual follow-up", which
 added `isAlt`/prominence; amended a third time, also the same day, by
 "alt-demotion", which folds a bounded alt-row demotion into `effLevel` and
 moves `isAlt` earlier — see that amendment for why the ranking-residual
-follow-up's placement of `isAlt` didn't reach the case it was built for.)*
+follow-up's placement of `isAlt` didn't reach the case it was built for;
+amended a fourth time by "population-promotion / the Brooklyn case", which
+folds a bounded population promotion into `effLevel` and moves prominence
+ahead of raw `level` for the same structural reason `isAlt` moved.)*
 Results are sorted by this tuple, ascending, with every component a total
 order:
 
 1. `levelAdjusted` = `effLevel − (viewportBoost if viewport is 'inside' or 'overlap' else 0)`.
-2. `effLevel` = `max(0, level − promotion + demotion)`, where `promotion`
-   is `exactLevelPromotion` (default `1`) when `matchClass` is `'exact'`,
-   else `0`; and `demotion` is `altLevelDemotion` (default `1`) when the
-   row is alt-named (`alt_of` non-null) **and** `matchClass` is *not*
-   `'exact'`, else `0`. The two adjustments are mutually exclusive per row
-   (`promotion` only applies to `exact`, `demotion` only to non-`exact`),
-   so they never combine. `promotion` is the *bounded promotion* the first
-   amendment introduced (an exact match reads as up to one level shallower
-   than it is); `demotion` is its mirror, added by "alt-demotion" (a
-   non-exact alt-name match reads as up to one level *deeper*). See below,
-   and that amendment, for why each is bounded to exactly one level and
-   why an `exact` alt match is exempt from the demotion.
+2. `effLevel` = `max(0, level − promotion + demotion − populationPromotion)`,
+   where `promotion` is `exactLevelPromotion` (default `1`) when
+   `matchClass` is `'exact'`, else `0`; `demotion` is `altLevelDemotion`
+   (default `1`) when the row is alt-named (`alt_of` non-null) **and**
+   `matchClass` is *not* `'exact'`, else `0`; and `populationPromotion` is
+   `populationLevelPromotion` (default `1`) when the row's `population` is
+   at or above `populationPromotionThreshold` (default `100_000`) **and**
+   the row did not take the alt demotion, else `0`. `promotion` and
+   `demotion` are mutually exclusive per row (`promotion` only applies to
+   `exact`, `demotion` only to non-`exact`), so those two never combine;
+   `populationPromotion` composes with `promotion` (both can apply to a
+   large-population exact match, which is what reaches Baghdad across a
+   four-level gap) but is gated against `demotion`, since the two are the
+   same magnitude and would exactly cancel. `promotion` is the *bounded
+   promotion* the first amendment introduced (an exact match reads as up to
+   one level shallower than it is); `demotion` is its mirror, added by
+   "alt-demotion" (a non-exact alt-name match reads as up to one level
+   *deeper*); `populationPromotion` is the third, added by
+   "population-promotion" (a populous place reads as up to one level
+   shallower). See each amendment for why all three are bounded to exactly
+   one level, why an `exact` alt match is exempt from the demotion, why the
+   threshold is 100,000 rather than any neighbouring value, and why the
+   demotion gate exists.
 3. `matchClassRank` — `exact` 0, `prefix` 1, `word-prefix` 2, `substring`
    3. Reached only once (1)/(2) have already tied — which is exactly when
    an `exact` match's promoted `effLevel` lands on the same rung as a
@@ -1519,16 +1571,19 @@ order:
    matters: a demoted alt row's raw level is still shallower than the
    primary it was demoted to tie with, so checking `level` first would
    immediately re-open the gap the demotion just closed.
-5. `level` — the true, unpromoted/undemoted admin level. Final level-based
-   tiebreak for anything (1)–(4) left tied; normally redundant with
-   (2)–(4), kept as the honest "ADM0 before ADM1" fallback the original
-   spec asked for.
-6. **Prominence** — added by the ranking-residual follow-up: tier 0
+5. **Prominence** — added by the ranking-residual follow-up; **moved here,
+   ahead of raw `level`, by the "population-promotion" amendment**, for the
+   same structural reason `isAlt` moved in (4): once (2)'s population
+   promotion ties a populous deep row with a shallower one, raw `level`
+   would immediately re-open the gap the promotion just closed. The rule
+   this makes explicit: *any adjustment whose purpose is to manufacture a
+   tie must have that tie resolved before raw `level`.* Tier 0
    is `population` descending (a row with a real population always beats
-   one without, regardless of the loser's `class`); tier 1 (no
+   one without, regardless of the loser's `class`; `population: 0` is a
+   real stored value on WOF and counts as tier 0, not as absent); tier 1 (no
    `population`) falls back to a fixed `class` ladder — `city` > `town` >
    `village` > `hamlet` > anything else or absent. Slots **ahead of**
-   `areaKm2` (next), because population/class-of-place is a better
+   `areaKm2` (now component (7)), because population/class-of-place is a better
    importance signal *across* feature kinds (a capital city vs. a
    country) than area is — see "Known residual limitation" below for why
    `areaKm2` alone gets exactly that comparison backwards. **Live as of
@@ -1539,7 +1594,15 @@ order:
    ranking-residual follow-up shipped it as — see the measured tables
    below for concrete before/after examples (e.g. "London" now correctly
    favours Greater London's 8.9M population over a same-named small US
-   town once both tie on level).
+   town once both tie on level). **On WOF it stayed a no-op until the
+   "population-promotion" amendment**, which found the `INT64`/`BigInt`
+   decode bug that was dropping the column there entirely.
+6. `level` — the true, unpromoted/undemoted admin level. Final level-based
+   tiebreak for anything (1)–(5) left tied; normally redundant with
+   (2)–(4), kept as the honest "ADM0 before ADM1" fallback the original
+   spec asked for. Still decides whenever prominence ties (both rows
+   missing a population, or carrying the same one), which is pinned by a
+   test so the reorder above costs it nothing.
 7. `areaKm2` descending, `null`/`undefined` sorted last — the importance
    signal added by the first amendment: among rows tied on (1)–(6), the
    bigger (or more completely attributed) feature wins. A point-only
@@ -1912,6 +1975,15 @@ alone, not from the alt-demotion fix. Both effects are measured together
 below because they ship in the same catalog refresh and the tables are the
 honest state of the live system either way.
 
+> **Corrected 2026-11-12 by the population-promotion follow-up below.**
+> "Prominence is no longer a no-op" was true of Overture, whose
+> `population` column is 32-bit and decodes as a plain `number`, and
+> **false of Who's On First**, which types the column as parquet `INT64`:
+> hyparquet decodes that as a `BigInt`, every `typeof x === 'number'` guard
+> rejected it, and prominence stayed a measured no-op on the index that
+> populates the column most widely. Read this paragraph as "on Overture"
+> and see the population-promotion amendment for the decode fix.
+
 **Measured, live, against `?index=overture`** (the demo's default MapLibre
 viewport — Northern California — is active for every query below, since
 that's what a real user of this demo sees; the one case it visibly matters,
@@ -2119,6 +2191,349 @@ async function onPick(result) {
 }
 ```
 
+### Amendment, 2026-11-12 — population-promotion follow-up: "the Brooklyn case"
+
+**The live reproduction.** Measured directly against the Who's On First
+names index (9,478,779 rows — 5,405,294 primary, 4,073,485 alt — across
+levels 0–5, served locally pending its `source.coop` repo; the demo's
+`?index=wof` shortcut): searching "brooklyn" returned **no Brooklyn** at
+all in the top 8. Positions 1–2 were `localadmin` townships (level 3) in
+Ohio and New South Wales; positions 3–8 were localities named Brooklyn in
+Australia, Canada, Jamaica, New Zealand and South Africa. Brooklyn the New
+York borough — level 4, `placetype` `borough`, population 2,504,700, very
+much present in the index — appeared nowhere. `compareRanked` component
+(1) decided the whole list on level before any prominence tiebreak was
+reached, exactly as the previous amendment's "Known residual limitation"
+predicted it would for any case needing prominence to beat level.
+
+This amendment turns out to involve **two independent defects**, and both
+had to be fixed for the case to come out right. They are separated below
+because the first one is a decode bug that silently disabled an entire
+already-shipped comparator component, and is worth knowing about on its
+own.
+
+#### Defect (i): `population` was never decoded on WOF at all
+
+The WOF names index types `population` as parquet **`INT64`**, and
+`hyparquet` decodes `INT64` as a JavaScript **`BigInt`**. Both
+`geocoder.js` and `ranking.js` guarded the column with `typeof x ===
+'number'`, so every WOF row arrived at `rankRow` with `population:
+undefined`. Measured: of the 109 candidate rows for "brooklyn", **zero**
+reported a population through `SearchResult.population`, while 4,075 of
+the 12,800 rows in the Parquet row group holding them carry one (p50 682,
+p90 13,813, p99 1,019,022, max 2,504,700 — the borough). The previous
+amendment's claim that prominence "now actually decides real comparisons
+for the first time" was true of Overture, whose `population` column is
+32-bit and decodes as a plain `number`, and false of WOF — the one index
+that populates the column most widely. Fixed at the `geocoder.js`
+boundary (a shared `toFiniteNumber` helper, landed by the JSON-safety
+follow-up, which also covers `geometry_ref.row`), with a belt-and-braces
+`toPopulation` guard inside `rankRow` for direct callers.
+
+**Correction to the record.** The doc comments in `ranking.js` claiming
+`class` and `population` were "pending data columns — not yet populated on
+any shipped index" were stale in three places (the `CLASS_RANK` preamble,
+`prominenceKey`'s doc comment, and component (6) of `compareRanked`'s
+list) and have been corrected. The live state: the published Overture
+divisions index populates **both** columns; the WOF names index populates
+`population` on roughly a third of its rows and carries **no `class`
+column at all**; a geoBoundaries CGAZ index still carries neither, so the
+genuine no-op path is still a shipped configuration and is still pinned by
+a test.
+
+#### Defect (ii): fixing the decode is not enough — measured
+
+With `population` decoding correctly and the comparator otherwise
+untouched, "brooklyn" is **unchanged in kind**: the borough still does not
+appear in the top 8. Prominence is component (6); components (1) and (2)
+(`levelAdjusted`, `effLevel`) put a level-3 township ahead of a level-4
+borough and the comparison ends there.
+
+*"brooklyn" — decode fixed, no population promotion (level 3 still wins):*
+
+| # | name · parent | level | effLevel | matchClass | population | country |
+|---|---|---|---|---|---|---|
+| 1 | Brooklyn (+6 more) · Cuyahoga | 3 | 2 | exact | 11,022 | USA |
+| 2 | Brooklyn (+2 more) · Hornsby | 3 | 2 | exact | — | AUS |
+| 3 | Brooklyn (+30 more) · Brooklyn | 4 | 3 | exact | 943 | USA |
+| 4 | Brooklyn (+3 more) · Brooklyn | 4 | 3 | exact | — | AUS |
+| 5 | Brooklyn (+5 more) · Kings | 4 | 3 | exact | — | CAN |
+| 6 | Brooklyn (+1 more) · Wellington | 4 | 3 | exact | 3,855 | NZL |
+| 7 | Brooklyn · Saint Mary | 4 | 3 | exact | — | JAM |
+| 8 | Brooklyn (+1 more) · uMlalazi | 4 | 3 | exact | — | ZAF |
+
+#### The fix: a third bounded `effLevel` adjustment, plus one reordering
+
+**A bounded, one-level population promotion.** A row whose `population`
+is at or above `populationPromotionThreshold` (default **`100_000`**, see
+the sweep below) is treated as if its `effLevel` sat
+`populationLevelPromotion` (default `1`) levels *shallower* than its raw
+level — the exact shape of the two adjustments that already exist
+(`exactLevelPromotion`, `altLevelDemotion`), and bounded for the identical
+reason. A 2.5-million-person level-4 borough is treated as a level 3,
+never as a level 0: `effLevel = max(0, level − exactPromotion +
+altDemotion − populationPromotion)`.
+
+**Deliberately not restricted to primary rows.** Brooklyn's
+English-language WOF row *is* an alt row (`alt_of` non-null; its primary
+name is another variant), and so is Baghdad's on Overture. A `!isAlt` gate
+would have left both target cases exactly where they started.
+
+**One gate, chosen by measurement: a row that took the alt demotion does
+not also take the population promotion.** The two are the same magnitude
+and would exactly cancel, handing a non-exact alt-name match back the
+level privilege the alt demotion exists to remove — on the strength of
+the population of the division whose name it merely transliterates.
+Measured both ways:
+
+| case | ungated | gated (shipped) |
+|---|---|---|
+| "paris" (WOF) | three Jamaican ADM1 alt rows ("Parish of Saint Catherine" 516,218; "Parish of Manchester" 189,797; "Parish of Saint James" 183,811) have their demotion cancelled, reach `effLevel` 1 and take positions **3–5**, pushing the `exact` "Paris, Paris, FRA" row (2,138,551) down to 6 | the parishes fall to **6–8**; positions 1–4 are all genuine Paris rows |
+| "bag" (Overture) | "Bagraain" (alt spelling of Bahrain, ADM0, 1,234,571) has its demotion cancelled and **keeps position 1** — re-opening the exact bug the alt-demotion amendment closed | position 1 becomes Bağcılar (TUR ADM2, **primary**, 719,071) |
+
+A `prefix` hit on a Jamaican parish out-ranking an `exact` hit on Paris is
+plainly the wrong answer, and re-opening the "bag" bug one amendment after
+closing it would be worse. Brooklyn and Baghdad are untouched by the gate:
+their rows are alt rows but `exact` matches, so `isExact` already exempted
+them from the demotion and the gate is open for them.
+
+**Prominence moves from component (6) to component (5), ahead of raw
+`level`.** This is necessary, not cosmetic, and is structurally identical
+to the alt-demotion amendment's reason for moving `isAlt` ahead of raw
+`level` one amendment earlier. Once the promotion brings the borough to
+`effLevel` 2 alongside the townships, components (2), (3) and (4) all tie
+too — every row in the "brooklyn" candidate set is an `exact`, alt-name
+match — and the *old* component (5), raw `level`, is still 3 vs. 4. It
+would immediately re-open the one-level gap the promotion had just closed,
+and the township would win anyway. **Any adjustment whose purpose is to
+manufacture a tie must have that tie resolved before raw `level` is
+consulted.** Raw `level` keeps its job as the final level-based tiebreak;
+it only loses priority, and a test pins that it still decides when
+prominence ties.
+
+The revised normative order is therefore: (1) `levelAdjusted`, (2)
+`effLevel`, (3) `matchClass`, (4) `isAlt`, (5) **prominence**, (6) raw
+`level`, (7) `areaKm2`, (8) `nameLength`, (9) `nameNorm`/`featureId`.
+
+#### The threshold sweep — chosen from measurement, not taste
+
+Five thresholds, same script, same eight query/index pairs. What each one
+did:
+
+| threshold | "brooklyn" (the target) | elsewhere |
+|---|---|---|
+| `10_000` | **breaks it.** Brooklyn, Ohio (level 3, 11,022) clears the threshold too, promotes to `effLevel` 1 and takes position 1 *from* the borough, which lands at 2. Brooklyn Park (75,781) and Brooklyn Center (30,104) — `prefix` matches, not even `exact` — take positions 4–5 | WOF p90 is ~13.8k, so a 10k threshold promotes roughly a tenth of every populated row and discriminates nothing |
+| `50_000` | fixed (borough at 1), but Brooklyn Park, Minnesota (75,781) promotes to `effLevel` 2 and takes position 4 as a mere `prefix` match, pushing an `exact` "Brooklyn" (uMlalazi, ZAF) out of the top 8 | slightly **better** "bag": Bagua, Peru (95,858) clears 50k and rises 6 → 2. One extra parish (Saint George, VCT, 51,400) on "paris" |
+| **`100_000`** | **shipped.** Fixed, with no `prefix`-over-`exact` inversion anywhere in the eight measured pairs | best measured "springfield": Springfield, Massachusetts (153,672) at 1 and Springfield, Missouri (171,589) at 2 |
+| `250_000` | fixed | identical to `100_000` on seven of eight pairs, but drops Springfield, Missouri from position 2 to **6** |
+| `1_000_000` | fixed (2.5M), and "baghdad" still fixed (7.2M) | loses Springfield, Missouri the same way *and* London, Ontario (346,765, position 3 at `100_000` → position 6). Cleanest "paris" of the five, the one argument in its favour |
+
+`100_000` is where the two measured failure modes meet: below it,
+`prefix`-matched mid-size towns start out-ranking `exact` matches on the
+queried name; above it, genuinely large cities (Springfield MO, London ON)
+stop being reachable. It is **not** a plateau — every neighbouring value
+measurably changes something — so it is a real choice between measured
+costs, not a round number picked for looks.
+
+#### Measured, live, before and after — all eight query/index pairs
+
+No viewport is active in any table below (these were replayed through
+`search()` in Node, not through the demo's MapLibre view), so none of the
+viewport-boost effects the previous amendment called out apply here.
+`effLevel` is shown because it is what changed.
+
+**WOF — `brooklyn`** (the target case). Before: no Brooklyn borough
+anywhere. After: position 1.
+
+| # | before | after |
+|---|---|---|
+| 1 | Brooklyn · Hornsby — AUS L3, eff 2, exact, alt, pop — | **Brooklyn · New York (+30 more) — USA L4, eff 2, exact, alt, pop 2,504,700** |
+| 2 | Brooklyn · Dane (+6 more) — USA L3, eff 2, exact, alt, pop — | Brooklyn · Cuyahoga (+6 more) — USA L3, eff 2, exact, alt, pop 11,022 |
+| 3 | Brooklyn · Brooklyn (+3 more) — AUS L4, eff 3, exact | Brooklyn · Hornsby (+2 more) — AUS L3, eff 2, exact, alt, pop — |
+| 4 | Brooklyn · Brooklyn Township (+30 more) — USA L4, eff 3, exact | Brooklyn · Brooklyn (+3 more) — AUS L4, eff 3, exact |
+| 5 | Brooklyn · Kings (+5 more) — CAN L4, eff 3, exact | Brooklyn · Kings (+5 more) — CAN L4, eff 3, exact |
+| 6 | Brooklyn · Tasman District (+1 more) — NZL L4, eff 3, exact, alt | Brooklyn · Wellington (+1 more) — NZL L4, eff 3, exact, alt, pop 3,855 |
+| 7 | Brooklyn · Saint Mary — JAM L4, eff 3, exact, alt | Brooklyn · Saint Mary — JAM L4, eff 3, exact, alt |
+| 8 | Brooklyn · uMlalazi (+1 more) — ZAF L4, eff 3, exact, alt | Brooklyn · uMlalazi (+1 more) — ZAF L4, eff 3, exact, alt |
+
+Note positions 2 and 6 in the "after" column: the decode fix alone makes
+the comparator prefer, among otherwise-tied rows, the one that at least
+*has* a population (Cuyahoga over Dane, Wellington over Tasman District) —
+a small independent improvement from defect (i), visible even where the
+promotion does not fire.
+
+**WOF — `springfield`** (the classic ambiguous case). Before, the ordering
+among the level-3 rows was decided by `nameNorm`/`featureId`, i.e.
+arbitrarily. After, the two genuinely large Springfields are 1–2.
+
+| # | before | after |
+|---|---|---|
+| 1 | Springfield · Gosford (+4 more) — AUS L3, eff 2, exact, alt, pop — | **Springfield · Hampden (+14 more) — USA L3, eff 1, exact, alt, pop 153,672** (Springfield, Massachusetts) |
+| 2 | Springfield · Chelmsford — GBR L3, eff 2, exact, alt, pop — | **Springfield · Springfield Township (+92 more) — USA L4, eff 2, exact, alt, pop 171,589** (Springfield, Missouri) |
+| 3 | Springfield · Penobscot (+14 more) — USA L3, eff 2, exact, alt | Springfield · Division No. 12 — CAN L3, eff 2, exact, alt, pop 0 |
+| 4 | Springfield · Division No. 12 — CAN L3, eff 2, exact, alt | Springfield · Gosford (+4 more) — AUS L3, eff 2, exact, alt, pop — |
+| 5 | Springfield · Fife (+2 more) — GBR L4, eff 3, exact | Springfield · Chelmsford — GBR L3, eff 2, exact, alt, pop — |
+| 6 | Springfield · Lane (+92 more) — USA L4, eff 3, exact, alt | Springfield Township · Greene (+33 more) — USA L3, eff 2, prefix, pop 159,496 |
+| 7 | Springfield · Division No. 12 (+5 more) — CAN L4, eff 3, exact, alt | Springfield · Fife (+2 more) — GBR L4, eff 3, exact, pop 960 |
+| 8 | Springfield · Selwyn District (+2 more) — NZL L4, eff 3, exact, alt | Springfield · Division No. 12 (+5 more) — CAN L4, eff 3, exact, alt |
+
+Springfield MA (153,672) ranks above Springfield MO (171,589) despite the
+smaller population, because MA's row is level 3 and MO's is level 4: level
+still dominates *within* the one-level bound, which is the bounded design
+working as specified, not an ordering accident. `population: 0` at
+position 3 is a real stored value in WOF, not a missing one, and is
+treated as such (tier 0, population 0) rather than being falsified to
+"absent".
+
+**WOF — `paris`** (must not regress). It improves: "Paris, Paris, FRA"
+(2,138,551) newly appears, at position 3.
+
+| # | before | after |
+|---|---|---|
+| 1 | Paris · Ile-of-France — FRA L1, eff 0, exact, alt | Paris · Ile-of-France — FRA L1, eff 0, exact, alt, pop 2,117,702 |
+| 2 | Paris (+1 more) — FRA L3, eff 2, exact, alt | Paris (+1 more) — FRA L3, eff 1, exact, alt, pop 2,257,981 |
+| 3 | Paris · Oxford (+3 more) — USA L3, eff 2, exact, alt | **Paris · Paris — FRA L4, eff 2, exact, alt, pop 2,138,551** |
+| 4 | Pariser Linie · Ancenis — FRA L2, eff 2, prefix | Paris · Oxford (+3 more) — USA L3, eff 2, exact, alt, pop 5,367 |
+| 5 | Parish of Portland · Jamaica — JAM L1, eff 2, prefix, alt | Pariser Linie · Ancenis — FRA L2, eff 2, prefix, pop — |
+| 6 | Parish of Saint Ann · Jamaica — JAM L1, eff 2, prefix, alt | Parish of Saint Catherine · Jamaica — JAM L1, eff 2, prefix, alt, pop 516,218 |
+| 7 | Parish of Manchester · Jamaica — JAM L1, eff 2, prefix, alt | Parish of Manchester · Jamaica — JAM L1, eff 2, prefix, alt, pop 189,797 |
+| 8 | Parish of Saint John · Antigua and Barbuda — ATG L1, eff 2, prefix, alt | Parish of Saint James · Jamaica — JAM L1, eff 2, prefix, alt, pop 183,811 |
+
+The Jamaican parishes still occupy 6–8 (they are `prefix` matches at
+`effLevel` 2 either way — the gate keeps them there), but they are now
+ordered by population instead of alphabetically, and they no longer crowd
+out a real Paris row.
+
+**WOF — `london`** (must not regress). It improves substantially: London
+(Westminster, GBR, 7,556,900) moves from position 7 to 2, and London,
+Ontario (346,765) from 6 to 3.
+
+| # | before | after |
+|---|---|---|
+| 1 | London · England — GBR L1, eff 0, exact, alt | London · England — GBR L1, eff 0, exact, alt, pop 7,556,900 |
+| 2 | London · Madison — USA L3, eff 2, exact, alt | **London — GBR L4, eff 2, exact, alt, pop 7,556,900** |
+| 3 | Londonderry · Causeway Coast and Glens — GBR L2, eff 2, prefix | **London · Middlesex — CAN L4, eff 2, exact, alt, pop 346,765** |
+| 4 | Londonderry Borough · Derry City and Strabane — GBR L2, eff 2, prefix | London · Madison — USA L3, eff 2, exact, alt, pop 10,533 |
+| 5 | London · London (+17 more) — USA L4, eff 3, exact, alt | London Borough of Barnet — GBR L3, eff 2, prefix, pop 386,083 |
+| 6 | London · Middlesex — CAN L4, eff 3, exact, alt | London Borough of Croydon — GBR L3, eff 2, prefix, pop 382,304 |
+| 7 | London — GBR L4, eff 3, exact, alt | London Borough of Newham — GBR L3, eff 2, prefix, pop 340,978 |
+| 8 | London · Bushbuckridge (+2 more) — ZAF L4, eff 3, exact, alt | Londonderry · Causeway Coast and Glens — GBR L2, eff 2, prefix, pop — |
+
+The three "London Borough of …" rows at 5–7 are the honest cost of the
+threshold here: they are real level-3 London boroughs of 340k–386k people,
+`prefix` matches on "london", promoted to `effLevel` 2. They sit *below*
+every `exact` match at the same `effLevel` (component (3) still decides
+that), so they displace only lower-ranked noise, not answers.
+
+**WOF — `san francisco`** (must not regress). Unchanged in kind;
+San Francisco, California holds position 1 (now at `effLevel` 0 rather
+than 1), and the same-named Latin-American ADM2s behind it are now ordered
+by population instead of by `nameNorm`.
+
+| # | before | after |
+|---|---|---|
+| 1 | San Francisco · California — USA L2, eff 1, exact, alt | San Francisco · California — USA L2, eff 0, exact, alt, pop 808,988 |
+| 2 | San Francisco · Zulia (+1 more) — VEN L2, eff 1, exact, alt | San Francisco · Zulia (+1 more) — VEN L2, eff 1, exact, alt, pop 11,030 |
+| 3 | San Francisco · Agusan del Sur (+3 more) — PHL L2, eff 1, exact, alt | San Francisco · Atlántida (+2 more) — HND L2, eff 1, exact, alt, pop 10,683 |
+| 4 | San Francisco · Antioquia (+2 more) — COL L2, eff 1, exact, alt | San Francisco · Veraguas — PAN L2, eff 1, exact, alt, pop 9,881 |
+| 5 | San Francisco · Veraguas — PAN L2, eff 1, exact, alt | San Francisco · Petén — GTM L2, eff 1, exact, alt, pop 8,917 |
+| 6 | San Francisco · Petén — GTM L2, eff 1, exact, alt | San Francisco · Agusan del Sur (+3 more) — PHL L2, eff 1, exact, alt, pop — |
+| 7 | San Francisco · Ocotepeque (+2 more) — HND L2, eff 1, exact, alt | San Francisco · Antioquia (+2 more) — COL L2, eff 1, exact, alt, pop — |
+| 8 | San Francisco · San Francisco — VEN L3, eff 2, exact, alt | San Francisco · San Francisco (+3 more) — USA L4, eff 2, exact, alt, pop 808,988 |
+
+The first amendment's residual limitation for "san" (San Francisco not
+reachable from a short prefix) is **not** addressed here and is unchanged:
+this amendment only moves rows by one level, and that case needs more.
+
+**Overture — `bag`** (must not regress the alt-demotion tables). The
+previous amendment's table is reproduced exactly as the before-baseline.
+It improves: Bağcılar clears all four Bahrain/Bahamas ADM0 alt rows.
+
+| # | before (reproduces the alt-demotion amendment's table) | after |
+|---|---|---|
+| 1 | Bagraain — BHR L0, eff 1, prefix, alt, pop 1,234,571 | **Bağcılar · İstanbul — TUR L2, eff 1, prefix, primary, pop 719,071** |
+| 2 | Bagaman Sared — BHS L0, eff 1, prefix, alt | Bagraain — BHR L0, eff 1, prefix, alt, pop 1,234,571 |
+| 3 | Bagam orollari — BHS L0, eff 1, prefix, alt | Bagaman Sared — BHS L0, eff 1, prefix, alt |
+| 4 | Bagama Adalary — BHS L0, eff 1, prefix, alt | Bagam orollari — BHS L0, eff 1, prefix, alt |
+| 5 | Bağcılar · İstanbul — TUR L2, eff 2, prefix, primary | Bagama Adalary — BHS L0, eff 1, prefix, alt |
+| 6 | Bagua · Amazonas — PER L2, eff 2, prefix, primary | Bagua · Amazonas — PER L2, eff 2, prefix, primary, pop 95,858 |
+| 7 | Baguirmi · Chari-Baguirmi — TCD L2, eff 2, prefix, primary | Baguirmi · Chari-Baguirmi — TCD L2, eff 2, prefix, primary |
+| 8 | Bagata · Kwilu — COD L2, eff 2, prefix, primary | Bagata · Kwilu — COD L2, eff 2, prefix, primary |
+
+No row moves down except by being overtaken; nothing is demoted that was
+not demoted before. Bağcılar at 1 is the improvement the alt-demotion
+amendment explicitly wanted and measured itself unable to reach ("the
+demotion is doing real work here; it just isn't enough, alone"). Bagua
+(95,858) sits just under the 100,000 threshold and stays at 6; at a 50,000
+threshold it rises to 2, which is the one measured argument for the lower
+value.
+
+**Overture — `baghdad`** (must not regress the alt-demotion tables). This
+is the headline result: **Baghdad the city moves from position 7 to
+position 1.**
+
+| # | before | after |
+|---|---|---|
+| 1 | Baghdad Séng · العراق — IRQ L1, eff 2, prefix, alt | **Baghdad · محافظة بغداد — IRQ L4, eff 2, exact, alt, pop 7,216,040** |
+| 2 | Baghdad Province · العراق — IRQ L1, eff 2, prefix, alt | Baghdad Séng · العراق — IRQ L1, eff 2, prefix, alt |
+| 3 | Baghdad (gobernador) · العراق — IRQ L1, eff 2, prefix, alt | Baghdad Province · العراق — IRQ L1, eff 2, prefix, alt |
+| 4 | Baghdad · Baardheere — SOM L4, eff 3, exact, primary | Baghdad (gobernador) · العراق — IRQ L1, eff 2, prefix, alt |
+| 5 | Baghdad · Blantyre — MWI L4, eff 3, exact, primary | Baghdad · Baardheere — SOM L4, eff 3, exact, primary |
+| 6 | Baghdad · Basseknou (+1 more) — MRT L4, eff 3, exact, primary | Baghdad · Blantyre — MWI L4, eff 3, exact, primary |
+| 7 | **Baghdad · محافظة بغداد — IRQ L4, eff 3, exact, alt, pop 7,216,040** | Baghdad · Basseknou (+1 more) — MRT L4, eff 3, exact, primary |
+| 8 | Baghdad · مديرية خب والشعف (+1 more) — YEM L4, eff 3, exact, alt, pop 537 | Baghdad · مديرية خب والشعف (+1 more) — YEM L4, eff 3, exact, alt, pop 537 |
+
+The promotion takes Baghdad's city row from `effLevel` 3 to 2, tying the
+three Iraqi ADM1 alt rows, and component (3) (`matchClass`) then resolves
+the tie in favour of the `exact` match over their `prefix` matches. Note
+how little work this needed once the mechanism existed: a one-level
+promotion plus a tie resolved by an existing component.
+
+#### Known residual limitation — revised again
+
+The first amendment's residual ("bag"/"san" don't surface
+Baghdad/San Francisco within `limit: 8`) is now **half closed**, measured:
+
+- **"baghdad" is closed.** Baghdad the city is position 1. The previous
+  amendment reported that only "Baghdad Governorate" (a 1-level gap) was
+  reachable, at position 37 of 413, and that the city's own 4-level gap
+  was closed by nothing bounded. That analysis assumed the only available
+  lever was level arithmetic; the population promotion supplies a second
+  one-level lever that *composes* with the exact-match promotion, closing
+  two of those four levels — and the remaining two turn out not to need
+  closing, because `matchClass` resolves the tie.
+- **"bag" is still open**, and for the documented reason: Bagraain (an
+  ADM0 alt row) holds position 2 on a 1,234,571 population it inherits
+  from Bahrain, and the query "bag" gives no evidence the user meant
+  Baghdad rather than Bahrain. Position 1 is now a real place that
+  genuinely prefix-matches (Bağcılar), which is as good an answer as a
+  3-letter prefix deserves.
+- **"san" is unchanged.** Nothing here moves a row more than one level,
+  and that case needs more.
+
+**Opting out.** `new Geocoder({ ranking: { populationPromotionThreshold:
+Infinity } })` disables the promotion and restores the pre-amendment
+`effLevel`s exactly, for a caller that wants to A/B the two.
+`populationLevelPromotion: 0` does the same. Both mirror
+`altLevelDemotion: 0` from the previous amendment. Note that the
+prominence/raw-`level` reordering is *not* behind an option: with the
+promotion disabled it only reorders rows that an `effLevel` adjustment
+already tied, which measured as no change on any of the eight pairs.
+
+**Scope, explicitly.** `dedupeByNameCountryLevel`'s representative-picking
+rule still compares by `areaKm2` alone, unchanged — same note as the
+previous amendment. This matters slightly more now than it did: on WOF,
+`area_km2` is absent from the index entirely, so a deduped group's
+representative is whichever row came first in rank order. That is why the
+"brooklyn" position-1 row reads "Brooklyn · New York (+30 more)" — the
+borough *is* the representative, because it now ranks first within its
+own `(nameNorm, country, level)` group. Before this amendment the same
+31-row group was represented by a small Brooklyn locality inside a
+"Brooklyn Township" (position 4 of the before table), with the borough
+somewhere behind it in the collapsed `+30`. Worth revisiting if a future
+WOF build adds `area_km2`.
+
+
 ### 3.3 `@cnmw/upload-core`
 
 ```ts
@@ -2198,7 +2613,16 @@ export interface Estimate {
   /** Bytes that must be read from object storage to answer the query. */
   readonly readBytes: Bounded;
   /** Bytes the output file is expected to be. Format-dependent; the format
-   *  plugin supplies the bytes-per-row model. */
+   *  plugin supplies the bytes-per-row model — **but only on the
+   *  `download()` path.** The standalone `estimate()` above takes no
+   *  `OutputRequest`, so it cannot know the format and necessarily falls
+   *  back to a generic, format-agnostic bytes-per-row model
+   *  (`genericOutputBytesModel` in estimate.js), reported honestly as
+   *  `exact: false`. Treat a standalone `estimate()`'s `outputBytes` as
+   *  order-of-magnitude only; `download()` recomputes it internally from
+   *  the real `FormatPlugin.estimateBytes` once the format is known, and
+   *  *that* is the number its ceiling check uses. Every other field of an
+   *  `Estimate` is identical on both paths. */
   readonly outputBytes: Bounded;
   readonly files: { readonly total: number; readonly selected: number };
   readonly rowGroups: { readonly total: number; readonly selected: number } | null;
@@ -2288,7 +2712,10 @@ export interface DownloadHandle {
   /** Resolves once planning finishes, even when the ceiling is breached. */
   readonly estimate: Promise<Estimate>;
   /** Rejects with `CeilingExceededError` if the handle is `blocked` and
-   *  neither `acceptCeiling()` nor `acceptCeiling: true` was given. */
+   *  neither `acceptCeiling()` nor `acceptCeiling: true` was given.
+   *  A **getter**, not a fixed promise: it returns the live run's promise,
+   *  which `acceptCeiling()` replaces after a breach. See the 2026-11-12
+   *  "blocked handles reject" amendment below. */
   readonly result: Promise<DownloadResult>;
 
   /** Both forms of progress, same events. The async iterable exists so a
@@ -2296,8 +2723,11 @@ export interface DownloadHandle {
   readonly progress: AsyncIterable<Progress>;
   on<K extends keyof DownloadEvents>(event: K, handler: (payload: DownloadEvents[K]) => void): Unsubscribe;
 
-  /** The refusal path (design call #3): an explicit, auditable act. */
-  acceptCeiling(): void;
+  /** The refusal path (design call #3): an explicit, auditable act.
+   *  Returns the continued run's promise — the one `result` hands back
+   *  from here on — because the promise the caller was holding has already
+   *  rejected. Idempotent on a handle that is not `blocked`. */
+  acceptCeiling(): Promise<DownloadResult>;
 
   pause(): void;
   resume(): void;
@@ -2423,6 +2853,272 @@ export interface FeatureBatch {
 export declare function registerFormat(plugin: FormatPlugin): void;
 export declare function formats(): readonly FormatPlugin[];
 ```
+
+### Amendment, 2026-11-12 — reason: a `blocked` handle's `result` never
+settled (E10 API-vs-design audit, drift #1)
+
+The audit read this section's `DownloadHandle.result` against the code and
+found the most dangerous drift in the repo for an automated caller: a
+`blocked` handle's `result` **waited forever** rather than rejecting with
+`CeilingExceededError` as the interface above says. `await handle.result`
+on a request that breached the ceiling simply never returned. The root
+README listed it as a known issue and `AGENTS.md` carried a rule — "never
+`await handle.result` without first awaiting `handle.estimate` and handling
+`ceiling.exceeded`" — which is a workaround for a broken promise, not a
+contract anyone should have to know.
+
+The fix needs more than a `reject()` call, because a promise settles once
+and the run is *not* over: `acceptCeiling()` may continue it. So `result`
+becomes a **slot**, and the handle exposes it as a getter:
+
+- The live run owns one deferred. `handle.result` returns its promise.
+- Going `blocked` **rejects** that promise with `CeilingExceededError`,
+  carrying `context.breaches`, `context.limits` and `context.estimate`, so
+  a caller who only ever awaits `result` gets the estimate out of the
+  error rather than needing a second channel.
+- **`acceptCeiling()` installs a fresh deferred and returns it** — the
+  continued run's `Promise<DownloadResult>`, and what `result` returns
+  from then on. A promise captured before the breach stays rejected,
+  because promises do not un-settle; that is the documented cost of the
+  shape, and it is cheaper than the alternative (a second
+  `completion` accessor whose relationship to `result` every caller then
+  has to learn).
+- `cancel()` while `blocked` leaves the already-rejected promise alone
+  rather than re-settling it with a different code underneath a caller.
+  `state` becomes `'cancelled'`; the promise keeps its `CEILING_EXCEEDED`.
+  `cancel()` itself awaits an internal "run has finished tearing down"
+  promise, not `result`, which while blocked is already settled.
+- Ordering, which is load-bearing: the rejection happens *before*
+  `setState('blocked')` and the `ceiling` emission, because events are
+  synchronous (§3.5) and a handler may call `acceptCeiling()` during the
+  emit — rejecting after that would reject the *continued* run's promise.
+  A rejection handler runs as a microtask either way, so by the time any
+  `.catch()` observes the error, `handle.state` already reads `'blocked'`.
+  The blocked gate is likewise armed before `setState`, so an
+  `acceptCeiling()` from a `state` handler resolves a gate that exists.
+
+`acceptCeiling(): void` → `acceptCeiling(): Promise<DownloadResult>` is
+source-compatible: a caller ignoring the return value is unaffected.
+
+Implemented: `packages/download-core/src/download.js`. Tests:
+`packages/download-core/test/download-handle.test.js` ("a blocked handle's
+result REJECTS with CeilingExceededError rather than waiting forever", plus
+the synchronous-handler, never-blocked and cancel-while-blocked cases).
+
+### Amendment, 2026-11-12 — reason: format load state was pull-only (E7
+portolan-browser integration)
+
+`formats()` and `formatLoadState(id)` are both pull-only, while a lazy
+format's state changes asynchronously underneath a UI that has already
+rendered (`'idle'` → `'loading'` → `'loaded'`/`'failed'`, the middle step
+being a CDN fetch of a few hundred KB). The portolan-browser integration
+therefore *polled* — bumping a reactivity counter to force a re-read of
+`formats()`. That is a missing subscription, not a design.
+
+```ts
+export type FormatStateChange = { id: string; state: 'idle' | 'loading' | 'loaded' | 'failed' };
+/** Fires on registration (eager → `'loaded'`, lazy → `'idle'`) and on every
+ *  lazy `load()` transition. Call `formats()` inside the handler for the
+ *  full current list. Returns its own unsubscribe, per §3.5. */
+export declare function onFormatState(handler: (change: FormatStateChange) => void): Unsubscribe;
+```
+
+A plain handler set rather than an `Emitter`: the registries are
+module-level singletons (one per page, not one per `download()`), so there
+is no instance to hang an `on(event, …)` off. Handlers run synchronously in
+registration order; one that throws is swallowed, so a broken subscriber
+cannot fail the registration or `load()` that triggered it, nor starve the
+other subscribers.
+
+Implemented: `packages/download-core/src/registry.js`, exported from
+`index.js`. Tests: the `onFormatState` cases in
+`packages/download-core/test/registry-lazy.test.js`.
+
+### Amendment, 2026-11-13 — reason: the three download-core performance items
+(parallel reads, predicate pushdown, honest output sizes)
+
+Three measured changes, with the measurements, including the parts that
+did not come out the way the plan assumed.
+
+#### 1. `maxConcurrentRequests` is implemented (and the win is smaller than "838 requests" suggested)
+
+`DownloadCoreOptions.maxConcurrentRequests` was declared above with a
+documented default of 12 and **read by nothing** — row groups were read
+one at a time. It now works: row groups are fetched by that many workers
+pulling from one shared cursor (the same worker-pool shape as
+`@cnmw/geocoder-core`'s `searchRangeIndex`, commit 8c1308c — N workers
+over a cursor and one `Promise.all`, never concurrency-sized waves, so a
+slow read never idles the other N−1), while `onBatch` stays strictly in
+row-group order, delivered by a single loop. Output is byte-for-byte what
+the sequential implementation produced.
+
+Three constraints that shaped it:
+
+- **Read-ahead is bounded.** Ordered delivery is itself a buffer: if group
+  0 is slow, every later group that finishes must be held. A worker will
+  not start slot `i` while `i − delivered >= maxConcurrentRequests`, which
+  caps live decoded groups at that many however wide the latency spread,
+  instead of letting one slow group pull the whole remaining plan into
+  memory. The worker holding slot `delivered` is never blocked by the
+  bound, so the pipeline cannot deadlock.
+- **`pause()` gates the workers, not just delivery.** `pause()` is
+  implemented (§3.5) as an `onProgress` that does not resolve until
+  `resume()`; a worker awaits that same promise *before starting another
+  read*, or a paused download would keep hammering object storage.
+- **A worker's error is captured, never rethrown.** A worker that rejected
+  while its N−1 siblings were in flight would settle `Promise.all` early
+  and leave their later rejections unhandled.
+
+**Measured, live, against the real `sentinel-2-c1-l2a` STAC-GeoParquet
+footprints** — §2.8's Kenya query minus its `limit`, which plans 825
+row-group reads because that collection publishes no bbox covering, so
+nothing prunes. Sequential and parallel arms were interleaved over the same
+and over disjoint cold windows, to control for network drift:
+
+| what | sequential | parallel (12) | ratio |
+|---|---|---|---|
+| **the whole 825-group query** | **736.9 s** (1 sample) | **65.5 / 67.1 / 73.9 s** | **11.0x** at the median |
+| a fixed 96-row-group slice | 102.7 / 105.7 / 109.9 s | 9.2 / 9.8 s | 11.1x |
+| the same slice, 4 workers | — | 23.1 s | 4.6x |
+| the same slice, 24 workers | — | 5.0 s | 21.2x |
+
+Requests, read bytes, rows and batch count are **identical** between the
+two arms of the full query (825 / 208,463,067 / 6,822 / 8) — end-to-end
+evidence that ordering and `limit` semantics did not move, not just a
+faster number.
+
+Two controls worth recording. The pre-change engine measured 106.5 / 105.9
+/ 107.2 s on the same 96-group slice, and the new code at
+`maxConcurrentRequests: 1` reproduces it at 102.7–109.9 s — **the pool adds
+no measurable overhead**, and the sequential column is the real old
+behaviour rather than a crippled new one. And repeated reads of the same
+byte ranges on `data.source.coop` do *not* get faster (those three
+pre-change samples are within ±1%), which is what makes comparing arms over
+the same window legitimate.
+
+Where the time actually goes, isolated: 8 row-group reads in series take
+10.07 s and the same 8 concurrently take 1.59 s, while the engine's own
+per-row filter loop (WKB decode, bbox test, polygon intersection,
+`where[]`) costs **14 ms per 6,144-row group**. On this path latency is
+round trip — not bytes, and not CPU — which is what the sentinel-2
+precedent claimed and this now confirms end to end. 24 workers was still
+scaling, so the specified default of 12 is a conservative point on an
+un-flattened curve, chosen because peak memory scales with it.
+
+`requests`/`bytesRead`/`rowGroupsDone`/`rowsScanned` are incremented by the
+ordered delivery loop, so every counter reports the row groups that
+actually contributed to the output and ends on exactly the sequential
+totals. Consequence: when `filter.limit` stops the run, the at most
+`maxConcurrentRequests − 1` reads already in flight finish, are discarded,
+and are **not** counted — a limit-bound download's `requests` under-reports
+real network use by up to that many. Chosen deliberately, so the verified
+numbers in the READMEs stay comparable across the change.
+
+#### 2. Predicate pushdown: a new `row-group-where` stage
+
+`filter.where` was applied per row *after* the read. Row groups whose
+min/max statistics prove no row can match are now dropped before being
+fetched, using the same footer machinery as the bbox and time stages, and
+reported as a sixth `PruneStage`. **`PruneStage.stage`'s union above gains
+`'row-group-where'`.** The stage is emitted even with no `where` filter
+(basis `'no where filter'`), so the cascade's shape does not depend on the
+query.
+
+Pruning is sound-only: a row group is dropped only when the statistics
+*prove* no row in it can match, because a wrong prune silently removes
+user data from a download — the worst failure available to this package.
+Prunable: `=`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not_in`, `between`,
+`is_null`, `is_not_null`. Not prunable, and documented as such in the
+stage's own `basis` string: `like`/`ilike` (a leading `%` is undecidable
+and getting it wrong drops data), any leaf inside a negated `not` (the
+negation inverts what the statistics prove), and a path into a list or
+struct element (chunk statistics describe the leaf, not the element).
+Always unprunable whatever the operator: no statistics in the footer,
+non-comparable or mixed-type statistics, and string-vs-number comparisons.
+Each falls back to keeping the row group.
+
+**Measured, live** (`estimate()` only — footers, no row data):
+
+| dataset + predicate | row groups | requests | read bytes |
+|---|---|---|---|
+| FIRMS 2024 Africa, `brightness >= 500` | 649 → **147** | 678 → 176 | **−77.4%** (1.13 GB → 254 MB) |
+| s2 2025 Kenya, `_month = 7` | 825 → 808 | 839 → 822 | −2.0% |
+| FIRMS 2024 Africa, `confidence_pct >= 95` | 649 → 649 | — | 0% |
+| FIRMS 2024 Africa, `satellite = "N"` | 649 → 649 | — | 0% |
+| s2 2025 Kenya, `eo:cloud_cover <= 1` | 825 → 825 | — | 0% |
+| s2 2025 Kenya, `s2:tile_id like 'S2B%'` | 825 → 825 | — | 0%, basis `no statistics-prunable operator` |
+
+One dramatic win, one marginal, four no-ops — and the four are no-ops
+because statistics exist but every row group's range spans the predicate's
+value, which is what unsorted data does. The same lesson the bbox stage
+already teaches on a dataset with no covering: pruning is a property of how
+the file was written, not of how clever the client is. This is also
+upstream-advocacy material: a FIRMS or s2 mirror sorted on a commonly
+filtered column would turn the four no-ops into wins.
+
+#### 3. `estimateBytes` gains a geometry term
+
+`FormatPlugin.estimateBytes` modelled attribute columns and assumed a small
+fixed constant for geometry (220 bytes a row for GeoJSON, 70 for CSV). On
+boundary data that is wrong by orders of magnitude, because geometry *is*
+the row. The signature gains an **additive** third argument:
+
+```ts
+estimateBytes(
+  schema: readonly ColumnDescriptor[],
+  rows: Bounded,
+  ctx?: { avgGeometryBytes: number | null; geometryColumn: string },
+): Bounded;
+```
+
+A plugin that ignores it, or a caller passing two arguments (the
+portolan-browser format picker does), keeps working on the old constant.
+`avgGeometryBytes` is average **uncompressed** bytes per row of the
+geometry column, from footer statistics alone, so the estimate stays
+metadata-only (O12). Uncompressed deliberately: what a format expands from
+is decoded WKB, not the source file's codec — zstd-19 WKB and raw WKB
+produce identical GeoJSON, and using compressed size would make the same
+dataset model a different output size depending on how it was written.
+
+Modelled ÷ actual, measured against three real datasets and 5 formats
+(1.00 is perfect; below 1 under-estimates):
+
+| dataset | geojson | csv | geoparquet | esrijson | shapefile |
+|---|---|---|---|---|---|
+| CGAZ ADM0 display (218 rows) — before | 0.006 | 0.001 | 0.003 | 0.003 | 0.007 |
+| CGAZ ADM0 display — **after** | **1.01** | **1.01** | **1.01** | **1.01** | **1.00** |
+| FTW Liechtenstein (795 rows) — before | 0.24 | 0.06 | 0.36 | 0.14 | 0.22 |
+| FTW Liechtenstein — **after** | **1.05** | **1.03** | 3.08 | **1.02** | **1.08** |
+| CGAZ ADM1 display (400 rows) — before | 0.019 | 0.005 | 0.009 | 0.011 | 0.022 |
+| CGAZ ADM1 display — **after** | 0.41 | 0.41 | 0.41 | 0.41 | 0.43 |
+
+**Two residuals, both honest and both visible above:**
+
+- **CGAZ ADM1 under-estimates ~2.4x for every format.** A single per-format
+  multiplier cannot be right everywhere: the expansion depends on how many
+  decimal digits each coordinate needs, and ADM1's display geometries
+  measure 3.8x WKB as GeoJSON where ADM0's measure 1.5x. Under-estimating
+  is the dangerous direction for a ceiling, so this is a known gap. Fixing
+  it properly needs a per-dataset calibration (O12's opt-in
+  `sample: { rowGroups: 1 }` is the obvious hook).
+- **GeoParquet over-estimates ~3x on FTW**, because the model expands from
+  uncompressed source WKB while the output is recompressed. Over-estimating
+  only costs a spurious ceiling prompt.
+
+Both are a large improvement on a constant. Before, a 19 MB CSV modelled as
+26 kB could never breach an `outputBytes` ceiling at all — the ceiling was
+decorative on exactly the datasets it exists for. The improved number flows
+into `est.outputBytes` and from there into both the `outputBytes` check in
+`finalizeEstimate` and the `blobBytes` check in `download()`; the standalone
+`estimate()` still has no format and still says so (see
+`Estimate.outputBytes` above).
+
+Implemented: `packages/download-core/src/{engine-hyparquet,prune,estimate,
+download}.js` and `src/formats/{geojson,geoparquet}.js`, plus
+`@cnmw/format-extras`, `@cnmw/format-gpkg`, `@cnmw/format-shapefile`,
+`@cnmw/format-flatgeobuf`. Tests:
+`packages/download-core/test/{engine-concurrency,prune-where,
+estimate-geometry-bytes}.test.js`.
 
 ### Amendment, 2026-11-12 — reason: lazy format loading (O5's heavy-format
 survey, E10)
@@ -2571,10 +3267,13 @@ export declare function isCnmwError(e: unknown): e is CnmwError;
 | `AREA_VERTEX_CEILING` | spec | no | Only when auto-simplify is disabled. "Area too detailed; simplify or raise the ceiling." |
 | `AREA_ANTIMERIDIAN_CLIP` | download | no | "Exact clip is not available across the antimeridian. Use intersects." |
 | `UPLOAD_TOO_LARGE` | upload | no | Name the limit and the file size. |
+| `UPLOAD_UNSUPPORTED_FORMAT` | upload | no | **Added to this table 2026-11-12** (it existed in `upload-core` from the start, as a documented deviation). No registered reader for that extension/media type. Name the formats that do work, and `registerReader` for others. |
+| `UPLOAD_PARSE_ERROR` | upload | no | **Added to this table 2026-11-12**, same history. Unreadable file, or not valid JSON. Quote the parse error. |
 | `INDEX_FETCH_FAILED` | geocoder | **yes** | "Couldn't load the place index." Retry button. |
 | `INDEX_SCHEMA_MISMATCH` | geocoder | no | Developer error: index lacks a required column. Name the column. |
 | `INDEX_VERSION_MISMATCH` | geocoder | no | "The boundary files were rebuilt; reload the page." Carries both versions. |
 | `INDEX_TOO_LARGE` | geocoder | no | Only with `loadStrategy: 'full'` and an index over the cap. Suggest `'range'`. |
+| `INDEX_MULTI_SOURCE_UNSUPPORTED` | geocoder | no | **Added 2026-11-12.** `indexUrl` was given two or more URLs (or a non-string). Multi-source search is planned, not implemented (§8); this refusal replaces the silent fallback to `DEFAULT_INDEX_URL`, which loaded an index the caller never named. Developer error: construct one `Geocoder` per index. |
 | `RANGE_NOT_SUPPORTED` | geocoder, download | no | The host returned 200 to a `Range` request. "This host doesn't support partial downloads." |
 | `GEOMETRY_NOT_FOUND` | geocoder | no | `featureId` absent from the boundary file. Usually a version skew in disguise. |
 | `DATASET_UNRESOLVED` | download | yes | Collection JSON unreachable or malformed. |
@@ -2584,7 +3283,7 @@ export declare function isCnmwError(e: unknown): e is CnmwError;
 | `FILTER_UNKNOWN_COLUMN` | download | no | Name the column and the nearest match (the plugin's `_suggest_column` behaviour). |
 | `FILTER_UNSUPPORTED_PREDICATE` | download | no | Engine cannot express the predicate. |
 | `FILTER_REQUIRES_ENGINE` | download | no | "This filter needs the DuckDB engine plugin." Name the requirement. |
-| `CEILING_EXCEEDED` | download | no | **The refusal path.** Show the estimate, the limit, and a "download anyway" that calls `acceptCeiling()`. |
+| `CEILING_EXCEEDED` | download | no | **The refusal path.** `handle.result` rejects with this the moment the handle goes `blocked` (see the 2026-11-12 amendment below: it used to just wait, forever). Carries `context.breaches`, `context.limits` and `context.estimate`. Show the estimate, the limit, and a "download anyway" that calls `acceptCeiling()` — whose return value is the continued run's promise. |
 | `FORMAT_UNAVAILABLE` | download | no | "GeoPackage output needs the @cnmw/format-gpkg plugin." |
 | `FORMAT_CAPABILITY` | download | no | e.g. nested columns into GeoPackage, or a non-4326 CRS into any E10 plugin, or mixed geometry types into one Shapefile/Esri JSON file. Offer GeoParquet/GeoJSON. |
 | `FORMAT_LOAD_FAILED` | download | **yes** | **Added by the lazy-format-loading amendment (E10).** A lazy format's CDN `load()` threw (network, usually). "Couldn't load the GeoPackage writer — check your connection and try again." Retryable: the registry's `resolveFormat` does not cache a rejection, so a retry re-attempts `load()`. |
@@ -2594,7 +3293,7 @@ export declare function isCnmwError(e: unknown): e is CnmwError;
 | `NETWORK` | all | yes | Generic fetch failure. |
 | `CORS` | all | no | Distinguished from `NETWORK` because the fix is the publisher's, not the user's. Name the host. |
 | `HTTP_STATUS` | all | depends | Carries `context.status`. `retryable` for 5xx/429, not for 4xx. |
-| `CANCELLED` | all | no | Never surfaced to the user. |
+| `CANCELLED` | all | no | Never surfaced to the user. Rule 1 above is now enforced at the one place that was breaking it: `parquet-io.js` checks `signal.aborted` when a footer or row read throws, so an abort reports `CANCELLED` (and `state: 'cancelled'`) instead of the `NETWORK`/`DATASET_UNRESOLVED` the aborted `fetch` looked like. It tests the signal rather than the error's type, because a caller-supplied `fetch` may reject with anything. |
 | `INTERNAL` | all | no | Bug. Include a repro hint and the package version. |
 
 ---
@@ -2869,7 +3568,18 @@ behaviour that would then differ between MapLibre and OpenLayers.
 import type { IControl, Map } from 'maplibre-gl';
 
 export interface GeocoderControlOptions {
-  readonly geocoder?: Geocoder;             // default: new Geocoder()
+  /** **Required in practice. The documented `new Geocoder()` default is
+   *  PLANNED, not implemented — §8, and deliberately so:** defaulting it
+   *  here would make `@cnmw/maplibre`/`@cnmw/openlayers` import
+   *  `@cnmw/geocoder-core` (and through it a parquet reader), which §4.5's
+   *  adapter budget and §5.1's "what an adapter must not do" both rule
+   *  out. With no `geocoder`, the control renders and accepts typing but
+   *  every search is a no-op. Construct the `Geocoder` yourself and pass
+   *  it; every example in this repo does. */
+  readonly geocoder?: Geocoder;
+  /** **PLANNED, not implemented — §8.** Accepted and ignored, for the same
+   *  package-boundary reason as `geocoder`'s default above: honoring it
+   *  means constructing a `Geocoder` in here. */
   readonly geocoderOptions?: GeocoderOptions;
   readonly placeholder?: string;
   readonly debounceMs?: number;             // default 80
@@ -2912,11 +3622,21 @@ export declare function addAreaLayer(map: Map, options?: AreaLayerStyle & { id?:
 export declare function viewportProvider(map: Map): () => BBox;
 /** Minimal draw: rectangle + polygon + "use current viewport". Emits an Area
  *  with `source: 'draw'`. Not a replacement for mapbox-gl-draw; a host that
- *  already has a draw library passes its GeoJSON to `areaFromGeoJson`. */
+ *  already has a draw library passes its GeoJSON to `areaFromGeoJson`.
+ *
+ *  **PLANNED, not implemented — §8.** No package exports this symbol, in
+ *  either adapter; an `import { createDrawTool }` resolves to `undefined`
+ *  and calling it throws. It is pointer-interaction UI (rect drag, polygon
+ *  click-to-add plus double-click-to-close, touch, ESC-to-cancel,
+ *  re-entrant draw state, teardown on `remove()`) — a half-working version
+ *  would be worse than the escape hatch in its own doc comment, which
+ *  works today: bring your own draw library and pass its GeoJSON to
+ *  `@cnmw/upload-core`'s `areaFromGeoJson`, which yields the same `Area`
+ *  with `source: 'upload'`. */
 export declare function createDrawTool(map: Map, options?: { tools?: ('rectangle'|'polygon'|'viewport')[] }): DrawToolHandle;
 ```
 
-`@cnmw/openlayers` exports the same five names with OL types
+`@cnmw/openlayers` exports the same names with OL types
 (`Control`, `Map` from `ol`, `VectorLayer`/`VectorSource` internally) and one
 extra option:
 
@@ -3371,6 +4091,40 @@ implementation.
 | **O11** | `@cnmw/spec` as a hard singleton. If two packages on one page resolve different `spec` versions, `instanceof` checks and `Area` validation diverge. | nothing — it is a design choice to make now | **Runtime guard:** `spec` registers itself on `globalThis[Symbol.for('cnmw.spec')]` with its version; a second, different version logs one loud warning and the later loader defers to the first for the validators. Ugly, and the only thing that actually catches this in a zero-build page. |
 | **O12** | Whether `estimate()` should ever read data pages. Metadata-only is cheap and honest; it makes row estimates wide (`Bounded.exact: false`) when predicate selectivity is unknown. | E5 measuring how wide "wide" is on real requests | **Metadata-only, with an opt-in `sample: { rowGroups: 1 }`** that reads one admitted row group to calibrate selectivity. Report `estimate-wide` when `max/estimate > 10` so the UI can say "between 2,000 and 400,000 rows" instead of pretending to know. |
 | **O13** | deck.gl adapter. `PLAN.md` leaves it open; `portolan-browser` has deck.gl. | E7 finding MapLibre's GeoJSON source insufficient for a large outline | **Not now.** `addAreaLayer` on a MapLibre GeoJSON source handles one outline at the display vertex ceiling. A `@cnmw/deckgl` adapter is additive and needs no core change. |
+
+---
+
+## 8. Specified here, not implemented
+
+*Added 2026-11-12, from an audit that read every interface in this document
+against `packages/*/src`.* Everything above describes shipped behaviour
+**except** the entries below. Each is marked **PLANNED, not implemented —
+§8** at its declaration, so nobody reads an interface here and assumes it
+works; this table is the single list, with the reason it has not been
+built and the thing to do instead today.
+
+The distinction matters because this document is normative: an API that is
+specified but absent costs a consumer more than one that was never
+specified, and two of these were actively harmful before this pass (a
+silent fallback, and a promise that never settled — both now fixed rather
+than merely documented).
+
+| what | where it is declared | what happens today | why not implemented / what to do instead |
+|---|---|---|---|
+| `indexUrl` as an **array** (multi-source search) | §3.2 `GeocoderOptions.indexUrl` | A one-element array works. Two or more now throw `INDEX_MULTI_SOURCE_UNSUPPORTED`. **Was** a silent fallback to `DEFAULT_INDEX_URL` — a caller naming two gazetteers got a third, with no error. | Real multi-source means parallel manifest loads, N open indexes queried per keystroke, merged ranking and a partial-failure policy — and design call #6 already puts cross-source merging/dedupe out of scope. Construct one `Geocoder` per index and merge in your own UI. |
+| `createDrawTool` | §5.2 (`@cnmw/maplibre`, and `@cnmw/openlayers` by inheritance) | **The symbol does not exist.** An `import { createDrawTool }` gives `undefined`; calling it throws. | Pointer-interaction UI (rect drag, polygon click-to-add + double-click-to-close, touch, ESC-to-cancel, re-entrant state, teardown) — a half-working draw tool is worse than none. Use any draw library and pass its GeoJSON to `@cnmw/upload-core`'s `areaFromGeoJson`: same `Area`, `source: 'upload'`. |
+| `load:progress` | §3.2 `GeocoderEvents` | Never emitted. Subscribing succeeds and the handler never fires. | Needs byte counting against `content-length` through both the manifest and index fetches, plus throttling (an unthrottled emit on a 4 MB index fires hundreds of times). Genuinely worth building — cold index load, 1.9–5.3 s, is this library's biggest measured UX gap — but it is a feature, not a doc fix. Until then: the `state` event's `'loading'` → `'ready'` transition is what a spinner needs. |
+| `GeocoderControlOptions.geocoder`'s `new Geocoder()` default, and `geocoderOptions` | §5.2 | No default; `geocoderOptions` is accepted and ignored. With no `geocoder` the control renders and types but never searches. | **Deliberate, and should stay.** Either would make the adapters import `@cnmw/geocoder-core` and through it a parquet reader, against §4.5's adapter budget and §5.1's rules. The adapters take a `Geocoder`; the host constructs it. |
+| `GeometryResolverOptions.boundaryUrls` | §3.2 | Accepted and ignored; boundary URLs always come from the manifest. | Small (two call sites in `select()`), but nothing needs it: the manifest is the versioned source of truth for which file a level lives in, and an override that disagrees with it silently defeats §6.4's version-skew check. Mirror the catalog and point `indexUrl` at your manifest instead. |
+| `GeocoderOptions.initialFetchSize` | §3.2 | Accepted and ignored. | Superseded by the manifest contract: each file entry declares `footer_metadata_bytes`, so the footer read is exact *per file* rather than one global guess. Nothing is gained by letting a caller override an exact number with an estimate. |
+
+**Resolved by this pass, and so *not* in this table:** a `blocked`
+handle's `result` now rejects (§3.4 amendment); cancellation now reports
+`CANCELLED` rather than `NETWORK`/`DATASET_UNRESOLVED` (§3.5);
+`DownloadCoreOptions.maxConcurrentRequests` is now honoured;
+`DEFAULT_INDEX_URL` is now the published manifest; `rank.viewportRank`,
+the two `UPLOAD_*` codes and the `deduped-points` repair kind are now
+named correctly here.
 
 ---
 

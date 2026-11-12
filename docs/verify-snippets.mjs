@@ -288,7 +288,7 @@ async function groupSpec() {
 // ===========================================================================
 async function groupGeocoder() {
   console.log('\n@cnmw/geocoder-core (live: data.source.coop)');
-  const { Geocoder, setHyparquetModules, classifyMatch, computeViewportRank, prefixRange, VERSION } =
+  const { Geocoder, setHyparquetModules, classifyMatch, computeViewportRank, prefixRange, VERSION, DEFAULT_INDEX_URL } =
     await import('@cnmw/geocoder-core');
   const { normalizeName } = await import('@cnmw/spec');
 
@@ -296,6 +296,34 @@ async function groupGeocoder() {
 
   await snippet('geocoder-core/README', 'VERSION', async () => {
     assert.equal(VERSION, '0.1.0');
+  });
+
+  await snippet('geocoder-core/README', 'DEFAULT_INDEX_URL is the published geoBoundaries manifest, and it serves', async () => {
+    // The README claims `new Geocoder()` with no options works. That is
+    // only true if the default is an absolute, published, reachable URL --
+    // it used to be './data/index.json', a relative dev path.
+    assert.equal(DEFAULT_INDEX_URL, GB_INDEX_URL);
+    const res = await fetch(DEFAULT_INDEX_URL);
+    assert.equal(res.ok, true, `GET ${DEFAULT_INDEX_URL} -> ${res.status}`);
+    const manifest = await res.json();
+    assert.equal(manifest.source, 'geoboundaries-cgaz');
+    // CC-BY-4.0, not ODbL: a default nobody chose must not impose
+    // share-alike terms (design call #11).
+    assert.ok(
+      manifest.attribution.every((a) => !(a.share_alike ?? a.shareAlike)),
+      'the default index must carry no share-alike obligation',
+    );
+    return `${DEFAULT_INDEX_URL} -> ${res.status}, source ${manifest.source}`;
+  });
+
+  await snippet('geocoder-core/README', 'two indexUrls refuse by name instead of silently loading the default', async () => {
+    assert.throws(
+      () => new Geocoder({ indexUrl: [GB_INDEX_URL, 'https://example.test/other/index.json'] }),
+      (e) => e.code === 'INDEX_MULTI_SOURCE_UNSUPPORTED',
+    );
+    // One is unambiguous, so it is accepted.
+    assert.doesNotThrow(() => new Geocoder({ indexUrl: [GB_INDEX_URL] }));
+    return 'multi-source refuses; a one-element array is accepted';
   });
 
   /** @type {import('@cnmw/geocoder-core').Geocoder} */
@@ -406,13 +434,17 @@ async function groupGeocoder() {
     return 'CGAZ ADM0 has no shapeID column; the manifest declares index_key_column: "country"';
   });
 
-  await snippet('geocoder-core/README', 'geometryRef.row is a BigInt', async () => {
+  await snippet('geocoder-core/README', 'a SearchResult survives JSON.stringify, BigInt geometry_ref and all', async () => {
+    // `geometry_ref.row` is parquet INT64, which hyparquet decodes as a
+    // BigInt, and one BigInt anywhere in the graph makes JSON.stringify
+    // *throw*. It is now converted at the result boundary, so this -- the
+    // thing a caller actually does with a search result -- works.
     const [result] = await shared.search('contra costa');
     assert.ok(result.geometryRef, 'the published index carries geometry_ref');
-    assert.equal(typeof result.geometryRef.row, 'bigint');
+    assert.equal(typeof result.geometryRef.row, 'number');
     assert.equal(typeof result.geometryRef.rowGroup, 'number');
-    assert.throws(() => JSON.stringify(result), /BigInt/);
-    return `row ${result.geometryRef.row}n, rowGroup ${result.geometryRef.rowGroup}`;
+    assert.equal(JSON.parse(JSON.stringify(result)).geometryRef.row, result.geometryRef.row);
+    return `row ${result.geometryRef.row}, rowGroup ${result.geometryRef.rowGroup} -- both plain numbers, JSON-safe`;
   });
 
   await snippet('geocoder-core/README', 'events: load, results, select', async () => {
@@ -697,7 +729,10 @@ async function groupDownload() {
     assert.match(est.requestDigest, /^[0-9a-f]{64}$/);
     assert.deepEqual(
       est.prune.map((s) => s.stage),
-      ['row-group-bbox', 'row-group-stats'],
+      // `row-group-where` is the predicate-pushdown stage; it is reported
+      // even with no `where` filter, so a UI can show the whole cascade
+      // rather than a list whose length depends on the query.
+      ['row-group-bbox', 'row-group-stats', 'row-group-where'],
     );
     return `${est.rows.min}–${est.rows.max} rows, ${est.readBytes.estimate.toLocaleString()} B, ${est.requests} requests`;
   });
@@ -769,32 +804,38 @@ async function groupDownload() {
     await assert.rejects(handle.result, (e) => e.code === 'FORMAT_UNAVAILABLE');
   });
 
-  await snippet('download-core/README', 'the ceiling blocks and waits for an explicit decision', async () => {
-    // (1) Blocked, and left alone: `result` stays PENDING. It does not
-    // reject on its own -- you must acceptCeiling() or cancel().
+  await snippet('download-core/README', 'the ceiling refuses by rejecting, and acceptCeiling() hands back the continued run', async () => {
+    // (1) Blocked: `result` REJECTS with CeilingExceededError. It does not
+    // wait (which is what it used to do, forever -- the 2026-11-12 §3.4
+    // "blocked handles reject" amendment). The error carries the estimate,
+    // so a caller who only ever awaits `result` still gets the numbers.
     const blocked = download(dataset, area, filter, { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink(), ceiling: { rows: 10 } });
-    const est = await blocked.estimate; // resolves even when the ceiling trips
-    assert.equal(est.ceiling.exceeded, true);
-    assert.deepEqual(est.ceiling.breaches, ['rows']);
+    const err = await blocked.result.then(() => null, (e) => e);
+    assert.equal(err.code, 'CEILING_EXCEEDED');
+    assert.deepEqual(err.context.breaches, ['rows']);
+    assert.equal(err.context.estimate.ceiling.exceeded, true);
     assert.equal(blocked.state, 'blocked');
-    const raced = await Promise.race([
-      blocked.result.then(() => 'settled', () => 'settled'),
-      new Promise((r) => setTimeout(() => r('pending'), 750)),
-    ]);
-    assert.equal(raced, 'pending');
+    // `estimate` resolves on its own either way.
+    assert.deepEqual((await blocked.estimate).ceiling.breaches, ['rows']);
+    // Declining leaves the already-settled rejection alone; `state` is
+    // what records the decision.
     await blocked.cancel('too big');
-    await assert.rejects(blocked.result, (e) => e.code === 'CANCELLED');
     assert.equal(blocked.state, 'cancelled');
 
     // (2) Accepted from the 'ceiling' event -- the auditable override.
+    // `acceptCeiling()` returns the continued run's promise, because the
+    // one above has already rejected.
     const accepted = download(dataset, area, filter, { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink(), ceiling: { rows: 10 } });
-    accepted.on('ceiling', () => accepted.acceptCeiling());
-    assert.equal((await accepted.result).rows, 769);
+    const continued = await new Promise((resolve) => {
+      accepted.on('ceiling', () => resolve(accepted.acceptCeiling()));
+    });
+    assert.equal(continued.rows, 769);
+    assert.equal((await accepted.result).rows, 769); // `result` returns the same promise now
 
-    // (3) Or pre-accepted, when a caller has already decided.
+    // (3) Or pre-accepted, when a caller has already decided: never blocks.
     const preAccepted = download(dataset, area, filter, { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink(), ceiling: { rows: 10 }, acceptCeiling: true });
     assert.equal((await preAccepted.result).rows, 769);
-    return 'blocked -> pending until acceptCeiling() or cancel()';
+    return 'blocked -> result rejects CEILING_EXCEEDED; acceptCeiling() returns the continued run';
   });
 
   await snippet('download-core/README', 'downloadRequest() runs a serialized DownloadRequest', async () => {
@@ -1048,17 +1089,20 @@ async function groupAgents() {
     for (const [w, s, e, n] of area.bboxes) assert.ok(w <= e && s <= n, 'bboxes are normalized');
     assert.equal(area.bboxes.length > 1, area.crossesAntimeridian);
 
-    // KNOWN WART, documented rather than papered over: a geocoder Area's
-    // attribution entries come straight off the index manifest, so their
-    // keys are snake_case (`share_alike`), while a download descriptor's
-    // derived attribution uses camelCase (`shareAlike`). Read both.
+    // Attribution casing: the manifest declares `share_alike` (snake_case,
+    // like the rest of the manifest), the documented `AreaAttribution`
+    // shape names it `shareAlike`. `geocoder-core` normalizes on ingestion
+    // and keeps the raw key alongside, so BOTH spellings are present and
+    // agree -- an adapter reading either one is correct. (This used to be
+    // a wart this snippet pinned: only `share_alike` existed, so code
+    // checking `shareAlike` alone silently reported no share-alike
+    // obligation on ODbL data.)
     for (const a of area.provenance.attribution) {
       assert.equal(typeof a.license, 'string');
-      const shareAlike = a.shareAlike ?? a.share_alike;
-      assert.equal(typeof shareAlike, 'boolean');
+      assert.equal(typeof a.shareAlike, 'boolean');
+      assert.equal(a.shareAlike, Boolean(a.share_alike));
     }
-    assert.equal(area.provenance.attribution[0].shareAlike, undefined);
-    assert.equal(area.provenance.attribution[0].share_alike, false);
+    assert.equal(area.provenance.attribution[0].shareAlike, false); // CC-BY-4.0
 
     const doc = toAreaDocument(area); // a plain GeoJSON Feature
     const json = JSON.stringify(doc);
@@ -1153,21 +1197,29 @@ async function groupAgents() {
     const sink = memorySink();
     const handle = download(dataset, area, filter, output, { sink, ceiling: { rows: 100 } });
 
-    const est = await handle.estimate;
+    // The shape AGENTS.md recipe 4 shows: await the result and decide from
+    // the rejection, which carries the estimate. A breach rejects rather
+    // than hanging, so there is no "inspect the estimate first or deadlock"
+    // rule to remember any more.
+    let result;
     let accepted = false;
-    if (est.ceiling.exceeded) {
-      // An agent decides here. Never leave a blocked handle alone: its
-      // `result` promise waits forever until one of these two calls.
-      if (est.rows.max <= 10_000) {
-        handle.acceptCeiling();
-        accepted = true;
-      } else {
+    try {
+      result = await handle.result;
+    } catch (err) {
+      assert.equal(err.code, 'CEILING_EXCEEDED');
+      const est = err.context.estimate;
+      if (est.rows.max > 10_000) {
         await handle.cancel('over budget');
+        throw err;
       }
+      // Returns the CONTINUED run's promise: the one awaited above has
+      // already rejected.
+      result = await handle.acceptCeiling();
+      accepted = true;
     }
     assert.equal(accepted, true);
+    const est = await handle.estimate; // still available, and still resolves
 
-    const result = await handle.result;
     assert.equal(handle.state, 'done');
     assert.equal(result.rows, 795);
     assert.ok(sink.chunks.length > 0);

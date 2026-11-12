@@ -236,7 +236,8 @@ split already happened in `@cnmw/spec`. Do not feed it a signed
 
 **`options.geocoder` has no default**, exactly as in the MapLibre adapter, and
 for the same reason (keeping this package from importing a parquet reader).
-`geocoderOptions` is accepted and ignored. Always construct the `Geocoder`
+`geocoderOptions` is accepted and ignored. Both are listed as
+planned-not-implemented in design doc §8. Always construct the `Geocoder`
 yourself.
 
 **`lineDash`, not `lineDasharray`.** The two adapters' style objects are

@@ -330,9 +330,10 @@ RFC 7946, which is the common and correct case.
 | `UPLOAD_PARSE_ERROR` | Unreadable file, or not valid JSON. |
 | `INTERNAL` | `unionMode: 'dissolve'` with no `dissolver` supplied. |
 
-`UPLOAD_UNSUPPORTED_FORMAT` and `UPLOAD_PARSE_ERROR` are **two codes beyond the
-design doc's §3.5 table** — it has no slot for either, and both are things a
-user can cause and a UI must distinguish.
+`UPLOAD_UNSUPPORTED_FORMAT` and `UPLOAD_PARSE_ERROR` shipped with this package
+as two codes *beyond* the design doc's §3.5 table — it had no slot for either,
+and both are things a user can cause and a UI must distinguish. **They were
+added to that table on 2026-11-12**, so the doc and the code now agree.
 
 ## Gotchas
 

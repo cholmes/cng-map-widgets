@@ -124,7 +124,7 @@ Verified by [`docs/verify-snippets.mjs`](../../docs/verify-snippets.mjs)
 
 | option | type | default | honored? | notes |
 |---|---|---|---|---|
-| `indexUrl` | `string` | `DEFAULT_INDEX_URL` | yes | The **manifest** URL (`index.json`), not the parquet. May be relative in a browser. |
+| `indexUrl` | `string` | `DEFAULT_INDEX_URL` — the published geoBoundaries manifest | yes | The **manifest** URL (`index.json`), not the parquet. May be relative in a browser. |
 | `loadStrategy` | `'full' \| 'range' \| 'auto'` | `'auto'` | yes | `auto` → `full` when `manifest.index.size <= fullLoadMaxBytes`, else `range`. |
 | `fullLoadMaxBytes` | `number` | `5_242_880` | yes | |
 | `limit` | `number` | `10` | yes | Default result count; overridable per call. |
@@ -138,17 +138,32 @@ Verified by [`docs/verify-snippets.mjs`](../../docs/verify-snippets.mjs)
 | `onVersionSkew` | `'error' \| 'warn' \| 'ignore'` | `'error'` | yes | |
 | `fetch` | `typeof fetch` | `globalThis.fetch` | yes | Every request goes through this. |
 | `signal` | `AbortSignal` | — | **no** | Pass a signal to `load()`/`search()`/`select()` instead. |
-| `initialFetchSize` | `number` | — | **no** | The footer read size comes from the manifest's `footer_metadata_bytes`; this option is ignored. |
-| `indexUrl` as an **array** | `string[]` | — | **no** | Multi-source search is designed but not implemented. An array silently falls back to `DEFAULT_INDEX_URL`. |
+| `initialFetchSize` | `number` | — | **no** | Design doc §8 ("specified, not implemented"). The footer read size comes from the manifest's `footer_metadata_bytes`, which is exact per file; this option is ignored. |
+| `indexUrl` as an **array** | `string[]` | — | **partly** | Multi-source search is design doc §8. A **one-element** array works (equivalent to the string). Two or more throw `INDEX_MULTI_SOURCE_UNSUPPORTED` — as of 2026-11-12; it used to silently load `DEFAULT_INDEX_URL` instead, i.e. an index you never named. Construct one `Geocoder` per index. |
 
 `RankingOptions`: `{ viewportBoost = 1, nearFactor = 2, matchClasses = ['exact',
-'prefix', 'word-prefix'], exactLevelPromotion = 1, … }`. The comparator is
+'prefix', 'word-prefix'], exactLevelPromotion = 1, altLevelDemotion = 1,
+populationPromotionThreshold = 100_000, populationLevelPromotion = 1, … }`. The comparator is
 actively being tuned — read
 [`src/ranking.js`](src/ranking.js)'s `compareRanked` doc comment and design doc
 §3.2 for the normative order, and treat the exported constants
 (`DEFAULT_EXACT_LEVEL_PROMOTION`, `DEFAULT_ALT_LEVEL_DEMOTION`,
+`DEFAULT_POPULATION_PROMOTION_THRESHOLD`, `DEFAULT_POPULATION_LEVEL_PROMOTION`,
 `MATCH_CLASS_RANK`, `VIEWPORT_RANK`, `DEFAULT_DIVERSITY`) as the source of
 truth for their defaults.
+
+The three level adjustments are each bounded to **one** admin level, and that
+bound is the whole design: an exact match reads as one level shallower, a
+non-exact alt-name match as one level deeper, and a place whose `population`
+is at or above `populationPromotionThreshold` as one level shallower. Set
+`populationPromotionThreshold: Infinity` to opt the population promotion out
+entirely. The threshold is 100,000 because measurement picked it: below it,
+`prefix`-matched mid-size towns start out-ranking `exact` matches on the
+queried name (Brooklyn, Ohio at 11,022 displaces the New York borough at a
+10,000 threshold); above it, genuinely large cities stop being reachable
+(Springfield, Missouri at 171,589 falls from 2nd to 6th at 250,000). See
+design doc §3.2's "population-promotion follow-up" amendment for the full
+sweep.
 
 `DiversityOptions`: `{ dedupe = true, maxPerGroup = 3 }`. `dedupe` collapses
 rows identical in `(nameNorm, country, level)` to the largest-`areaKm2` one,
@@ -157,8 +172,10 @@ annotated with `moreCount`. `maxPerGroup` caps rows per `(country, level)`
 group instead of shrinking the list. `maxPerGroup: null` disables the cap.
 
 `GeometryResolverOptions`: `{ resolution = 'display', filterVertexCeiling =
-10_000, displayVertexCeiling = 200_000 }`. (`boundaryUrls` is in the design doc
-but not implemented — boundary URLs come from the manifest.)
+10_000, displayVertexCeiling = 200_000 }`. (`boundaryUrls` is design doc §8:
+specified, not implemented — boundary URLs always come from the manifest,
+which is also what §6.4's version-skew check relies on. Mirror the catalog
+and point `indexUrl` at your own manifest instead.)
 
 ### Properties
 
@@ -256,7 +273,10 @@ and reported via `'error'` rather than stopping the others.
 | `warning` | `{ code, message, detail? }` | Tolerated skew, `PROMINENT_INDEX_FAILED`, `GEOMETRY_REF_MISMATCH`. |
 | `error` | `CnmwError` | |
 
-`load:progress` is in the design doc but **never emitted** by this build.
+`load:progress` is design doc §8: specified, not emitted by this build (nothing
+counts bytes against `content-length`). Subscribing succeeds and the handler
+never fires. For a loading indicator, use the `state` event's `'loading'` →
+`'ready'` transition.
 
 ```js
 const off = geocoder.on('load', (info) => console.log(info.rows));
@@ -282,16 +302,17 @@ background upgrades, clears the boundary-handle cache, and returns `state` to
 | `parentName` | `string?` | Overture's containing-unit name ("Rajasthan"). `undefined` if the index lacks the column. |
 | `countryName` | `string?` | geoBoundaries' country display name ("United States"). The two sources are mutually exclusive on these columns. |
 | `areaKm2` | `number?` | |
-| `population` / `class` | `number?` / `string?` | **Reserved.** Passed through unconditionally; unpopulated on every index shipped so far. |
+| `population` | `number?` | Populated on the Who's On First index (and `0` is a real value there, not "unknown"); absent on geoBoundaries. Decoded through a `number|bigint` coercion, because WOF types the column as parquet `INT64` — a plain `typeof === 'number'` test read every row as absent, which silently disabled the whole prominence tiebreak. |
+| `class` | `string?` | **Reserved.** Passed through unconditionally; unpopulated on every index shipped so far. |
 | `bbox` | `BBox` | `[xmin, ymin, xmax, ymax]`, flattened from the index's struct column. |
 | `source` | `string` | From the row's `source` column, else the manifest's top-level `source`. |
 | `score` | `number` | Derived `0..1`, **for display only** — the sort never reads it. |
-| `rank` | `object` | Why it ranked where it did: `matchClass`, `level`, `effLevel`, `levelAdjusted`, `viewportRank`, `nameLength`, `areaKm2`, `isAlt`. |
+| `rank` | `object` | Why it ranked where it did: `matchClass`, `level`, `effLevel`, `levelAdjusted`, `viewportRank`, `nameLength`, `areaKm2`, `population`, `class`, `isAlt`. `effLevel` is `level` after the three bounded one-level adjustments; the gap between them is the whole explanation of any surprising order. |
 | `moreCount` | `number?` | Set when dedupe collapsed N identical rows into this one. Render as "(+N more)". |
-| `geometryRef` | `{ file, rowGroup, row }?` | Advisory fast-path pointer. **`row` is a `BigInt`.** |
+| `geometryRef` | `{ file, rowGroup, row }?` | Advisory fast-path pointer. `row` is parquet `INT64`, converted to a plain `number` at this boundary so a `SearchResult` survives `JSON.stringify()`. |
 
-Note the field is `rank.viewportRank`, not `rank.viewport` as the design doc
-writes it.
+The field is `rank.viewportRank`; the design doc used to write it as
+`rank.viewport`, and was corrected 2026-11-12 to match the code.
 
 ### Filters and the viewport boost
 
@@ -449,14 +470,21 @@ never cancel another's read of the same file.
 
 ## Gotchas
 
-**`DEFAULT_INDEX_URL` is `'./data/index.json'`.** It is a *development* default
-pointing at a local build, not the published catalog. Always pass `indexUrl`
-explicitly. (The design doc says the default should be the published URL; it
-is not.)
+**`DEFAULT_INDEX_URL` is now the published catalog.** As of 2026-11-12 it is
+`https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json`
+(design call #10), so `new Geocoder()` with no options works. It used to be
+`'./data/index.json'` — a relative *development* path that 404s anywhere but
+this repo's own demo directory, and which `.gitignore` excludes even there.
+geoBoundaries (CC-BY-4.0) rather than Overture, deliberately: a default nobody
+chose must not impose ODbL share-alike terms. Pass `indexUrl` to pick the
+other catalog or your own mirror.
 
-**`indexUrl` must be a string.** The designed multi-source form
-(`indexUrl: [url1, url2]`) is not implemented, and an array silently falls back
-to `DEFAULT_INDEX_URL` rather than throwing. Pass one URL.
+**`indexUrl` takes one URL.** The designed multi-source form
+(`indexUrl: [url1, url2]`) is design doc §8: specified, not implemented. A
+one-element array is accepted; two or more throw
+`INDEX_MULTI_SOURCE_UNSUPPORTED`. Before 2026-11-12 an array *silently* fell
+back to `DEFAULT_INDEX_URL`, so naming two gazetteers got you a third with no
+error at all.
 
 **The 1 s cold-load budget is not met.** 3.9 MB over the public path measured
 ≈3.8 s from Node and ≈5.3 s in a browser (the extra being hyparquet's 27-file
@@ -466,25 +494,34 @@ What would close it, roughly in order: a prebundled hyparquet (one fetch, not
 has one), and `loadStrategy: 'range'` for a cold first keystroke. Warm
 keystrokes are ~1 ms and well inside budget.
 
-**`geometryRef.row` is a `BigInt`.** Parquet `INT64` decodes to `BigInt` in
-hyparquet, so `JSON.stringify(searchResult)` **throws** `TypeError: Do not know
-how to serialize a BigInt`. If you persist results, strip or stringify it:
+**Parquet `INT64` columns decode as `BigInt` — handled, but know it is there.**
+hyparquet decodes `INT64` as `BigInt`, and one `BigInt` anywhere in an object
+graph makes `JSON.stringify` **throw** `TypeError: Do not know how to serialize
+a BigInt`. A `SearchResult` is exactly what a caller persists or logs, so both
+`INT64` columns it can carry are coerced at the result boundary:
+`geometryRef.row` and `population` are plain `number`s, and
+`JSON.stringify(searchResult)` works. (A `row` too large to be a safe integer
+keeps its `BigInt` precision — it decides which row `select()` reads — and
+carries a `toJSON` so serialization still works.)
 
-```js
-JSON.stringify(result, (k, v) => (typeof v === 'bigint' ? String(v) : v));
-```
+This trap bit the implementation twice before it was fixed at the boundary: a
+naive `Number.isInteger(ref.row)` check made the geometry fast path never fire
+(the measured-slow behaviour it exists to prevent), and a `typeof population
+=== 'number'` check read the Who's On First index's population column as absent
+on every row, silently reducing the ranking comparator's prominence tiebreak to
+a no-op. If you decode index rows yourself, coerce `number|bigint` rather than
+testing for `number`.
 
-This also bit the implementation: a naive `Number.isInteger(ref.row)` check
-made the fast path never fire, which was the measured-slow behaviour it exists
-to fix.
-
-**Attribution keys are `snake_case`.** `geocoder.attribution` and
-`Area.provenance.attribution` are the manifest's array passed through verbatim,
-so entries have `share_alike`, not `shareAlike`. `@cnmw/download-core`'s
-collection-derived attribution uses `shareAlike`. Read both:
-`const shareAlike = a.shareAlike ?? a.share_alike;`. **This matters for ODbL
-data** — checking only `shareAlike` on an Overture-sourced Area silently
-reports no share-alike obligation.
+**Attribution carries both casings, in agreement.** The manifest declares
+`share_alike` (snake_case, like the rest of the manifest); the documented
+`AreaAttribution` shape names it `shareAlike`. `geocoder.attribution`,
+`IndexInfo.attribution` and every `Area.provenance.attribution` are
+normalized on ingestion and keep the raw manifest keys alongside, so both
+spellings are present and equal — reading either is correct. Before that
+normalization the failure was silent and consequential: checking only
+`shareAlike` on an Overture-sourced Area reported **no** share-alike
+obligation on ODbL data. If you read a manifest's `attribution` directly,
+rather than through a `Geocoder`, you still get only `share_alike`.
 
 **Version skew is currently inert against the live catalog.** The published
 parquet files carry no `cnmw:catalog_version` footer key, so

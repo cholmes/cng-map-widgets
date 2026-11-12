@@ -122,7 +122,7 @@ est.requests;       // 2
 est.columns;        // ['id', 'confidence', 'geometry']
 est.warnings;       // [{ code: 'single-row-group', … }]
 est.ceiling.exceeded;  // false
-est.prune.map((s) => s.stage);   // ['row-group-bbox', 'row-group-stats']
+est.prune.map((s) => s.stage);   // ['row-group-bbox', 'row-group-stats', 'row-group-where']
 
 // --- download ------------------------------------------------------------
 const sink = memorySink();
@@ -236,7 +236,7 @@ statistics. **It never reads a data page.**
 | `requestDigest` | `string` | SHA-256 hex of the canonicalized dataset + area id + filter. Pairs an estimate with its download. |
 | `rows` | `Bounded` | `exact: true` only when nothing filters at all. Otherwise a bbox-overlap-weighted selectivity model. |
 | `readBytes` | `Bounded` | **Exact** — summed `total_compressed_size` of the columns actually read in the selected row groups. |
-| `outputBytes` | `Bounded` | A bytes-per-row model. Standalone `estimate()` uses a generic one; `download()` recomputes it with the real format's `estimateBytes`. |
+| `outputBytes` | `Bounded` | A bytes-per-row model, **never exact**. Standalone `estimate()` uses a generic, format-agnostic one (it has no `OutputRequest`, so it cannot know the format — treat it as order-of-magnitude only); `download()` recomputes it from the real format's `estimateBytes`, including the geometry term below, and *that* is the number its ceiling checks. |
 | `files` | `{ total, selected }` | |
 | `rowGroups` | `{ total, selected } \| null` | |
 | `requests` | `number` | HTTP requests the download will issue. Surfaced because on this path request *depth* is the latency, not bytes. |
@@ -254,8 +254,50 @@ Warning codes: `no-covering`, `no-statistics`, `single-row-group`,
 `share-alike`.
 
 Prune stages, in order: `partition` (explicit `filter.partitions`), `part-time`,
-`part-bbox`, `row-group-bbox`, `row-group-stats`. Row-level filtering happens
-during the download, not the estimate.
+`part-bbox`, `row-group-bbox`, `row-group-stats` (the time column),
+`row-group-where` (`filter.where` predicate pushdown, below). Every stage is
+reported even when it pruned nothing, so the cascade's shape does not depend on
+the query. Row-level filtering still happens during the download, not the
+estimate.
+
+#### Predicate pushdown: which `where[]` operators prune
+
+A `where[]` predicate on a column with min/max footer statistics can drop whole
+row groups *before* they are fetched, using the same machinery as the bbox and
+time stages. Pruning is sound-only: a row group is dropped only when the
+statistics **prove** no row in it can match. Anything unprovable keeps the row
+group, and says so in the stage's `basis`.
+
+| operator | prunes? |
+|---|---|
+| `=`, `!=`, `<`, `<=`, `>`, `>=` | yes |
+| `in`, `not_in`, `between` | yes |
+| `is_null`, `is_not_null` | yes |
+| `like`, `ilike` | **no** — a prefix pattern is prunable in principle, but a leading `%` is not, and getting that wrong drops user data |
+| `intersects` and any spatial op | no — that is the `row-group-bbox` stage's job |
+| anything inside a negated `not` | no — the negation inverts what the statistics prove |
+| a path with `[`, i.e. into a list/struct element | no — chunk statistics describe the leaf, not the element |
+
+Always unprunable, whatever the operator: a column with no statistics in the
+footer, statistics of a non-comparable or mixed type, and a comparison between
+a string and a number. Each falls back to "keep the row group".
+
+**Measured, live** (`estimate()` only — footers, no row data), reading the
+`row-group-where` stage's own before/after:
+
+| dataset + predicate | row groups | requests | read bytes |
+|---|---|---|---|
+| FIRMS 2024 Africa, `brightness >= 500` | 649 → **147** | 678 → 176 | **−77.4%** (1.13 GB → 254 MB) |
+| s2 2025 Kenya, `_month = 7` | 825 → 808 | 839 → 822 | −2.0% |
+| FIRMS 2024 Africa, `confidence_pct >= 95` | 649 → 649 | — | 0% (stats exist; every group's range spans 95) |
+| FIRMS 2024 Africa, `satellite = "N"` | 649 → 649 | — | 0% |
+| s2 2025 Kenya, `eo:cloud_cover <= 1` | 825 → 825 | — | 0% |
+| s2 2025 Kenya, `s2:tile_id like 'S2B%'` | 825 → 825 | — | 0%, and the basis says `no statistics-prunable operator` |
+
+So: when it works it is dramatic (a 77% smaller read), and on five of six real
+predicates it does nothing at all. That is the honest shape of statistics
+pruning on files that were not sorted for your predicate — the same lesson the
+bbox stage already teaches on a dataset with no covering.
 
 ### `download(dataset, area, filter, output, options?) => DownloadHandle`
 
@@ -270,7 +312,7 @@ be cancelled during planning, which is exactly when a user changes their mind.
 | `engine` | the built-in hyparquet engine | |
 | `fetch` | `globalThis.fetch` | |
 | `signal` | — | Aborts reads; see the cancel gotcha below. |
-| `maxConcurrentRequests` | — | **Accepted but not implemented**: this build reads one row group at a time, sequentially. |
+| `maxConcurrentRequests` | `12` | Parallel row-group reads, with ordered delivery. Lower it for a file with very large row groups (up to this many decoded groups are live at once); `1` is the old sequential behaviour. |
 
 `DownloadHandle`:
 
@@ -278,10 +320,10 @@ be cancelled during planning, which is exactly when a user changes their mind.
 |---|---|
 | `id`, `state` | `'planning' \| 'blocked' \| 'running' \| 'paused' \| 'done' \| 'cancelled' \| 'failed'`. |
 | `estimate` | `Promise<Estimate>` — resolves even when the ceiling trips. |
-| `result` | `Promise<DownloadResult>`. **Stays pending while `blocked`** — see below. |
+| `result` | `Promise<DownloadResult>`. A **getter** over the live run's promise: it **rejects with `CeilingExceededError`** the moment the handle goes `blocked`, and `acceptCeiling()` installs a fresh one — see below. |
 | `progress` | `AsyncIterable<Progress>`, latest-wins (a progress bar wants the newest number, not every number). |
 | `on(event, handler)` | `=> unsubscribe`. |
-| `acceptCeiling()` | The refusal override. Only meaningful while `blocked`. |
+| `acceptCeiling()` | The refusal override. **Returns the continued run's `Promise<DownloadResult>`**, because the one you were holding has already rejected. Idempotent when not `blocked`. |
 | `pause()` / `resume()` | Cooperative, at row-group boundaries. |
 | `cancel(reason?)` | Aborts reads, aborts the writer and sink, removes the partial file for a filesystem sink we created, and resolves once settled. |
 
@@ -297,34 +339,53 @@ readBytes, sink, estimate, truncated, attribution }`. `sink` is
 `{ kind: 'memory', chunks }`, `{ kind: 'blob', blob }`,
 `{ kind: 'filesystem', handle }` or `{ kind: 'stream' }`.
 
-### The ceiling: block, then decide
+### The ceiling: refuse, then decide
+
+A breach **rejects**; it does not wait. The rejection carries the estimate,
+so awaiting `result` alone is a safe way to drive a download.
 
 ```js
-// (1) Blocked and left alone -- `result` NEVER settles on its own.
+// (1) Blocked: `result` rejects with CeilingExceededError.
 const blocked = download(dataset, area, filter, output, { sink: memorySink(), ceiling: { rows: 10 } });
-const est = await blocked.estimate;   // resolves anyway
-est.ceiling.exceeded;                 // true
-est.ceiling.breaches;                 // ['rows']
-blocked.state;                        // 'blocked'
-// ... await blocked.result here and you wait forever.
+try {
+  await blocked.result;
+} catch (err) {
+  err.code;                           // 'CEILING_EXCEEDED'
+  err.context.breaches;               // ['rows']
+  err.context.estimate.rows.max;      // 795 -- the whole Estimate is here
+  blocked.state;                      // 'blocked' -- still decidable
+}
+await blocked.estimate;               // also still resolves, if you prefer that shape
 await blocked.cancel('too big');
-await blocked.result;                 // rejects CnmwError { code: 'CANCELLED' }, state 'cancelled'
+blocked.state;                        // 'cancelled'
 
-// (2) Accepted from the event -- the auditable override.
+// (2) Accepted from the event -- the auditable override. `acceptCeiling()`
+//     returns the CONTINUED run's promise, because the one above is settled.
 const accepted = download(dataset, area, filter, output, { sink: memorySink(), ceiling: { rows: 10 } });
-accepted.on('ceiling', () => accepted.acceptCeiling());
-(await accepted.result).rows;         // 769
+const continued = await new Promise((r) => accepted.on('ceiling', () => r(accepted.acceptCeiling())));
+continued.rows;                       // 769
+(await accepted.result).rows;         // 769 -- `result` now returns that same promise
 
-// (3) Pre-accepted, when the caller already decided.
+// (3) Pre-accepted, when the caller already decided: never blocks.
 const pre = download(dataset, area, filter, output, { sink: memorySink(), ceiling: { rows: 10 }, acceptCeiling: true });
 (await pre.result).rows;              // 769
 ```
 
-**This diverges from the design doc**, which says `result` rejects with
-`CeilingExceededError` when a blocked handle is not accepted. It does not; it
-waits. Treat a `blocked` handle as requiring one of two calls. The practical
-rule for any automated caller: **never `await handle.result` without first
-inspecting `handle.estimate`.**
+Two consequences worth knowing:
+
+- **A promise captured before the breach stays rejected.** Promises settle
+  once, and the run does not end at a breach — so `result` is a getter over
+  a per-run deferred, and you re-read it (or use `acceptCeiling()`'s return
+  value) after accepting.
+- **Declining does not re-settle it.** `cancel()` while `blocked` moves
+  `state` to `'cancelled'` but leaves the promise rejected with the
+  `CEILING_EXCEEDED` it was already given, rather than switching error codes
+  underneath a caller who is holding it. Read `state`, or the `state` event,
+  for the decision.
+
+*Until 2026-11-12 this section documented the opposite — a blocked handle's
+`result` never settled at all, and this README told automated callers to
+inspect `handle.estimate` first to avoid deadlocking. That rule is gone.*
 
 `defaultCeiling()`:
 
@@ -431,6 +492,67 @@ exported for direct use.
 | built in | `geojson` | `.geojson` | `application/geo+json` | **yes** | `precision` (7), `newlineDelimited` (false → RFC 8142 sequences), `featureIdColumn` |
 | built in | `geoparquet` | `.parquet` | `application/vnd.apache.parquet` | **no** | `compression` (`'snappy'`), `rowGroupSize` (50,000), `writeCovering` (true) |
 
+#### `estimateBytes(schema, rows, ctx?)` — the output-size model
+
+```ts
+estimateBytes(
+  schema: readonly ColumnDescriptor[],
+  rows: Bounded,
+  ctx?: { avgGeometryBytes: number | null; geometryColumn: string },
+): Bounded;
+```
+
+The third argument is **additive**: a plugin that ignores it, or a caller
+invoking `estimateBytes(schema, rows)` with two arguments, keeps working and
+falls back to that format's old constant-geometry model. `avgGeometryBytes` is
+the average **uncompressed** bytes per row of the geometry column, derived from
+footer statistics alone at estimate time, so the estimate stays metadata-only.
+Uncompressed on purpose: what an output format expands from is the decoded WKB,
+not whatever codec the source file used — zstd-19 WKB and raw WKB produce
+identical GeoJSON. Each format then applies its own measured expansion factor
+(GeoJSON ~1.55x WKB, CSV's WKT ~2.4x, GeoParquet's recompressed WKB well under
+1x).
+
+**Why it exists.** Every model counted attribute columns only and assumed a
+small fixed constant for geometry. On boundary data that is wrong by orders of
+magnitude, because geometry *is* the row. Modelled ÷ actual, measured against
+three real datasets (ratios: 1.00 is perfect, below 1 under-estimates):
+
+| dataset | format | actual written | before | after |
+|---|---|---|---|---|
+| CGAZ ADM0 display, 218 rows | geojson | 12,379,597 | 0.006 | **1.01** |
+| | csv | 19,217,657 | 0.001 | **1.01** |
+| | geoparquet | 8,044,920 | 0.003 | **1.01** |
+| | esrijson | 19,728,426 | 0.003 | **1.01** |
+| | shapefile | 8,115,740 | 0.007 | **1.00** |
+| FTW Liechtenstein, 795 rows | geojson | 963,287 | 0.24 | **1.05** |
+| | csv | 1,423,923 | 0.06 | **1.03** |
+| | geoparquet | 199,790 | 0.36 | 3.08 |
+| | esrijson | 1,500,215 | 0.14 | **1.02** |
+| | shapefile | 748,985 | 0.22 | **1.08** |
+| CGAZ ADM1 display, 400 rows | geojson | 6,860,896 | 0.019 | 0.41 |
+| | csv | 10,465,804 | 0.005 | 0.41 |
+| | geoparquet | 4,356,586 | 0.009 | 0.41 |
+| | esrijson | 10,762,831 | 0.011 | 0.41 |
+| | shapefile | 4,465,938 | 0.022 | 0.43 |
+
+**Two honest residuals**, both visible above and neither hidden:
+
+- **CGAZ ADM1 under-estimates by ~2.4x for every format.** The expansion factor
+  is not actually constant — it depends on how many decimal digits each
+  coordinate needs, and ADM1's display geometries measure 3.8x WKB as GeoJSON
+  where ADM0's measure 1.5x. A single per-format multiplier cannot be right for
+  both. Under-estimating is the dangerous direction for a ceiling, so this is a
+  known gap, not a rounding quibble.
+- **GeoParquet over-estimates by ~3x on FTW.** The model expands from
+  *uncompressed* source WKB, but GeoParquet output is recompressed; when the
+  source happens to be denser than the output's codec achieves, the model is
+  high. Over-estimating only costs a spurious ceiling prompt.
+
+Both are a large improvement on "geometry contributes 220 bytes a row". Before,
+a 19 MB CSV modelled as 26 kB could never trip an `outputBytes` ceiling at all,
+which made the ceiling decorative on exactly the datasets it exists for.
+
 Two registration shapes:
 
 - **`registerFormat(plugin)`** — eager. You hand over a ready `FormatPlugin`.
@@ -453,6 +575,25 @@ streaming, capabilities, lazy, loadState }`, where a lazy entry also carries
 | `getFormat(id)` | Synchronous. An eager plugin, or a lazy one already loaded; `undefined` for a lazy format not yet loaded — it deliberately never triggers `load()`. |
 | `resolveFormat(id)` | `Promise<FormatPlugin \| undefined>`. The one place `load()` is called, at most once per id per page; concurrent calls share the in-flight promise. `download()` awaits this. |
 | `formatLoadState(id)` | `'idle' \| 'loading' \| 'loaded' \| 'failed' \| 'unknown'`. |
+| `onFormatState(handler)` | `=> unsubscribe`. **Push, not poll.** Fires `{ id, state }` on every registration and every lazy-load transition, so a picker can re-read `formats()` when something actually changes. |
+
+`formats()` and `formatLoadState()` are pull-only, and a lazy format's state
+moves asynchronously underneath a UI that has already rendered — so without
+`onFormatState` a format picker has to poll (the portolan-browser
+integration was bumping a reactivity counter to force a re-read, which is
+what prompted adding this). Handlers run synchronously in registration
+order; one that throws is swallowed, so a broken subscriber cannot fail the
+registration or `load()` that triggered it:
+
+```js
+import { onFormatState, formats } from '@cnmw/download-core';
+
+const off = onFormatState(({ id, state }) => {
+  render(formats());                  // 'idle' | 'loading' | 'loaded' | 'failed'
+});
+// ... later
+off();
+```
 
 A `load()` may resolve to the plugin, an ESM module whose `default` is the
 plugin or a zero-arg factory, or a factory directly — all are normalized.
@@ -563,7 +704,7 @@ passed through unchecked.
 ### Also exported
 
 `registerFormat`, `registerLazyFormat`, `formats`, `getFormat`,
-`resolveFormat`, `formatLoadState`, `registerEngine`, `engines`,
+`resolveFormat`, `formatLoadState`, `onFormatState`, `registerEngine`, `engines`,
 `createGeoJsonFormat`, `createGeoParquetFormat`, `createHyparquetEngine`,
 `HYPARQUET_ENGINE_ID`, `defaultCeiling`, `requirementsOf`,
 `decodeWkbGeometry`, `bboxOfAnyGeometry`, `bboxIntersectsAny`,
@@ -589,7 +730,7 @@ be reworded.**
 
 | code | retryable | what the UI should say / do |
 |---|---|---|
-| `DATASET_UNRESOLVED` | yes | Collection JSON unreachable or malformed. Also: unreadable parquet metadata. |
+| `DATASET_UNRESOLVED` | yes | Collection JSON unreachable or malformed. Also: unreadable parquet metadata or row data — **except** when the read was aborted, which reports `CANCELLED` instead. |
 | `DATASET_UNSUPPORTED` | no | Design call #8's graceful refusal. "Downloads aren't supported for raster/zarr data." Names what was found. |
 | `DATASET_NO_GEOMETRY_COLUMN` | no | "This table has no geometry column." |
 | `DATASET_CRS_UNSUPPORTED` | no | Name the CRS found and the `ogr2ogr` command that fixes it. 4326/CRS84 only. |
@@ -607,7 +748,7 @@ be reworded.**
 | `NETWORK` | yes | Generic fetch failure. **Also what an abort during planning currently surfaces** — see the gotcha. |
 | `CORS` | no | Distinguished from `NETWORK` because the fix is the publisher's. Names the host. |
 | `HTTP_STATUS` | depends | `context.status`; retryable for 5xx/429. |
-| `CANCELLED` | no | Never surfaced to the user. |
+| `CANCELLED` | no | Never surfaced to the user. Reported for an abort at any stage — planning footer read, row-group read, or between batches. |
 | `INTERNAL` | no | A bug. Include the package version. |
 
 Plus everything `@cnmw/spec` can throw on an `Area` (`AREA_INVALID_CRS`,
@@ -716,12 +857,22 @@ glob expansion is useless to it anyway. **Rely on `enumeration`** —
 `enumeratePartitions` does this for you; it only falls back to filling the glob
 for the `declared` and `values` kinds.
 
-### Cancelling during planning reports `NETWORK`, not `CANCELLED`
+### Cancelling reports `CANCELLED` — including mid-read
 
-`handle.cancel()` called before reading starts aborts the in-flight footer
-fetch, and that abort is wrapped as a `NETWORK` error on the way out — so
-`state` lands on `'failed'` rather than `'cancelled'`. Cancelling a *running*
-download behaves correctly. Match on both until this is fixed.
+Both halves of this used to be wrong, and both are fixed: cancelling during
+planning surfaced `NETWORK` with `state: 'failed'` (the abort hit the
+in-flight footer fetch and was wrapped as a network error), and cancelling
+inside a row-group read surfaced `DATASET_UNRESOLVED` — a lie about a file
+the user stopped reading on purpose. `parquet-io.js` now checks
+`signal.aborted` whenever a footer or row read throws and reports
+`CancelledError` (`code: 'CANCELLED'`, `state: 'cancelled'`), per design doc
+§3.5 rule 1.
+
+It tests the **signal**, not the error's name or type, because the abort
+rejection's shape is not yours to predict: through the `fetch` option a host
+can supply any implementation, and it may reject with something other than
+an `AbortError` `DOMException`. If you write your own reader against this
+package, do the same.
 
 ### `includeBbox: true` adds nothing without a covering
 
@@ -745,12 +896,45 @@ column-oriented dataset up front, so the whole result is held before a byte is
 written. The `blobBytes` ceiling check applies regardless of sink. Use
 `geojson` with `newlineDelimited: true` for anything genuinely large.
 
-### `maxConcurrentRequests` is accepted and ignored
+### Parallel reads are ordered, and the win depends on the query
 
-Row groups are read one at a time, sequentially. The design doc's parallel-read
-story (12 concurrent, which is where the `no-store` finding came from) is not
-implemented here. On a many-row-group read this is the main performance gap:
-the s2 footprints estimate planned **838 requests** for one query.
+Row groups are fetched by `maxConcurrentRequests` workers (default 12) pulling
+from one shared cursor, and `onBatch` is still invoked in strict row-group
+order by a single delivery loop — so the output is byte-for-byte what the
+sequential implementation produced. Read-ahead is bounded (a worker will not
+start slot `i` while `i - delivered >= maxConcurrentRequests`), so one slow
+group cannot pull the rest of the plan into memory.
+
+On this path request *depth* is the latency, not bytes: measured against the
+real `sentinel-2-c1-l2a` STAC-GeoParquet footprints, 8 row-group reads in
+series take 10.07 s and the same 8 concurrently take 1.59 s, while the
+engine's own per-row filter loop (WKB decode, bbox test, polygon
+intersection, `where[]`) costs 14 ms per 6,144-row group.
+
+End to end, on design doc §2.8's worked-example query (Kenya ∩
+2025-06-01/2025-09-01 ∩ `eo:cloud_cover <= 20`). That collection publishes no
+bbox covering, so nothing prunes and the plan is 825 row-group reads:
+
+| | requests | bytes read | rows | elapsed |
+|---|---|---|---|---|
+| `maxConcurrentRequests: 1` | 825 | 208,463,067 | 6,822 | **737 s** (1 sample) |
+| default `12` | 825 | 208,463,067 | 6,822 | **65 / 67 / 74 s** (3 samples) |
+
+**11x at the median, with identical requests, bytes and rows** — pruning
+nothing and changing no answer, just not waiting. A sweep over disjoint cold
+96-row-group windows of the same plan: 1 → 106 s, 4 → 23 s, 12 → 9.5 s,
+24 → 5.0 s. 24 was still scaling; 12 is the conservative default because peak
+memory scales with it. `maxConcurrentRequests: 1` through the new code matches
+the old sequential engine on the same window (106.1 s vs 106.5 s mean), so the
+pool costs nothing when you turn it off.
+
+Counters (`requests`, `bytesRead`, `rowGroupsDone`, `rowsScanned`) are
+incremented by the ordered delivery loop, so they report the row groups that
+contributed to the output and end on exactly the sequential totals. One
+consequence: when `filter.limit` stops the run, the at-most
+`maxConcurrentRequests - 1` reads already in flight finish, are discarded, and
+are **not** counted — so a limit-bound download's `requests` under-reports
+actual network use by up to that many.
 
 ### Timestamps and BigInts in output
 

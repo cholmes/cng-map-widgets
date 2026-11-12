@@ -118,10 +118,13 @@ area.filterGeometry;       // a Polygon -- or NULL, see pitfalls
 
 Hard rules:
 
-- `indexUrl` is the **manifest** (`index.json`), not the parquet, and must be a
-  **string**. An array (the designed multi-source form) is unimplemented and
-  silently falls back to `DEFAULT_INDEX_URL`, which is `'./data/index.json'` —
-  a development path. Always pass it explicitly.
+- `indexUrl` is the **manifest** (`index.json`), not the parquet, and takes
+  **one** URL. The designed multi-source array form is unimplemented (design
+  doc §8); a one-element array works, two or more throw
+  `INDEX_MULTI_SOURCE_UNSUPPORTED`. Omitting it entirely is now fine —
+  `DEFAULT_INDEX_URL` is the published geoBoundaries manifest as of
+  2026-11-12 (it used to be the relative dev path `'./data/index.json'`) —
+  but pass it explicitly whenever you care *which* gazetteer you get.
 - `search()` is safe on every keystroke. A **superseded search resolves to
   `[]`, never rejects.**
 - `searchSync()` is zero-await but throws `GEOCODER_NOT_LOADED` unless
@@ -361,22 +364,29 @@ const handle = download(dataset, area, filter, output, { sink });
 // `download()` returns SYNCHRONOUSLY so you can cancel during planning.
 handle.state;   // 'planning'
 
-// 1. Always inspect the estimate before awaiting the result.
-const est = await handle.estimate;        // resolves even when the ceiling trips
-
-if (est.ceiling.exceeded) {
-  // A blocked handle's `result` NEVER settles on its own. Pick one:
-  if (est.rows.max <= 10_000) handle.acceptCeiling();
-  else await handle.cancel('over budget');
-}
-
-// 2. Progress, if you want it.
+// 1. Progress, if you want it.
 handle.on('progress', (p) => {
   if (p.phase === 'reading') report(p.rowGroupsDone, p.rowGroupsTotal, p.rowsMatched);
 });
 
-// 3. The result.
-const result = await handle.result;
+// 2. The result. A ceiling breach REJECTS with CeilingExceededError
+//    (`code: 'CEILING_EXCEEDED'`) and carries the estimate on the error,
+//    so you no longer have to inspect `handle.estimate` first to be safe.
+let result;
+try {
+  result = await handle.result;
+} catch (err) {
+  if (err.code !== 'CEILING_EXCEEDED') throw err;
+  const est = err.context.estimate;
+  if (est.rows.max > 10_000) {
+    await handle.cancel('over budget');
+    throw err;
+  }
+  // The auditable override. `acceptCeiling()` returns the CONTINUED run's
+  // promise, because the one you were awaiting has already rejected.
+  result = await handle.acceptCeiling();
+}
+
 result.rows;        // 795
 result.bytes;       // bytes written
 result.readBytes;   // bytes pulled from object storage
@@ -385,9 +395,11 @@ result.attribution; // pass this on to whatever consumes the file
 sink.chunks;        // the bytes, for memorySink
 ```
 
-**The rule for an automated caller: never `await handle.result` without first
-awaiting `handle.estimate` and handling `ceiling.exceeded`.** Otherwise a
-breach hangs you forever.
+**`handle.estimate` is still there** and resolves even when the ceiling
+trips, if you would rather branch before starting than catch a rejection.
+Either shape is safe now: before 2026-11-12 a blocked handle's `result`
+never settled at all, and this document carried a rule telling you to work
+around that.
 
 Defaults you are overriding when you pass `ceiling`: 5,000,000 rows, 2 GiB
 output, 4 GiB read, 500 files, 256 MiB blob.
@@ -547,26 +559,41 @@ within the 5% `areaDeltaMaxRatio`. Filtering falls back to `bboxes` alone and
 `area.filterGeometry.coordinates`, you crash on exactly the big countries users
 search for first.
 
-### 3. Attribution keys are inconsistent, and it matters for ODbL
+### 3. Attribution casing: normalized now, but normalize yours too
 
-A geocoder `Area` carries the manifest's `snake_case` (`share_alike`);
-`download-core`'s collection-derived attribution uses `shareAlike`. Read
-`a.shareAlike ?? a.share_alike`. Checking only one silently reports no
-share-alike obligation on Overture-sourced data.
+The manifest declares `share_alike` (snake_case); the documented
+`AreaAttribution` shape names it `shareAlike`. `geocoder-core` now
+normalizes on ingestion and keeps the raw key alongside it, so an `Area`
+carries **both**, in agreement — reading either is correct, and
+`a.shareAlike ?? a.share_alike` still works. Worth knowing because the
+hazard it replaced was silent: before the normalization, checking only
+`shareAlike` reported *no* share-alike obligation on ODbL (Overture)
+data. If you ingest a manifest yourself, normalize it the same way.
 
-### 4. A `blocked` download handle hangs forever
+### 4. A ceiling breach rejects — catch it, don't mistake it for a failure
 
-Covered in recipe 4. `await handle.estimate` first, then `acceptCeiling()` or
-`cancel()`. The design doc says `result` rejects with `CeilingExceededError`;
-it does not.
+Covered in recipe 4. `handle.result` rejects with `CeilingExceededError`
+(`code: 'CEILING_EXCEEDED'`, the estimate on `err.context.estimate`), and
+`handle.acceptCeiling()` returns the **continued** run's promise, because
+the one you were awaiting has already settled. A promise captured before
+the breach stays rejected; re-read `handle.result` after accepting.
+*(Until 2026-11-12 this entry said the opposite — `result` never settled at
+all, which hung any caller that awaited it. If you are working from an
+older copy of this file, that is the change.)*
 
-### 5. `geometryRef.row` is a `BigInt`
+### 5. Parquet `INT64` columns decode as `BigInt`
 
-Parquet `INT64`. `JSON.stringify(searchResult)` **throws** `TypeError: Do not
-know how to serialize a BigInt`:
+hyparquet decodes `INT64` as `BigInt`, and one `BigInt` anywhere in an
+object graph makes `JSON.stringify` **throw** `TypeError: Do not know how to
+serialize a BigInt`. `SearchResult` is coerced at its boundary, so
+`geometryRef.row` and `population` are plain numbers and a result
+serializes. **If you decode index or dataset rows yourself, coerce
+`number|bigint` rather than testing for `number`** — that exact mistake
+dropped the Who's On First `population` column on every row and silently
+disabled a whole ranking component until it was measured.
 
 ```js
-JSON.stringify(result, (k, v) => (typeof v === 'bigint' ? String(v) : v));
+const n = typeof v === 'bigint' ? Number(v) : v;   // then range-check it
 ```
 
 ### 6. `bbox` can have `west > east`
@@ -590,11 +617,16 @@ Which these packages do internally. Chrome serializes concurrent reads of one
 URL behind its cache lock: 2.1 s → 0.4 s for the same eight reads, measured. If
 you write your own reader, pass it.
 
-### 9. Reads are sequential; plan for request count, not bytes
+### 9. Reads are parallel (12 by default); still plan for request count
 
-`maxConcurrentRequests` is accepted and ignored. The s2 footprints estimate
-planned **838 requests** for a one-week, one-country query. `est.requests` is
-the number to show a user and the number to budget against.
+`maxConcurrentRequests` defaults to **12**: row groups are fetched in
+parallel, and `onBatch` still delivers them in row-group order, so output
+order is unchanged. Request *depth* is still the latency on this path, so
+`est.requests` is still the number to show a user and to budget against —
+but 825 of those reads now take ~67 s instead of ~737 s (measured, live, on
+the s2 footprints query that plans **838 requests**). Lower the option for a
+file with very large row groups: peak memory is one decoded row group per
+concurrent read.
 
 ### 10. `includeBbox: true` is a no-op without a covering
 

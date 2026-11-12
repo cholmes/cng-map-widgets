@@ -232,8 +232,9 @@ fitAreaBounds(map, area.bboxes, { padding: 40, maxZoom: 12 });
 
 ## Gotchas
 
-**`options.geocoder` has no default.** The design doc says it defaults to
-`new Geocoder()`; it does not. With no `geocoder`, the control renders and
+**`options.geocoder` has no default.** The design doc listed a
+`new Geocoder()` default; that is now marked planned-not-implemented in its
+§8, deliberately. With no `geocoder`, the control renders and
 accepts typing but every search is a silent no-op (`_doSearch` returns early)
 and `_onPick` throws on `this.geocoder.select`. This is deliberate — it keeps
 `@cnmw/maplibre` from importing `@cnmw/geocoder-core`, so a page that only
@@ -245,7 +246,8 @@ calls `map.addSource`/`addLayer`, which MapLibre refuses before the style has
 loaded. Adding it too early throws.
 
 **`createDrawTool` does not exist.** The design doc (§5.2) specifies a minimal
-rectangle/polygon/viewport draw tool; it is not implemented. If you already
+rectangle/polygon/viewport draw tool; it is not implemented, and is listed as
+such in its §8. If you already
 have a draw library, pass its GeoJSON to `@cnmw/upload-core`'s
 `areaFromGeoJson` and you get the same `Area` with `source: 'upload'`.
 
