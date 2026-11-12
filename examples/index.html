@@ -87,7 +87,7 @@
 
 <h1>Cloud-native map widgets — examples</h1>
 <p class="tagline">
-  Six zero-build demos of <code>@cnmw/*</code>: place-name search over a published
+  Seven zero-build demos of <code>@cnmw/*</code>: place-name search over a published
   cloud-native gazetteer, your own uploaded area, and dataset download — all static
   files against object storage, no API and no server anywhere.
 </p>
@@ -248,6 +248,28 @@
     </div>
   </div>
 
+  <div class="card">
+    <img class="shot" src="raster-demo/screenshot.png" alt="A clipped Sentinel-2 raster window with a band picker and a size estimate." loading="lazy" />
+    <div class="body">
+      <h3><a href="raster-demo/index.html">raster-demo</a></h3>
+      <p>
+        The same <code>Area</code>, pointed at pixels. Open a remote Sentinel-2 COG or STAC item and
+        one header read tells you its size, dtype, CRS, overviews and bands; pick the bands you want
+        and save a clipped GeoTIFF. Windowed range reads, an exact pre-download size, a memory
+        ceiling &mdash; still no server.
+      </p>
+      <div class="links">
+        <a href="raster-demo/index.html">Open demo &rarr;</a>
+        <button class="srcbtn" data-src="raster-demo/index.html">View source</button>
+      </div>
+      <div class="pkgs">
+        <span class="pkg">@cnmw/raster-core</span>
+        <span class="pkg">@cnmw/geocoder-core</span>
+        <span class="pkg">@cnmw/maplibre</span>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <h2>Verifying them yourself</h2>
@@ -265,6 +287,7 @@
     <tr><td><code>node examples/download-demo/verify.mjs 8000</code></td><td>estimate() then a real GeoJSON <em>and</em> GeoParquet download of FTW Liechtenstein.</td></tr>
     <tr><td><code>node examples/firms-explorer/verify.mjs 8000</code></td><td>Collection-JSON resolution, partition pruning, and a real download from a 632M-row table.</td></tr>
     <tr><td><code>node examples/s2-footprints/verify.mjs 8000</code></td><td>The ceiling refusal, <code>acceptCeiling()</code>, and the default column projection.</td></tr>
+    <tr><td><code>node examples/raster-demo/verify.mjs 8000</code></td><td>A COG header read, band selection, the raster size estimate, and a real clipped GeoTIFF.</td></tr>
   </tbody>
 </table>
 

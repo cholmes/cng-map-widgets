@@ -183,19 +183,38 @@ Three ideas carry the design:
 | [`@cnmw/maplibre`](packages/maplibre/README.md) | MapLibre adapter: search combobox control, `Area` outline layer, viewport provider, antimeridian-aware fitBounds. | 4.3 KiB |
 | [`@cnmw/openlayers`](packages/openlayers/README.md) | The same five things in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. | 5.1 KiB |
 
+Output-format plugins. Each registers itself with its **weight declared up
+front**, and only fetches its implementation if a user actually picks that
+format — so a format picker can honestly show "GeoPackage (+~340 KB)" and
+charge nothing until then.
+
+| package | format | its own weight |
+|---|---|---|
+| [`@cnmw/format-gpkg`](packages/format-gpkg/README.md) | GeoPackage (a hand-written SQLite vector-features profile over sql.js) | 4.7 KiB + ~340 KB sql.js on first use |
+| [`@cnmw/format-shapefile`](packages/format-shapefile/README.md) | Shapefile `.shp.zip` — zero dependencies, no wasm, with Shapefile's real limits enforced | 6.4 KiB |
+| [`@cnmw/format-flatgeobuf`](packages/format-flatgeobuf/README.md) | FlatGeobuf, via the official package's GeoJSON serializer | 1.8 KiB + ~10 KB on first use |
+| [`@cnmw/format-extras`](packages/format-extras/README.md) | CSV (attributes + WKT) and Esri JSON — cheap enough to register eagerly | 3.3 KiB |
+
+And one package that is not about vectors at all:
+
+| package | what it does | size |
+|---|---|---|
+| [`@cnmw/raster-core`](packages/raster-core/README.md) | Clip a window out of a remote Cloud-Optimized GeoTIFF in the browser, band-subset it from STAC metadata, and save a valid GeoTIFF — windowed range reads, an exact pre-download size estimate, a memory ceiling. | 11.8 KiB |
+
 Sizes are `cat src/*.js | gzip -9` with comments stripped — the honest stand-in
-for the minified build that does not exist yet. Every package is inside its
+for the minified build that does not exist yet. Every core package is inside
+its
 [design-doc §4.5 budget](docs/design/widgets-architecture.md#45-bundle-weight-budget).
 Add `hyparquet` (46.9 KiB gz) and `hyparquet-compressors` (69.1 KiB as
 fetched) for anything that reads parquet.
 
-Other directories under `packages/` are work in flight; each gets a row here
-once it has a README.
+Each package's own README is the API reference for it. Any further directory
+under `packages/` is work in flight and gets a row here once it has one.
 
 ## Examples
 
-Six working demos, every one driven by a Playwright script against live data.
-Open [`examples/index.html`](examples/index.html) for the gallery with
+Seven working demos, every one driven by a Playwright script against live
+data. Open [`examples/index.html`](examples/index.html) for the gallery with
 screenshots and readable source.
 
 | demo | what it shows |
@@ -206,6 +225,7 @@ screenshots and readable source.
 | [`download-demo`](examples/download-demo/) | Search → estimate → download, three real remote datasets, both writers, the ceiling refusal, cancel. |
 | [`firms-explorer`](examples/firms-explorer/) | NASA FIRMS: 632M rows across 27 `year=` partitions, resolved from the collection JSON, with the pruning cascade narrated stage by stage. |
 | [`s2-footprints`](examples/s2-footprints/) | "Type a country, download every Sentinel-2 footprint over it." 30M STAC-GeoParquet rows, the ceiling path, default column projection. |
+| [`raster-demo`](examples/raster-demo/) | The same `Area`, pointed at pixels: open a remote Sentinel-2 COG or STAC item, see its size/dtype/CRS/overviews/bands from one header read, pick bands, and save a clipped GeoTIFF. |
 
 ## The gazetteers
 
@@ -270,6 +290,7 @@ node examples/download-demo/verify.mjs 8000
 node examples/firms-explorer/verify.mjs 8000
 node examples/s2-footprints/verify.mjs 8000
 node examples/upload-demo/verify.mjs 8000
+node examples/raster-demo/verify.mjs 8000
 ```
 
 Those hit the real published catalogs. There are no fixtures and no mocks in
@@ -315,9 +336,13 @@ Verified working, against live published data, as of 2026-11-12:
   layer with a filter-geometry ghost, antimeridian fit, and (OpenLayers) the
   4326 ⇄ 3857 bridge.
 
-Not built: exact `clip`, GeoPackage in core, a DuckDB engine, multi-source
-search, the published JSON Schemas, and any build step at all (no
-`dist/`, no minification, no `.d.ts`). Each is a documented default in
+Also landed and documented in their own READMEs: the four output-format
+plugins (GeoPackage, Shapefile, FlatGeobuf, CSV/Esri JSON) and
+`@cnmw/raster-core`'s COG clip-and-download.
+
+Not built: exact `clip`, a DuckDB engine, multi-source search, the published
+JSON Schemas, and any build step at all (no `dist/`, no minification, no
+`.d.ts`). Each is a documented default in
 [design doc §7](docs/design/widgets-architecture.md#7-open-items).
 
 ### Known issues
