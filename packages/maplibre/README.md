@@ -148,17 +148,22 @@ The index loads **lazily on first focus** (`geocoder.load()`, `{ once: true }`)
 — design call #9, because most page views never search and the index is
 megabytes.
 
-The default option renderer shows the name plus disambiguating secondary text:
+The default option renderer shows the name — with the matched substring
+wrapped in `<mark>` — plus disambiguating secondary text:
 
 ```
-Contra Costa  — United States · USA · ADM2
-Bag           — Rajasthan · IND · ADM4 (+7 more)
+Contra Costa  — United States · USA · County/District  [ADM2]
+Bag       alt — Rajasthan · IND · Locality  [ADM4]  (+7 more)
 ```
 
-The context line is `result.parentName ?? result.countryName` (Overture
-carries one, geoBoundaries the other; never both), and `(+N more)` comes from
-`result.moreCount` when result diversity collapsed duplicates. With neither
-column it falls back to `"USA · ADM2"`.
+Reading that line, left to right: `result.parentName ?? result.countryName`
+(Overture carries one, geoBoundaries the other; never both), the ISO country
+code, a human-readable level from `result.class` or `result.level`, the raw
+`ADM<n>` as a small badge for anyone who thinks in admin levels, and
+`(+N more)` when result diversity collapsed duplicates into this row. An
+`alt` badge marks a match against an alternate-language name.
+
+Every part of it is `textContent`, never `innerHTML`.
 
 ### `addAreaLayer(map, options?) => AreaLayerHandle`
 

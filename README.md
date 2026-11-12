@@ -30,9 +30,16 @@ consumes one. Nothing else couples.
 ## 30-second quickstart
 
 A whole geocoder on a map, in one file. Nothing to install, nothing to build.
-This is [`examples/quickstart/index.html`](examples/quickstart/index.html)
-verbatim — clone the repo, run `python3 serve.py`, and open
-`http://localhost:8000/examples/quickstart/index.html`.
+Save this as `examples/quickstart/my-page.html` in a clone of this repo, run
+`python3 serve.py`, and open it — or just open the slightly longer
+[`examples/quickstart/index.html`](examples/quickstart/index.html), which is
+this page plus a status line, and which
+[`verify.mjs`](examples/quickstart/verify.mjs) drives against live data on
+every check.
+
+This exact block was extracted from this README, served, and driven with
+Playwright: it loads the live index, searches, selects, draws the outline and
+renders the attribution line, with zero console errors.
 
 ```html
 <!doctype html>
@@ -95,10 +102,10 @@ map.on('load', () => map.addControl(control, 'top-left'));
 </html>
 ```
 
-Measured on this exact file against the live catalog: first focus → usable
-index in **5.3 s** (3.9 MB, full-load), warm keystroke **~1 ms**, "contra
-costa" → a drawn ADM2 outline in **~2.7 s**. Driven on every check by
-[`examples/quickstart/verify.mjs`](examples/quickstart/verify.mjs).
+Measured against the live catalog: first focus → usable index in **1.9–5.3 s**
+(3.9 MB, full-load; the high end is a genuinely cold CDN, the low end a warm
+one), warm keystroke **~1 ms**, "contra costa" → a drawn ADM2 outline in
+**~2.7 s**.
 
 The 5.3 s cold load does **not** meet the design's 1 s budget; see
 [Known issues](#known-issues).
@@ -351,7 +358,7 @@ Honest list, all measured:
 
 | | |
 |---|---|
-| **Cold index load is ~5 s, not the 1 s budget.** | 3.9 MB over the public path, plus hyparquet's 27-file module waterfall. Fixes, in order of value: a prebundled hyparquet, a `prominent_index` on the geoBoundaries catalog, and the range path for a cold first keystroke. Warm keystrokes are ~1 ms. |
+| **Cold index load is 1.9–5.3 s, not the 1 s budget.** | 3.9 MB over the public path, plus hyparquet's 27-file module waterfall. Fixes, in order of value: a prebundled hyparquet, a `prominent_index` on the geoBoundaries catalog, and the range path for a cold first keystroke. Warm keystrokes are ~1 ms. |
 | **Attribution keys are inconsistent.** | A geocoder `Area` carries the manifest's `snake_case` (`share_alike`); a download descriptor's derived attribution uses `shareAlike`. Read `a.shareAlike ?? a.share_alike`. **This matters for ODbL data** — checking only `shareAlike` silently reports no obligation. Needs one normalization in `@cnmw/spec`. |
 | **A `blocked` download handle's `result` never settles on its own.** | The design doc says it rejects with `CeilingExceededError`; it waits. Call `acceptCeiling()` or `cancel()`. Never `await handle.result` without inspecting `handle.estimate` first. |
 | **Cancelling during planning reports `NETWORK`, not `CANCELLED`.** | The abort hits the in-flight footer fetch and is wrapped as a network error, so `state` lands on `'failed'`. Cancelling a running download is correct. |

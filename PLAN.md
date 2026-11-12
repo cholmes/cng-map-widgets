@@ -287,8 +287,9 @@ every documented snippet now runs against real published data, not fixtures.
     real `description`/`keywords`/`license`/`files`, `exports["./package.json"]`.
     `npm install` relinked the workspace, picking up `@cnmw/upload-core` and
     `@cnmw/openlayers`, which had never been symlinked into `node_modules`.
-- **MEASURED tonight (live, over the public path):** cold index load
-  **3.8s from Node / 5.3s in a browser** for the 3.9MB geoBoundaries index
+- **MEASURED tonight (live, over the public path):** index load
+  **3.8s from Node; 5.3s in a browser genuinely cold, 1.9s with a warm CDN**
+  for the 3.9MB geoBoundaries index
   (30 jsdelivr requests ≈324KB on first load, 27 of them hyparquet's own
   unbundled modules) — the design doc's budget was <1s on broadband, so
   **that budget is not met**; warm keystroke ~1ms (well inside the 150ms

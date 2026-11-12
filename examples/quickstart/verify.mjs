@@ -1,13 +1,20 @@
 #!/usr/bin/env node
-// Verifies examples/quickstart/index.html -- the copy-paste example the
-// root README's quickstart reproduces verbatim -- against the LIVE
-// published geoBoundaries gazetteer at data.source.coop. No fixtures, no
-// local index: if this passes, the snippet in the README works.
+// Verifies examples/quickstart/index.html against the LIVE published
+// geoBoundaries gazetteer at data.source.coop. No fixtures, no local index.
+//
+// Then verifies the root README's quickstart block *itself*: the first
+// ```html fence in README.md is extracted to a temporary file next to this
+// one, served, and driven the same way. That is what lets the README claim
+// its copy-paste example works -- not "a file like it" works.
 //
 // Usage: node examples/quickstart/verify.mjs [port]   (serve.py must be running)
 
 import { chromium } from 'playwright';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
+const here = path.dirname(fileURLToPath(import.meta.url));
 const port = process.argv[2] ?? '8321';
 const url = `http://localhost:${port}/examples/quickstart/index.html`;
 
@@ -67,9 +74,57 @@ await page.waitForTimeout(600); // let fitBounds settle
 await page.screenshot({ path: new URL('./screenshot.png', import.meta.url).pathname });
 console.log('Screenshot saved.');
 
+// --- phase 2: the README's own quickstart block --------------------------
+console.log('\n--- README.md quickstart block ---');
+const readme = readFileSync(path.join(here, '..', '..', 'README.md'), 'utf8');
+const fence = readme.match(/```html\n([\s\S]*?)\n```/);
+const blockFailures = [];
+const blockPath = path.join(here, '_readme-block.html');
+
+if (!fence) {
+  blockFailures.push('no ```html block found in README.md');
+} else {
+  writeFileSync(blockPath, `${fence[1]}\n`);
+  try {
+    const blockPage = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+    const blockErrors = [];
+    const blockLogs = [];
+    blockPage.on('pageerror', (err) => blockErrors.push(`pageerror: ${err.message}`));
+    blockPage.on('console', (msg) => {
+      if (msg.type() === 'error') blockErrors.push(`console.error: ${msg.text()}`);
+      if (msg.type() === 'log') blockLogs.push(msg.text());
+    });
+
+    await blockPage.goto(`http://localhost:${port}/examples/quickstart/_readme-block.html`, { waitUntil: 'load' });
+    await blockPage.waitForSelector('input[role="combobox"]', { timeout: 20_000 });
+    await blockPage.click('input[role="combobox"]');
+    await blockPage.type('input[role="combobox"]', 'contra costa', { delay: 20 });
+    await blockPage.waitForSelector('li[role="option"]', { timeout: 40_000 });
+    console.log('First option:', await blockPage.textContent('li[role="option"]'));
+    await blockPage.keyboard.press('ArrowDown');
+    await blockPage.keyboard.press('Enter');
+    // The block's own `select` handler console.logs the area it received.
+    await blockPage.waitForFunction(
+      () => document.querySelector('.cnmw-attribution')?.textContent?.trim().length > 0,
+      undefined,
+      { timeout: 40_000 },
+    );
+    console.log('Page logged:', JSON.stringify(blockLogs));
+    console.log('Attribution:', (await blockPage.textContent('.cnmw-attribution'))?.slice(0, 48), '…');
+
+    if (!blockLogs.some((l) => /Contra Costa/.test(l))) {
+      blockFailures.push("the block's select handler never logged a selected area");
+    }
+    blockFailures.push(...blockErrors);
+    await blockPage.close();
+  } finally {
+    rmSync(blockPath, { force: true });
+  }
+}
+
 await browser.close();
 
-const failures = [];
+const failures = [...blockFailures.map((f) => `README block: ${f}`)];
 if (!outline || outline.features === 0) failures.push('no outline feature after select()');
 if (!/Contra Costa/i.test(selectStatus ?? '')) failures.push(`unexpected status after select: ${selectStatus}`);
 if (!attribution) failures.push('empty attribution line');

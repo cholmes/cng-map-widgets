@@ -136,8 +136,8 @@ Members and events match the MapLibre adapter: `control.geocoder`,
 `control.area`, `setArea`, `clear`, `focus`, `on(event, handler)`, and the
 events `select`, `results`, `upgrade`, `clear`, `error`. The combobox is the
 same ARIA 1.2 pattern, the same keyboard handling, the same lazy
-`geocoder.load()` on first focus, and the same default option renderer
-(`parentName ?? countryName`, plus `(+N more)` from `moreCount`).
+`geocoder.load()` on first focus, and the
+[same default option renderer](../maplibre/README.md#the-combobox).
 
 > The ~150 lines of combobox DOM are **duplicated** between this package and
 > `@cnmw/maplibre` rather than shared. Design doc §5.2 puts them in an

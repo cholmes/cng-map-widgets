@@ -107,10 +107,11 @@ area.provenance.attribution[0].license;    // 'CC-BY-4.0'
 ```
 
 Measured against the live catalog from Node, cold: manifest + 3.9 MB index in
-**≈3.8 s**, warm `search()` in **≈1 ms**, `select()` in **≈0.4–2.7 s** depending
-on level. In a browser the same cold load measured **≈5.3 s** (the extra is the
-hyparquet module waterfall). The design doc's budget is 1 s cold on broadband —
-**that budget is not met today**; see [Gotchas](#gotchas).
+**≈3.8 s**, warm `search()` in **≈1 ms**, `select()` in **≈0.4–2.7 s**
+depending on level. In a browser the same load measured **1.9 s** with a warm
+CDN and **5.3 s** genuinely cold (the extra is the hyparquet module
+waterfall). The design doc's budget is 1 s cold on broadband — **that budget
+is not met today**; see [Gotchas](#gotchas).
 
 ---
 
