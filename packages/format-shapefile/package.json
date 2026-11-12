@@ -1,0 +1,32 @@
+{
+  "name": "@cnmw/format-shapefile",
+  "version": "0.1.0",
+  "description": "Shapefile output for @cnmw/download-core: a zero-dependency, zero-wasm .shp/.shx/.dbf/.prj/.cpg writer bundled into one .shp.zip, with Shapefile's real limits (10-char field names, one shape type per file, ~2GiB size) surfaced as warnings instead of silent mangling.",
+  "keywords": [
+    "shapefile",
+    "shp",
+    "dbf",
+    "download",
+    "cnmw"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@cnmw/spec": "0.1.0"
+  }
+}
