@@ -244,10 +244,12 @@ function currentEntry() {
 // clone with nothing built locally. `?index=local` falls back to
 // examples/geocoder-demo/data/index.json, the provisional offline build,
 // which is gitignored (see that directory's build-data.sql to rebuild it).
-const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+// `DEFAULT_INDEX_URL` *is* that published manifest as of 2026-11-12 (it
+// used to be the relative dev path './data/index.json'), so this page now
+// demonstrates the real default rather than hard-coding a copy of it.
 const indexUrl = new URLSearchParams(location.search).get('index') === 'local'
   ? '../geocoder-demo/data/index.json'
-  : LIVE_INDEX_URL;
+  : DEFAULT_INDEX_URL;
 
 let area = null; // null = "no area" (whole dataset)
 const map = new maplibregl.Map({
@@ -455,10 +457,16 @@ function startDownload(formatId) {
     const box = document.getElementById('ceilingBox');
     box.style.display = 'block';
     document.getElementById('ceilingText').textContent = `Ceiling exceeded: ${est.ceiling.breaches.join(', ')}. `;
-    document.getElementById('acceptCeilingBtn').onclick = () => handle.acceptCeiling();
+    // `acceptCeiling()` returns the CONTINUED run's promise -- the one the
+    // UI was holding has already rejected with CEILING_EXCEEDED (design
+    // doc §3.4's "blocked handles reject" amendment).
+    document.getElementById('acceptCeilingBtn').onclick = () => attachResult(handle.acceptCeiling());
   });
 
-  handle.result.then(
+  // Called once for the initial run, and again for the continued run if
+  // the user accepts a ceiling breach.
+  function attachResult(promise) {
+    promise.then(
     (result) => {
       pendingLoadFormatId = null;
       progressBar.style.display = 'none';
@@ -475,6 +483,9 @@ function startDownload(formatId) {
       renderFormatPicker();
     },
     (err) => {
+      // Not a failure: the handle is `blocked` and the refusal box is
+      // showing the user their two ways forward.
+      if (err.code === 'CEILING_EXCEEDED') return;
       pendingLoadFormatId = null;
       progressBar.style.display = 'none';
       document.getElementById('cancelBtn').disabled = true;
@@ -492,7 +503,21 @@ function startDownload(formatId) {
       window.__cnmwLastError = { code: err.code, message: err.message };
       renderFormatPicker();
     },
-  );
+    );
+  }
+
+  attachResult(handle.result);
+
+  // Cancelling while `blocked` leaves `result` settled on the ceiling
+  // rejection it already had, so `state` is what reports that decision.
+  handle.on('state', ({ state }) => {
+    if (state !== 'cancelled') return;
+    pendingLoadFormatId = null;
+    progressBar.style.display = 'none';
+    document.getElementById('cancelBtn').disabled = true;
+    downloadInfo.textContent = 'Cancelled.';
+    renderFormatPicker();
+  });
 }
 
 document.getElementById('downloadBtn').addEventListener('click', () => startDownload(selectedFormat));

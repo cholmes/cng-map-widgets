@@ -338,10 +338,16 @@ function startDownload(format) {
     const box = document.getElementById('ceilingBox');
     box.style.display = 'block';
     document.getElementById('ceilingText').textContent = `Ceiling exceeded: ${est.ceiling.breaches.join(', ')}. `;
-    document.getElementById('acceptCeilingBtn').onclick = () => handle.acceptCeiling();
+    // `acceptCeiling()` returns the CONTINUED run's promise -- the one the
+    // UI was holding has already rejected with CEILING_EXCEEDED (design
+    // doc §3.4's "blocked handles reject" amendment).
+    document.getElementById('acceptCeilingBtn').onclick = () => attachResult(handle.acceptCeiling());
   });
 
-  handle.result.then(
+  // Called once for the initial run, and again for the continued run if
+  // the user accepts a ceiling breach.
+  function attachResult(promise) {
+    promise.then(
     (result) => {
       progressBar.style.display = 'none';
       document.getElementById('cancelBtn').disabled = true;
@@ -356,11 +362,26 @@ function startDownload(format) {
       window.__cnmwLastResult = result;
     },
     (err) => {
+      // Not a failure: the handle is `blocked` and the refusal box is
+      // showing the user their two ways forward.
+      if (err.code === 'CEILING_EXCEEDED') return;
       progressBar.style.display = 'none';
       document.getElementById('cancelBtn').disabled = true;
       downloadInfo.textContent = `${err.code === 'CANCELLED' ? 'Cancelled.' : `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`}`;
     },
-  );
+    );
+  }
+
+  attachResult(handle.result);
+
+  // Cancelling while `blocked` leaves `result` settled on the ceiling
+  // rejection it already had, so `state` is what reports that decision.
+  handle.on('state', ({ state }) => {
+    if (state !== 'cancelled') return;
+    progressBar.style.display = 'none';
+    document.getElementById('cancelBtn').disabled = true;
+    downloadInfo.textContent = 'Cancelled.';
+  });
 }
 
 document.getElementById('downloadGeoJsonBtn').addEventListener('click', () => startDownload('geojson'));

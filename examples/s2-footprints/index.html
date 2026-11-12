@@ -334,10 +334,17 @@ function startDownload(format) {
     document.getElementById('ceilingText').textContent =
       `Ceiling exceeded: ${est.ceiling.breaches.join(', ')}. Estimated ${formatBounded(est.rows)} rows / ${formatBounded(est.readBytes, ' B')} to read. ` +
       `This is the refusal path: a big country with no time filter against 30.4M rows. Narrow the area/time window, or accept and download anyway.`;
-    document.getElementById('acceptCeilingBtn').onclick = () => handle.acceptCeiling();
+    // `acceptCeiling()` returns the CONTINUED run's promise -- the one the
+    // UI was holding has already rejected with CEILING_EXCEEDED (design
+    // doc §3.4's "blocked handles reject" amendment) -- so the result
+    // wiring has to be attached to the promise it hands back.
+    document.getElementById('acceptCeilingBtn').onclick = () => attachResult(handle.acceptCeiling());
   });
 
-  handle.result.then(
+  // Reporting a download's outcome. Called once for the initial run and
+  // again for the continued run if the user accepts a ceiling breach.
+  function attachResult(promise) {
+    promise.then(
     (result) => {
       progressBar.style.display = 'none';
       document.getElementById('cancelBtn').disabled = true;
@@ -352,11 +359,28 @@ function startDownload(format) {
       window.__cnmwLastResult = result;
     },
     (err) => {
+      // CEILING_EXCEEDED is not a failure: the handle is `blocked` and the
+      // refusal box above is showing the user their two ways forward. If
+      // they accept, `attachResult` is called again with the continued
+      // run; if they cancel, the state transition below reports it.
+      if (err.code === 'CEILING_EXCEEDED') return;
       progressBar.style.display = 'none';
       document.getElementById('cancelBtn').disabled = true;
       downloadInfo.textContent = `${err.code === 'CANCELLED' ? 'Cancelled.' : `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`}`;
     },
-  );
+    );
+  }
+
+  attachResult(handle.result);
+
+  // Cancelling while `blocked` leaves `result` settled on the ceiling
+  // rejection it already had, so `state` is what reports that decision.
+  handle.on('state', ({ state }) => {
+    if (state !== 'cancelled') return;
+    progressBar.style.display = 'none';
+    document.getElementById('cancelBtn').disabled = true;
+    downloadInfo.textContent = 'Cancelled.';
+  });
 }
 
 document.getElementById('downloadGeoJsonBtn').addEventListener('click', () => startDownload('geojson'));
