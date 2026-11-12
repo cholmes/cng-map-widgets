@@ -15,15 +15,7 @@
 // `feature_id` alone would be unsound on this layout.
 
 import { CnmwError, wkbToGeoJson, wkbToGeoJsonAsync } from '@cnmw/spec';
-import { CDN } from './cdn.js';
-
-let hyparquetMod = null;
-let compressorsMod = null;
-async function loadHyparquet() {
-  if (!hyparquetMod) hyparquetMod = await import(/* @vite-ignore */ CDN.hyparquet);
-  if (!compressorsMod) compressorsMod = await import(/* @vite-ignore */ CDN.hyparquetCompressors);
-  return { hyparquet: hyparquetMod, compressors: compressorsMod.compressors };
-}
+import { loadHyparquet } from './cdn.js';
 
 /**
  * Open a boundary file's footer and build per-row-group (country,

@@ -36,12 +36,71 @@ export async function resolveDataset(descriptor, options = {}) {
   } catch (cause) {
     throw new CnmwError('Collection JSON did not parse.', 'DATASET_UNRESOLVED', { cause });
   }
-  return deriveFromCollection(collection, descriptor);
+  return deriveFromCollection(collection, descriptor, descriptor.source.url);
 }
 
-/** @param {any} collection @param {import('./types.js').DatasetDescriptor} descriptor */
-function deriveFromCollection(collection, descriptor) {
-  const assets = Object.entries(collection.assets ?? {}).map(([key, a]) => ({ key, ...a }));
+/**
+ * The §2.4 derivation on a collection JSON a host *already has in memory*.
+ *
+ * Added by E7: `portolan-browser` holds the collection as a parsed object in
+ * its Vuex store and must decide synchronously, inside a widget `condition`,
+ * whether a download is even possible. Re-fetching the collection through
+ * `resolveDataset()` just to learn that would be a second request for data
+ * already on the page, and a `condition` cannot await. The design doc put
+ * this derivation in a notional `@cnmw/stac` package; it has always lived
+ * here, in the package that owns §2.4, so this exports it rather than
+ * duplicating the mapping in host glue (the thing §5.4 says keeps a
+ * stac-browser widget a small diff).
+ *
+ * @param {any} collection the collection JSON (a plain object; a stac-js
+ *   `Collection` works too -- only indexed property access is used).
+ * @param {{ id?: string, title?: string, baseUrl?: string, attribution?: any[], extra?: any }} [options]
+ *   `baseUrl` is the collection's own URL; relative asset hrefs
+ *   (`./cgaz_adm0.parquet`, the Portolan norm) are resolved against it.
+ * @returns {import('./types.js').DatasetDescriptor}
+ */
+export function descriptorFromCollection(collection, options = {}) {
+  const descriptor = {
+    id: options.id ?? collection.id,
+    title: options.title,
+    source: { kind: 'portolan-collection', url: options.baseUrl },
+    attribution: options.attribution,
+    extra: options.extra,
+  };
+  return deriveFromCollection(collection, descriptor, options.baseUrl);
+}
+
+/**
+ * Can this collection be downloaded at all? The non-throwing form of
+ * `descriptorFromCollection`, for a UI that renders "unsupported" as the
+ * absence of the widget rather than as an error (design call #8).
+ * @param {any} collection
+ * @param {{ baseUrl?: string }} [options]
+ * @returns {{ supported: boolean, code?: string, message?: string, descriptor?: import('./types.js').DatasetDescriptor }}
+ */
+export function collectionDownloadSupport(collection, options = {}) {
+  if (!collection || typeof collection !== 'object') {
+    return { supported: false, code: 'DATASET_UNSUPPORTED', message: 'Not a collection.' };
+  }
+  try {
+    const descriptor = descriptorFromCollection(collection, options);
+    return { supported: true, descriptor };
+  } catch (err) {
+    return { supported: false, code: err?.code ?? 'DATASET_UNSUPPORTED', message: err?.message ?? String(err) };
+  }
+}
+
+/**
+ * @param {any} collection
+ * @param {import('./types.js').DatasetDescriptor} descriptor
+ * @param {string|undefined} baseUrl
+ */
+function deriveFromCollection(collection, descriptor, baseUrl) {
+  const assets = Object.entries(collection.assets ?? {}).map(([key, a]) => ({
+    key,
+    ...a,
+    href: absolutize(a?.href, baseUrl),
+  }));
   const columns = collection['table:columns'];
   const source = deriveSource(collection, assets, descriptor.source, columns);
   const table = deriveTable(collection, columns);
@@ -56,6 +115,24 @@ function deriveFromCollection(collection, descriptor) {
     attribution: attribution.length ? attribution : descriptor.attribution,
     extra: descriptor.extra,
   };
+}
+
+/**
+ * Portolan collections carry relative asset hrefs (`./cgaz_adm0.parquet`).
+ * A descriptor must be self-contained -- it gets embedded in a shareable
+ * `DownloadRequest` (§2.4) -- so every href is absolutized here, against the
+ * collection's own URL. No base and a relative href means we cannot know
+ * what it points at; the href is left as-is so the failure surfaces as a
+ * fetch error naming the href rather than as a silently wrong URL.
+ * @param {string|undefined} href @param {string|undefined} baseUrl
+ */
+function absolutize(href, baseUrl) {
+  if (typeof href !== 'string' || !href || !baseUrl) return href;
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return href;
+  }
 }
 
 function deriveSource(collection, assets, originalSource, columns) {
@@ -92,7 +169,14 @@ function deriveSource(collection, assets, originalSource, columns) {
   const parquetAsset =
     dataAssets.find((a) => a.type === 'application/vnd.apache.parquet') ??
     dataAssets.find((a) => /parquet/i.test(a.type ?? '')) ??
-    dataAssets[0];
+    // Last resort: an asset with role `data` and no declared media type at
+    // all. A *declared* non-parquet type is never accepted here -- E7 found
+    // that the old unconditional `dataAssets[0]` fallback handed a `.tif` or
+    // `.pmtiles` href back as `{ kind: 'parquet' }`, which turned design
+    // call #8's graceful "unsupported" refusal into a parquet parse error
+    // several seconds later. A Portolan raster/zarr collection routinely
+    // carries role `data` on its COG/zarr/pmtiles assets.
+    dataAssets.find((a) => !a.type && /\.(parquet|pq)$/i.test(a.href ?? ''));
 
   if (!parquetAsset) {
     const foundTypes = [...new Set(assets.map((a) => a.type).filter(Boolean))];

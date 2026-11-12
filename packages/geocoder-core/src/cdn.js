@@ -21,3 +21,54 @@ export const CDN = {
   // its pre-bundled ESM via jsdelivr's +esm endpoint, matching E1's harness.
   hyparquetCompressors: 'https://cdn.jsdelivr.net/npm/hyparquet-compressors@1.1.3/+esm',
 };
+
+// HOST-INJECTION SEAM (added by E7, portolan-browser integration).
+//
+// The CDN URLs above are the right default for a zero-build page: a bare
+// specifier would not resolve and an inlined copy would blow the bundle
+// budget (§4.2). Inside a *bundler*, though, they are wrong in a specific
+// way: `import(CDN.hyparquet)` has a runtime-computed specifier, so no
+// bundler can rewrite it, and the page ends up running a second hyparquet
+// from the network alongside the one the host app already bundles.
+// portolan-browser pins hyparquet@1.26.0; loading 1.33.0 beside it doubles
+// the parser and splits the module cache for no benefit.
+//
+// So a host that already has hyparquet may hand its own modules in, once,
+// before the first `load()`/`select()`. The CDN path stays the default and
+// is never bypassed unless a host calls this. The same seam exists in
+// `@cnmw/download-core`; a host with both packages calls both.
+/** @type {{ hyparquet: any, compressors: any } | null} */
+let injected = null;
+
+/**
+ * Supply the host application's own hyparquet + compressors in place of the
+ * pinned CDN import. Call once, before the first index load.
+ * @param {{ hyparquet: any, compressors: any }} mods
+ */
+export function setHyparquetModules(mods) {
+  injected = mods;
+}
+
+/** Undo `setHyparquetModules` (tests, and hosts that want the CDN back). */
+export function clearHyparquetModules() {
+  injected = null;
+}
+
+let hyparquetPromise = null;
+
+/**
+ * Lazily resolve hyparquet + its compressors map: the host-injected modules
+ * when a host supplied them, otherwise the pinned CDN URLs (design doc
+ * §4.2: a dynamic `import()` of an absolute URL, never a bare specifier).
+ * @returns {Promise<{ hyparquet: any, compressors: any }>}
+ */
+export async function loadHyparquet() {
+  if (injected) return injected;
+  if (!hyparquetPromise) {
+    hyparquetPromise = Promise.all([
+      import(/* @vite-ignore */ CDN.hyparquet),
+      import(/* @vite-ignore */ CDN.hyparquetCompressors),
+    ]).then(([hyparquet, compressorsMod]) => ({ hyparquet, compressors: compressorsMod.compressors }));
+  }
+  return hyparquetPromise;
+}

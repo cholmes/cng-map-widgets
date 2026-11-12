@@ -14,13 +14,21 @@
 // `hyparquetCompressors` below, we pull hyparquet-writer's pre-bundled ESM
 // via jsdelivr's `+esm` endpoint rather than its raw `src/index.js`.
 //
-// DEVIATION (documented, test-only): `import('https://...')` of an absolute
-// URL is not supported by plain Node ESM (no bundler, no browser), so
-// `node --test` cannot exercise this CDN path directly. `setHyparquetModules`
-// lets a test inject the equivalent npm-installed packages (declared as
-// devDependencies of this package) in place of the dynamic CDN import. The
-// browser/production path -- the actual `import(CDN.hyparquet)` calls -- is
-// never bypassed; only test code calls `setHyparquetModules`.
+// DEVIATION (documented): `import('https://...')` of an absolute URL is not
+// supported by plain Node ESM (no bundler, no browser), so `node --test`
+// cannot exercise this CDN path directly. `setHyparquetModules` lets a test
+// inject the equivalent npm-installed packages (declared as devDependencies
+// of this package) in place of the dynamic CDN import.
+//
+// The same seam is also the documented HOST-INJECTION path (added by E7,
+// portolan-browser integration): inside a bundler, `import(CDN.hyparquet)`
+// has a runtime-computed specifier that no bundler can rewrite, so a host
+// app that already bundles hyparquet would end up running a second copy
+// from the network. portolan-browser pins hyparquet@1.26.0, we pin 1.33.0:
+// one page, two parsers, two module caches, no benefit. A host hands its
+// own modules in once, before the first `estimate()`/`download()`. The CDN
+// path remains the default for zero-build pages and is never bypassed
+// unless a host (or a test) calls this.
 export const CDN = {
   hyparquet: 'https://cdn.jsdelivr.net/npm/hyparquet@1.33.0/src/index.js',
   hyparquetCompressors: 'https://cdn.jsdelivr.net/npm/hyparquet-compressors@1.1.3/+esm',
@@ -31,15 +39,17 @@ export const CDN = {
 let testOverride = null;
 
 /**
- * Test-only: inject npm-installed modules in place of the dynamic CDN
- * imports (see module doc comment). Never called by production code.
+ * Supply the host application's own hyparquet (+ compressors, + optionally
+ * hyparquet-writer, needed only for GeoParquet output) in place of the
+ * dynamic CDN imports -- see the module doc comment. Also used by the test
+ * suite to inject the npm-installed packages.
  * @param {{ hyparquet: any, compressors: any, writer?: any }} mods
  */
 export function setHyparquetModules(mods) {
   testOverride = mods;
 }
 
-/** Test-only: undo `setHyparquetModules`. */
+/** Undo `setHyparquetModules` (tests, and hosts that want the CDN back). */
 export function clearHyparquetModules() {
   testOverride = null;
 }

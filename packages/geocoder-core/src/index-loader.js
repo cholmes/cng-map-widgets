@@ -7,19 +7,10 @@
 // `auto` picks between them per design doc §3.2 / §6.3 item 8.
 
 import { CnmwError } from '@cnmw/spec';
-import { CDN } from './cdn.js';
+import { loadHyparquet } from './cdn.js';
 
 const REQUIRED_COLUMNS = ['name', 'name_norm', 'level', 'country', 'feature_id', 'source', 'bbox'];
 const OPTIONAL_COLUMNS = ['parent_name', 'parent_id', 'area_km2', 'geometry_ref'];
-
-let hyparquetMod = null;
-let compressorsMod = null;
-/** Lazily imports hyparquet from the pinned CDN URL (design doc §4.2: never a bare specifier). */
-async function loadHyparquet() {
-  if (!hyparquetMod) hyparquetMod = await import(/* @vite-ignore */ CDN.hyparquet);
-  if (!compressorsMod) compressorsMod = await import(/* @vite-ignore */ CDN.hyparquetCompressors);
-  return { hyparquet: hyparquetMod, compressors: compressorsMod.compressors };
-}
 
 /**
  * Fetch and validate the index manifest (design doc §6.4).
