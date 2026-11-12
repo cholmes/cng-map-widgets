@@ -217,7 +217,20 @@ export interface AreaAttribution {
   readonly license: string;
   readonly url?: string;
   /** True when the license imposes share-alike on derived output (ODbL).
-   *  download-core stamps this into GeoParquet/GeoPackage output metadata. */
+   *  download-core stamps this into GeoParquet/GeoPackage output metadata.
+   *
+   *  **Normalization note, added by the geocoder-core follow-up "attribution
+   *  normalization" task.** Every manifest shipped so far declares this field
+   *  `share_alike` (snake_case, matching the rest of the manifest's field
+   *  naming) -- this interface has always documented the camelCase spelling
+   *  above, which `@cnmw/geocoder-core`'s manifest ingestion now actually
+   *  produces (`Geocoder#attribution` / `IndexInfo.attribution` / every
+   *  `Area.provenance.attribution` it builds), accepting either spelling on
+   *  the way in and always emitting this one, with the original raw entry
+   *  (its `share_alike` key included) kept alongside it. Before this, every
+   *  adapter had to separately defend against the raw snake_case spelling
+   *  at the point it read the field; see §5 for where that defense still
+   *  lives (harmlessly redundant now, not removed). */
   readonly shareAlike: boolean;
 }
 
@@ -1232,6 +1245,29 @@ export interface SearchResult {
   /** `shapeID` for geoBoundaries. The stable key (design call #5). */
   readonly featureId: string;
   readonly name: string;
+  /** **Added by the follow-up "primaryName on alt matches" task.** The
+   *  primary row's display name, present only when this result matched via
+   *  an alt-name row (`rank.isAlt`/the row's `alt_of` column non-null) --
+   *  `undefined` for every primary-row match, for which this is simply
+   *  inapplicable. An alt row's `alt_of` column holds its primary row's
+   *  `feature_id`; this is resolved **honestly, from data already loaded
+   *  for the query it answers -- never a dedicated network round trip per
+   *  result**:
+   *  - In full-load mode, the entire index is already resident in memory,
+   *    so a lazily-built `feature_id -> name` map over all of it (built at
+   *    most once per `load()`) can always answer.
+   *  - In range mode, only the row group(s) this query's prefix itself
+   *    fetched are consulted. This resolves when the primary's own
+   *    `name_norm` happens to share the query's prefix with the alt
+   *    spelling that matched (both land in the same fetched row group(s)),
+   *    which is common for a short, generic prefix but **not** the common
+   *    case for distinctively different alt spellings (e.g. "Zürech" for
+   *    "Zürich") -- there, the primary is left `undefined`, by design,
+   *    rather than paying for a second fetch.
+   *  Adapters: render it when present (`combobox-helpers.js`'s alt badge
+   *  does), and treat its absence as "can't say", not "this has no
+   *  primary". */
+  readonly primaryName?: string;
   readonly nameNorm: string;
   readonly level: number;
   readonly country: string;
@@ -1286,6 +1322,19 @@ export interface SearchResult {
    *  The direct fix for the reported bug: eight villages literally named
    *  "Bag" in India, ADM4, become one row with `moreCount: 7`. */
   readonly moreCount?: number;
+  /** **Added by the follow-up "expandable '+N more'" task.** Present
+   *  exactly when `moreCount` is -- i.e. when the dedupe step above
+   *  collapsed more than one row into this one -- carrying just enough
+   *  per-collapsed-row info for a UI to render and select one directly:
+   *  its own `name`/`featureId`/`level`. `country` and `nameNorm` are
+   *  deliberately omitted: every row in the group shares this result's own
+   *  `country`/`nameNorm` by construction (that's the dedupe key), so a UI
+   *  reconstructing a selectable result from one of these gets them from
+   *  the parent row it expanded, not duplicated here. Capped at
+   *  `MAX_COLLAPSED_ROWS` (10) even when `moreCount` is larger -- `moreCount`
+   *  itself is never capped, so an absurdly large group still reports its
+   *  true size without forcing every one of its rows into memory/the DOM. */
+  readonly collapsed?: readonly { readonly name: string; readonly featureId: string; readonly level: number }[];
   /** Advisory locator for the geometry fetch fast path (§6.3). Never
    *  authoritative: `select()` verifies `featureId` after reading. */
   readonly geometryRef?: { readonly file: string; readonly rowGroup?: number; readonly row?: number };
@@ -1352,7 +1401,26 @@ export declare class Geocoder {
    *  row the first didn't have. A superseded query (a later `search()`
    *  call before the second wave lands) drops that wave silently. With no
    *  `prominent_index` declared, there is always exactly one wave,
-   *  tagged `'final'` -- unchanged from before this existed. */
+   *  tagged `'final'` -- unchanged from before this existed.
+   *
+   *  **Range-mode progressive search, added by the follow-up "range-mode
+   *  query latency" task.** Orthogonal to the two-wave mechanism above,
+   *  and relevant once the main index itself is ready and range-strategy:
+   *  a low-selectivity prefix spanning many candidate row groups
+   *  (`searchRangeIndex`'s doc comment in geocoder-core has the measured
+   *  numbers) resolves this promise as soon as the first small,
+   *  bounded-concurrency batch of those groups has landed, continuing the
+   *  rest in the background and emitting a **further** `'results'` event
+   *  (also tagged `wave: 'final'` -- it *is* the main index answering,
+   *  just not finished doing so yet) once every one of them is in, under
+   *  the same grows-only re-emission rule as the two-wave mechanism. If a
+   *  query's candidate row groups exceed the documented cap (24 by
+   *  default), only the first `maxGroups` (by sort order -- a real,
+   *  meaningful subset, not an arbitrary one) are ever fetched at all, and
+   *  the returned array -- and every `'results'` event's `results` --
+   *  carries an own `truncated: true` property (absent otherwise) so a UI
+   *  can say the list is known-incomplete rather than show it as if it
+   *  weren't. */
   search(prefix: string, options?: SearchOptions): Promise<SearchResult[]>;
 
   /** Zero-await typeahead. Available only when `state === 'ready'` and the
@@ -1381,7 +1449,11 @@ export interface GeocoderEvents {
    *  prominent index, or once the main index is ready; `'prominent'` for
    *  the fast, possibly-incomplete first answer while the main index is
    *  still loading behind it. See `search()`'s doc comment above for the
-   *  full merge/supersede semantics. */
+   *  full merge/supersede semantics, including the range-mode progressive
+   *  wave the "range-mode query latency" follow-up added -- also tagged
+   *  `'final'`, not a third `wave` value. `results` itself carries an own
+   *  `truncated: true` property (absent otherwise) on that same follow-up:
+   *  see `search()`'s doc comment for when. */
   'results': { query: string; results: SearchResult[]; elapsedMs: number; wave: 'prominent' | 'final' };
   'select': { result: SearchResult; area: Area; elapsedMs: number };
   /** **Added, client-side speed pass.** Fires once the main index finishes
@@ -1959,6 +2031,76 @@ not just as a same-level tiebreak — out of scope for a bounded,
 one-level-at-a-time fix. `new Geocoder({ ranking: { altLevelDemotion: 0 } })`
 restores the pre-amendment ordering exactly, for a caller that needs to A/B
 the two.
+
+### Amendment, 2026-11-12 — UX-polish geocoder-core follow-up
+
+Four small, independent follow-ups from the UX-polish pass, in geocoder-core
+(the maplibre/openlayers adapters' consuming side is in
+`combobox-helpers.js`/`geocoder-control.js` in each package).
+
+**1. `primaryName` on alt matches.** `SearchResult.primaryName` (above):
+present only when the match was against an alt-name row, resolved honestly
+from data already loaded for the query -- the whole index in full-load
+mode, or just this query's own fetched row(s) in range mode -- never a
+dedicated network round trip per result. See `SearchResult.primaryName`'s
+doc comment above for the two sources and when each one can/can't resolve.
+
+**2. Expandable "+N more".** `SearchResult.collapsed` (above): the rows
+`applyDiversity`'s dedupe step collapses were previously discarded outright
+once counted into `moreCount`; up to `MAX_COLLAPSED_ROWS` (10) of them are
+now kept, reduced to the minimal fields (`name`/`featureId`/`level`) a UI
+needs to render and select one directly. `moreCount` itself stays uncapped.
+
+**3. Attribution normalization.** Every manifest shipped so far declares
+`share_alike` (snake_case); this doc's `AreaAttribution` has always declared
+`shareAlike` (camelCase). `Geocoder`'s manifest ingestion now normalizes to
+the documented shape on load, accepting either spelling, keeping the raw
+entry alongside it (see `AreaAttribution.shareAlike`'s doc comment above).
+Both adapters already defended against either spelling at the point they
+read it; that defense is now redundant, not removed.
+
+**4. Range-mode query latency.** Measured live against the published
+5.6M-row Overture index (876 row groups, 6400 rows each; `searchRangeIndex`'s
+own doc comment in geocoder-core has the full writeup): the range path
+fetched its candidate row groups **sequentially**, one `await` at a time.
+Per-group latency is dominated by the HTTP round trip (~1.1-1.7s observed
+live, essentially flat regardless of row count per group -- decode time is
+not the bottleneck), so a low-selectivity prefix spanning many candidate
+groups paid that cost once *per group*. Fixed two ways: **bounded-concurrency
+fetches** (5 at a time by default, `searchRangeIndex`'s own worker-pool
+pattern, same shape as `geometry-resolver.js`'s `firstMatch` minus its
+"stop on first hit" exit -- every candidate group here can hold real
+matches), and a **documented cap** (24 candidate groups by default; beyond
+that, only the first 24 by sort order are fetched at all, and the result is
+marked `truncated: true` -- see `SearchResult`'s "range-mode progressive
+search" note above). `Geocoder#search()`'s own promise now resolves as soon
+as the first concurrency-sized batch is in, instead of waiting for every
+candidate group, with the rest streamed in via a further `'results'` event
+once complete (reusing the two-wave mechanism's exact grows-only
+re-emission rule, not a new wave type).
+
+Measured before/after, same four queries, live against the published
+index (`node --test`-free, real network, real locally-pinned hyparquet --
+see the follow-up's profiling scripts; numbers vary run to run with live
+network conditions, typically by less than 2x, but the relative improvement
+below was consistently reproduced across multiple independent runs):
+
+| Query | Candidate groups | Before (sequential, one emission) | After: `search()` resolves (first wave) | After: fully in (background completion wave) |
+|---|---|---|---|---|
+| "san jo" | 1 | ~1.7s | ~1.7s (unaffected: concurrency only helps >1 group) | n/a — one group, one wave |
+| "san" | 10 | ~6.4-11.7s | ~1.7-2.1s | ~3.2-3.5s |
+| "a" | 37 (capped to 24) | ~34-44s (uncapped — fetched all 37) | ~1.7-2.0s, `truncated: true` immediately | ~6.2-7.2s, 24 of 37 groups, `truncated: true` |
+| "zur" | 1 | ~0.4-1.6s | ~0.5-1.8s (unaffected, same reason as "san jo") | n/a — one group, one wave |
+
+The two single-group queries are included to show the fix is a genuine
+no-op for them (concurrency/capping only engage once a query's candidate
+set exceeds the batch/cap size) -- their own run-to-run spread is ordinary
+live-network variance for one HTTP range request, not anything this task
+changed. The real win is "san" (sequential total cut by roughly 3-5x) and
+especially "a" (sequential total cut by roughly 6-20x, *and* now bounded no
+matter how unselective a prefix gets -- a single-character or CJK query
+that matched hundreds of row groups would previously have had no ceiling
+at all).
 
 Usage:
 
