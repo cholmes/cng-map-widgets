@@ -205,6 +205,40 @@ scripts) vs Overture divisions (rich `names` with language tags). Prototype:
 alt-name rows in the same sidecar parquet (one row per name variant pointing
 at same feature), plus unicode normalization/transliteration in `name_norm`.
 
+## Status snapshot (2026-11-12, end of day)
+
+- **DONE:** E0 recon · E1 benchmarks · E3 design + implementation (spec,
+  geocoder-core, maplibre; demo verified) · E4 (upload-core, openlayers; demo
+  verified) · E5 (download-core, geojson+geoparquet formats; demo verified,
+  in-browser GeoParquet writing works via hyparquet-writer @ 28.5KB gz core)
+  · progressive display/full geometry (UK outline 86ms, Canada 1.1s; display
+  files outward-buffered) · E9 ADM3/4 survey · geoboundaries-catalog built,
+  fixed (38 names, 1,275 geometries), display products, changes-from-upstream
+  doc, pushed — bucket publish blocked only on source-coop login.
+- **RUNNING:** cn-geocoder-overture catalog build (EXPERIMENTAL, ODbL,
+  cities + multilingual index).
+- **DECIDED (Chris):** pure geoBoundaries CC-BY primary; Overture ODbL
+  opt-in sibling catalog; widget configurable to either; tge-labs mirror to
+  be deleted after cutover; simplified geometries buffered outward.
+- **PENDING Chris:** gbOpen ADM3/4 (survey says: license-mixed — only
+  17–25% strict CC-BY, 25% ODbL incl. CAN/CHN/IND — and 35% country
+  coverage; recommendation: skip, let Overture carry cities) · source-coop
+  login · npm scope (@cnmw?).
+- **NEXT:** E6 example explorers (firms, s2) · E7 portolan-browser branch ·
+  demo index-source toggle (geoBoundaries ↔ Overture) once both publish.
+
+### hyparquet findings (upstream-feedback candidates)
+1. GeoParquet auto-decode: files with `geo` kv-metadata get geometry
+   silently replaced by decoded GeoJSON; `utf8: false` is ignored for that
+   path. Need `geoparquet: false` to get WKB.
+2. With `geoparquet: false`, an untyped BYTE_ARRAY geometry column then hits
+   the `utf8: true` DEFAULT and is mangled to string — both flags required
+   together for raw bytes. Typed UTF8 columns are unaffected by `utf8:false`.
+3. `parquetMetadataAsync(file, N)` with a bare number silently ignores the
+   options (signature takes an object) — easy dormant-bug shape.
+Also measured: per-keystroke full-file re-download behavior of DuckDB-WASM
+on single-row-group files (E1), and the `cache: 'no-store'` range-read fix.
+
 ## Sequencing
 
 ```
