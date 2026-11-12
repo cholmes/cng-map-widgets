@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cn-geocoding E3 demo — geocoder + OpenLayers</title>
+<!--
+  Minimal twin of index.html (the MapLibre demo), added only to exercise
+  @cnmw/openlayers's GeocoderControl live during its UX-polish pass --
+  same Geocoder wiring, same ?index= switch, OL's Map/View/TileLayer in
+  place of maplibre-gl's Map. `ol` is a peer dependency: pinned exact CDN
+  URL per design doc §4.2, same pattern as maplibre-gl's <script> tag in
+  index.html.
+-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.11.0/ol.css" />
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #status { position: absolute; bottom: 12px; left: 12px; z-index: 5; background: rgba(255,255,255,0.9);
+    padding: 6px 10px; border-radius: 4px; font-size: 12px; max-width: 420px; }
+  .cnmw-geocoder-ol { margin: 10px; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "@cnmw/spec": "../../packages/spec/src/index.js",
+    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cnmw/openlayers": "../../packages/openlayers/src/index.js",
+    "ol/": "https://cdn.jsdelivr.net/npm/ol@10.11.0/",
+    "rbush": "https://cdn.jsdelivr.net/npm/rbush@4.0.1/+esm"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+<div id="status">Loading map…</div>
+
+<script type="module">
+import Map from 'ol/Map.js';
+import View from 'ol/View.js';
+import TileLayer from 'ol/layer/Tile.js';
+import OSM from 'ol/source/OSM.js';
+import { Geocoder } from '@cnmw/geocoder-core';
+import { GeocoderControl } from '@cnmw/openlayers';
+
+const statusEl = document.getElementById('status');
+function setStatus(text) { statusEl.textContent = text; }
+
+const map = new Map({
+  target: 'map',
+  layers: [new TileLayer({ source: new OSM() })],
+  view: new View({ center: [-122.4267 * 20037508.34 / 180, 37.7177 * 20037508.34 / 180], zoom: 9 }), // rough Web Mercator centering, no reprojection helper needed for a demo-only initial view
+});
+
+// Same LIVE/overture/local switch as the MapLibre demo -- see its
+// comments for the full rationale.
+const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+const LOCAL_INDEX_URL = './data/index.json';
+const OVERTURE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.json';
+const indexParam = new URLSearchParams(location.search).get('index');
+const indexUrl = indexParam === 'local' ? LOCAL_INDEX_URL
+  : indexParam === 'overture' ? OVERTURE_INDEX_URL
+  : indexParam && indexParam.includes('/') ? indexParam
+  : LIVE_INDEX_URL;
+
+const geocoder = new Geocoder({ indexUrl, limit: 8, geometry: { resolution: 'both' } });
+
+geocoder.on('error', (err) => setStatus(`Error: ${err.code} — ${err.message}`));
+geocoder.on('load', (info) => {
+  setStatus(`Index ready: ${info.rows} places, levels ${info.levels.join('/')}, ${info.strategy}-load, ${info.loadMs.toFixed(0)} ms.`);
+});
+geocoder.on('select', ({ result, area, elapsedMs }) => {
+  setStatus(`Selected "${result.name}" (${result.country}, ADM${result.level}) — ${elapsedMs.toFixed(0)} ms.`);
+});
+
+const control = new GeocoderControl({ geocoder, placeholder: 'Search for a place…', featureProjection: 'EPSG:3857' });
+map.addControl(control);
+setStatus('Map loaded. Type a place name, e.g. "contra costa".');
+
+window.__cnmwDemo = { geocoder, control, map };
+</script>
+</body>
+</html>
