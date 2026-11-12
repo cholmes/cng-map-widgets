@@ -5,7 +5,8 @@
 // still externalized to a pinned, exact CDN URL (design doc §4.2) via
 // ./cdn.js -- that part of the design is honored even without a bundler.
 
-export { Geocoder, DEFAULT_INDEX_URL, VERSION } from './geocoder.js';
+export { Geocoder, DEFAULT_INDEX_URL, VERSION, resolveResolutionMode } from './geocoder.js';
 export { CDN } from './cdn.js';
 export { compareRanked, classifyMatch, computeViewportRank, rankRow, scoreOf, MATCH_CLASS_RANK, VIEWPORT_RANK } from './ranking.js';
 export { prefixRange } from './index-loader.js';
+export { GenerationGuard } from './generation-guard.js';

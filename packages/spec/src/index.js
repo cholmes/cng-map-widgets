@@ -23,8 +23,10 @@ export {
   unionBBoxes,
 } from './bbox.js';
 export { normalizeName } from './normalize.js';
-export { wkbToGeoJson } from './wkb.js';
-export { visvalingamRing, ringArea, simplifyToVertexCeiling } from './simplify.js';
+export { wkbToGeoJson, wkbToGeoJsonAsync } from './wkb.js';
+export { visvalingamRing, ringArea, simplifyToVertexCeiling, vertexCount, totalArea } from './simplify.js';
+export { visvalingamRingAsync, simplifyToVertexCeilingAsync } from './simplify-async.js';
+export { yieldToMain, forEachChunked } from './yield.js';
 export { CnmwError, CancelledError, CeilingExceededError, isCnmwError } from './errors.js';
 
 // §O11: a runtime singleton guard so two different `@cnmw/spec` versions

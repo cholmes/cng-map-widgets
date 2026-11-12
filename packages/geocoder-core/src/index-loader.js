@@ -142,7 +142,16 @@ export async function openRangeIndex(parquetUrl, fetchImpl, initialFetchSize = 6
   const { hyparquet } = await loadHyparquet();
   const t0 = performance.now();
   const file = await hyparquet.asyncBufferFromUrl({ url: parquetUrl, fetch: fetchImpl, requestInit: { cache: 'no-store' } });
-  const metadata = await hyparquet.parquetMetadataAsync(file, initialFetchSize);
+  // `geoparquet: false` for consistency with geometry-resolver.js (this
+  // index file has no geometry column per design doc §6.1, so it's
+  // defensive rather than load-bearing here). Also fixes a pre-existing
+  // bug: `initialFetchSize` must be passed inside the options object --
+  // `parquetMetadataAsync(file, initialFetchSize)` silently dropped it
+  // (destructuring `{ initialFetchSize }` from a bare number yields
+  // `undefined`), so the range path was always using hyparquet's default
+  // 512KB speculative footer fetch, not the tuned 64KB this function
+  // documents (design doc §6.3 item 9).
+  const metadata = await hyparquet.parquetMetadataAsync(file, { initialFetchSize, geoparquet: false });
   const groups = [];
   let rowStart = 0;
   for (const rg of metadata.row_groups) {

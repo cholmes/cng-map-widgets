@@ -86,14 +86,16 @@ export function ringArea(ring) {
   return Math.abs(sum) / 2;
 }
 
-function vertexCount(geometry) {
+/** @param {GeoJSON.Polygon|GeoJSON.MultiPolygon} geometry */
+export function vertexCount(geometry) {
   const polys = geometry.type === 'MultiPolygon' ? geometry.coordinates : [geometry.coordinates];
   let n = 0;
   for (const poly of polys) for (const ring of poly) n += ring.length;
   return n;
 }
 
-function totalArea(geometry) {
+/** @param {GeoJSON.Polygon|GeoJSON.MultiPolygon} geometry */
+export function totalArea(geometry) {
   const polys = geometry.type === 'MultiPolygon' ? geometry.coordinates : [geometry.coordinates];
   let a = 0;
   for (const poly of polys) for (const ring of poly) a += ringArea(ring);

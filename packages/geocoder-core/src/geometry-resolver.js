@@ -14,7 +14,7 @@
 // documented here because a literal single-column binary search on
 // `feature_id` alone would be unsound on this layout.
 
-import { CnmwError, wkbToGeoJson } from '@cnmw/spec';
+import { CnmwError, wkbToGeoJson, wkbToGeoJsonAsync } from '@cnmw/spec';
 import { CDN } from './cdn.js';
 
 let hyparquetMod = null;
@@ -30,11 +30,27 @@ async function loadHyparquet() {
  * feature_id) statistics for the two-level narrowing described above.
  * @param {string} url
  * @param {typeof fetch} fetchImpl
+ * @param {AbortSignal} [signal] threaded into every range-fetch `requestInit`
+ *   hyparquet issues against this file handle, so aborting it cancels any
+ *   in-flight read (used by the progressive `select({ resolution: 'both' })`
+ *   background upgrade to cancel a superseded fetch -- design doc task
+ *   "a new select() supersedes the pending background upgrade").
  */
-async function openBoundaryIndex(url, fetchImpl) {
+async function openBoundaryIndex(url, fetchImpl, signal) {
   const { hyparquet } = await loadHyparquet();
-  const file = await hyparquet.asyncBufferFromUrl({ url, fetch: fetchImpl, requestInit: { cache: 'no-store' } });
-  const metadata = await hyparquet.parquetMetadataAsync(file);
+  const file = await hyparquet.asyncBufferFromUrl({ url, fetch: fetchImpl, requestInit: { cache: 'no-store', signal } });
+  // `geoparquet: false`: hyparquet >=1.x auto-detects GeoParquet's `geo`
+  // sidecar metadata key (which DuckDB writes by default for any native
+  // GEOMETRY-typed column, including this boundary mirror's) and, when
+  // present, silently replaces the raw WKB bytes of a matching BYTE_ARRAY
+  // column with its OWN already-decoded GeoJSON object -- for *every*
+  // read of that column, regardless of the `utf8` option. Design doc §6.1
+  // is explicit that this is meant to be read as plain WKB bytes, decoded
+  // by `@cnmw/spec`'s own decoder (chunked/yielding on the full-res path,
+  // which hyparquet's built-in decoder is not); `geoparquet: false` keeps
+  // it that way instead of two independent decoders fighting over one
+  // column.
+  const metadata = await hyparquet.parquetMetadataAsync(file, { geoparquet: false });
   const groups = [];
   let rowStart = 0;
   for (const rg of metadata.row_groups) {
@@ -77,11 +93,15 @@ function candidatesFor(groups, minKey, maxKey, value) {
  * @param {typeof fetch} fetchImpl
  * @param {'error'|'warn'|'ignore'} onVersionSkew
  * @param {(payload: { code: string, message: string, detail?: unknown }) => void} [onWarning]
+ * @param {{ decodeAsync?: boolean, signal?: AbortSignal }} [options] `decodeAsync: true` decodes the
+ *   geometry column with `wkbToGeoJsonAsync` (cooperative-yielding) instead of the synchronous
+ *   decoder -- used on the 'full' / background-upgrade path, never needed on the small
+ *   display-simplified path. `signal` cancels the fetch and is checked between decode chunks.
  * @returns {Promise<{ geometry: GeoJSON.Polygon|GeoJSON.MultiPolygon, bbox?: [number,number,number,number], boundaryUrl: string }>}
  */
-export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersion, fetchImpl, onVersionSkew, onWarning) {
+export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersion, fetchImpl, onVersionSkew, onWarning, options = {}) {
   const { hyparquet, compressors } = await loadHyparquet();
-  const handle = await openBoundaryIndex(boundaryUrl, fetchImpl);
+  const handle = await openBoundaryIndex(boundaryUrl, fetchImpl, options.signal);
 
   if (expectedCatalogVersion && handle.catalogVersion && handle.catalogVersion !== expectedCatalogVersion) {
     const message = `Boundary file catalog_version (${handle.catalogVersion}) does not match the index's (${expectedCatalogVersion}).`;
@@ -126,6 +146,7 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
       // the WKB. This is the one column this read needs raw bytes for,
       // so it is isolated into its own narrow read rather than disabling
       // utf8 conversion file-wide (which would also break feature_id).
+      options.signal?.throwIfAborted();
       const geomRows = await hyparquet.parquetReadObjects({
         file: handle.file,
         metadata: handle.metadata,
@@ -135,7 +156,9 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
         utf8: false,
         compressors,
       });
-      const geometry = wkbToGeoJson(geomRows[0].geometry);
+      const geometry = options.decodeAsync
+        ? await wkbToGeoJsonAsync(geomRows[0].geometry, { signal: options.signal })
+        : wkbToGeoJson(geomRows[0].geometry);
       const match = rows[localIndex];
       const bbox = match.bbox ? [match.bbox.xmin, match.bbox.ymin, match.bbox.xmax, match.bbox.ymax] : undefined;
       return { geometry, bbox, boundaryUrl };

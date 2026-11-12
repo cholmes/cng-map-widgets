@@ -52,12 +52,22 @@ const map = new maplibregl.Map({
 const geocoder = new Geocoder({
   indexUrl: './data/index.json',
   limit: 8,
+  // Progressive select() (design doc §1/§3.2): return the small
+  // display-simplified outline immediately, then fetch+simplify the
+  // full-resolution geometry in the background. This is what keeps a
+  // 500K-vertex ADM0 feature (e.g. Canada) from blocking the main thread
+  // at all -- the literal "Page Unresponsive" bug this demo used to hit.
+  geometry: { resolution: 'both' },
 });
 
 geocoder.on('error', (err) => setStatus(`Error: ${err.code} — ${err.message}`));
 geocoder.on('load', (info) => setStatus(`Index ready: ${info.rows} places, ${info.strategy}-load, ${info.loadMs.toFixed(0)} ms.`));
 geocoder.on('select', ({ result, area, elapsedMs }) => {
-  setStatus(`Selected "${result.name}" (${result.country}, ADM${result.level}) — ${area.vertexCount.display} vertices, ${elapsedMs.toFixed(0)} ms.`);
+  const upgrading = area.provenance.pendingUpgrade ? ' · full detail loading…' : '';
+  setStatus(`Selected "${result.name}" (${result.country}, ADM${result.level}) — outline simplified, ${area.vertexCount.display} vertices, ${elapsedMs.toFixed(0)} ms${upgrading}`);
+});
+geocoder.on('area:upgraded', ({ result, area, elapsedMs }) => {
+  setStatus(`"${result.name}" — outline simplified · full detail loaded (${area.vertexCount.filter} filter vertices, ${elapsedMs.toFixed(0)} ms background).`);
 });
 
 const control = new GeocoderControl({ geocoder, placeholder: 'Search for a place…' });

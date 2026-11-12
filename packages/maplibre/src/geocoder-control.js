@@ -129,10 +129,27 @@ export class GeocoderControl {
       if (!container.contains(e.target)) this._closeList();
     });
 
+    // Progressive select() (design doc §1/§3.2): `'area:upgraded'` fires
+    // after `select({ resolution: 'both' })`'s background fetch replaces
+    // `filterGeometry` with a full-resolution version. Update the outline
+    // (the dashed filter-geometry "ghost" line in area-layer.js) in
+    // place -- no re-fit, since `Area.geometry`/bbox never change on an
+    // upgrade, only `filterGeometry`. Guarded by `area.id` so a stale
+    // upgrade for a since-replaced selection is ignored (belt-and-
+    // suspenders: geocoder-core's own generation check already drops it).
+    this._unsubscribeUpgrade = this.geocoder?.on('area:upgraded', ({ area }) => {
+      if (this._area && area.id === this._area.id) {
+        this._area = area;
+        this._outline?.setArea(area);
+        this._emit('upgrade', { area });
+      }
+    });
+
     return container;
   }
 
   onRemove() {
+    this._unsubscribeUpgrade?.();
     this._outline?.remove();
     this._map = null;
   }
