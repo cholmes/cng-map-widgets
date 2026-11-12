@@ -1153,6 +1153,10 @@ export interface GeocoderOptions {
   /** Pre-filters applied before ranking. */
   readonly levels?: readonly number[];
   readonly countries?: readonly string[];
+  /** **Added 2026-11-12** (the ranking-order amendment below). Default
+   *  result-diversity options for every `search()`/`searchSync()` call;
+   *  overridable per call via `SearchOptions.diversity`. */
+  readonly diversity?: DiversityOptions;
 
   readonly geometry?: GeometryResolverOptions;
   /** Behaviour when the boundary file's `catalog_version` does not match the
@@ -1174,6 +1178,12 @@ export interface RankingOptions {
    *  substring matching is off, because it ruins the ordering and the sorted
    *  index cannot serve it on the range path. */
   readonly matchClasses: readonly MatchClass[];
+  /** **Added 2026-11-12** (the ranking-order amendment below). How many
+   *  admin levels an `exact` match is allowed to out-rank a
+   *  `prefix`/`word-prefix`/`substring` match at a shallower (closer to
+   *  ADM0) level. `0` disables the promotion entirely (pure level-first).
+   *  Default `1`. */
+  readonly exactLevelPromotion?: number;
 }
 
 export type MatchClass = 'exact' | 'prefix' | 'word-prefix' | 'substring';
@@ -1185,7 +1195,24 @@ export interface SearchOptions {
   readonly limit?: number;
   readonly levels?: readonly number[];
   readonly countries?: readonly string[];
+  /** **Added 2026-11-12.** Result-diversity knobs; see `DiversityOptions`
+   *  below. Merges over `GeocoderOptions.diversity`, which merges over the
+   *  built-in defaults. */
+  readonly diversity?: DiversityOptions;
   readonly signal?: AbortSignal;
+}
+
+/** **Added 2026-11-12** (the ranking-order amendment below, "Result
+ *  diversity"). */
+export interface DiversityOptions {
+  /** Collapse results identical in `(nameNorm, country, level)` to the
+   *  single best one (largest `area_km2`), annotating it with `moreCount`.
+   *  Default `true`. */
+  readonly dedupe?: boolean;
+  /** Cap results per `(country, level)` group at this many, before filling
+   *  the requested `limit` with the next-ranked *distinct* groups.
+   *  `null`/`undefined` disables the cap. Default `3`. */
+  readonly maxPerGroup?: number | null;
 }
 
 export interface SearchResult {
@@ -1195,7 +1222,23 @@ export interface SearchResult {
   readonly nameNorm: string;
   readonly level: number;
   readonly country: string;
+  /** Overture's division-names index column: the containing admin unit's
+   *  display name (e.g. `"Rajasthan"` for an Indian locality). `undefined`
+   *  when the loaded index has no `parent_name` column. */
   readonly parentName?: string;
+  /** **Added 2026-11-12.** geoBoundaries' CGAZ-names-index column: the ISO
+   *  country's display name (e.g. `"Switzerland"` alongside `country:
+   *  "CHE"`). `undefined` when the loaded index has no `country_name`
+   *  column. Adapters prefer `parentName` over this when both are somehow
+   *  present (never both in practice: the two source indexes are
+   *  mutually exclusive on these columns). */
+  readonly countryName?: string;
+  /** **Added 2026-11-12.** Both known index flavours carry `area_km2`;
+   *  `undefined` for a point-only locality with none. Used by the ranking
+   *  comparator's importance tiebreak and by result-diversity's "keep the
+   *  biggest" dedupe rule; exposed here so a UI can also use it directly
+   *  (e.g. a size badge). */
+  readonly areaKm2?: number;
   readonly bbox: BBox;
   readonly source: string;
 
@@ -1205,10 +1248,20 @@ export interface SearchResult {
   readonly rank: {
     readonly matchClass: MatchClass;
     readonly level: number;
+    /** **Added 2026-11-12.** `level` after the bounded exact-match
+     *  promotion (see the ranking-order amendment); equal to `level` for
+     *  anything that isn't an `exact` match. */
+    readonly effLevel: number;
     readonly levelAdjusted: number;
     readonly viewport: 'inside' | 'overlap' | 'near' | 'outside';
     readonly nameLength: number;
   };
+  /** **Added 2026-11-12.** Present only when `applyDiversity`'s dedupe step
+   *  collapsed more than one `(nameNorm, country, level)`-identical row
+   *  into this one -- the count of rows folded in, not shown individually.
+   *  The direct fix for the reported bug: eight villages literally named
+   *  "Bag" in India, ADM4, become one row with `moreCount: 7`. */
+  readonly moreCount?: number;
   /** Advisory locator for the geometry fetch fast path (§6.3). Never
    *  authoritative: `select()` verifies `featureId` after reading. */
   readonly geometryRef?: { readonly file: string; readonly rowGroup?: number; readonly row?: number };
@@ -1292,25 +1345,275 @@ export const DEFAULT_INDEX_URL: string;
 export const VERSION: string;
 ```
 
-**The ranking rule, normatively.** Results are sorted by this tuple, ascending,
-with every component a total order:
+**The ranking rule, normatively.** *(Amended 2026-11-12 — see the amendment
+below for the bug report, the alternatives measured, and why this is the
+order.)* Results are sorted by this tuple, ascending, with every component
+a total order:
 
-1. `matchClassRank` — `exact` 0, `prefix` 1, `word-prefix` 2, `substring` 3.
-2. `levelAdjusted` = `level − (viewportBoost if viewport is 'inside' or 'overlap' else 0)`.
-3. `level` — the raw level, so an ADM0 still beats a promoted in-viewport ADM1
-   on a tie. This is what makes "ADM0 first, then ADM1, …" hold while still
-   letting the viewport matter.
-4. `viewportRank` — `inside` 0, `overlap` 1, `near` 2, `outside` 3.
-5. `nameLength` ascending — "Contra Costa" before "Contra Costa Centre".
-6. `nameNorm` ascending, then `featureId` ascending — so the order is
+1. `levelAdjusted` = `effLevel − (viewportBoost if viewport is 'inside' or 'overlap' else 0)`.
+2. `effLevel` = `max(0, level − exactLevelPromotion)` when `matchClass` is
+   `'exact'`, else `level` unchanged. `exactLevelPromotion` defaults to `1`
+   (`RankingOptions.exactLevelPromotion`) — the *bounded promotion* the
+   amendment introduces; see below for why it's bounded rather than
+   unlimited (the pre-amendment behaviour) or zero (level-first with no
+   promotion at all, also tried and also wrong).
+3. `matchClassRank` — `exact` 0, `prefix` 1, `word-prefix` 2, `substring`
+   3. Reached only once (1)/(2) have already tied — which is exactly when
+   an `exact` match's promoted `effLevel` lands on the same rung as a
+   shallower `prefix`/`word-prefix`/`substring` match's own level. That tie
+   is where the bounded promotion actually resolves in the exact match's
+   favour; `matchClassRank` never dominates the order on its own anymore.
+4. `level` — the true, unpromoted admin level. Final level-based tiebreak
+   for anything (1)–(3) left tied; normally redundant with (2)/(3), kept as
+   the honest "ADM0 before ADM1" fallback the original spec asked for.
+5. `areaKm2` descending, `null`/`undefined` sorted last — the importance
+   signal added by this amendment: among rows tied on (1)–(4), the bigger
+   (or more completely attributed) feature wins. A point-only locality
+   with no `area_km2` always sorts after one that has it.
+6. `nameLength` ascending — "Contra Costa" before "Contra Costa Centre".
+7. `nameNorm` ascending, then `featureId` ascending — so the order is
    deterministic and testable.
 
-`viewportRank` is computed from `bboxes` (never the signed `bbox`): `inside` if
-the feature bbox's centre is in the viewport, `overlap` if the boxes intersect,
-`near` if the feature bbox intersects the viewport scaled by `nearFactor`
-about its centre, else `outside`.
+`viewportRank` (`inside`/`overlap`/`near`/`outside`) is still computed from
+`bboxes` exactly as before (`inside` if the feature bbox's centre is in the
+viewport, `overlap` if the boxes intersect, `near` if the feature bbox
+intersects the viewport scaled by `nearFactor` about its centre, else
+`outside`), and still drives the viewport boost folded into `levelAdjusted`
+above — but this amendment drops it as a *separate* tiebreak component (it
+used to sit between raw `level` and `nameLength`). Nothing in the measured
+examples below needed it once `effLevel` and `areaKm2` were added, and a
+7-component comparator the amendment already grew to didn't need an 8th.
 
 `score` is a derived `0..1` number for display only; the sort never reads it.
+
+### Amendment, 2026-11-12 — reason: user feedback on the Overture-scale index
+
+**The bug.** A user ("Chris") typed "bag" against the 5.6M-name Overture
+names index and got eight identical-looking "Bag · IND · ADM4" rows
+(distinct but obscure Indian villages literally named "Bag") crowding out
+Baghdad — the obvious intent — which only matches as a `prefix` ("bag" →
+"baghdad"), buried below them. Two causes:
+
+1. The pre-amendment comparator put `matchClassRank` *above* `levelAdjusted`:
+   `exact` always beat `prefix`/`word-prefix`/`substring`, at any level gap.
+   This inverted the original spec's intent ("first list the adm0, then
+   adm1, …"): level was supposed to dominate, not match quality.
+2. No result diversity: the index legitimately carries eight separate rows
+   for eight distinct villages honestly named "Bag". With `matchClassRank`
+   dominant, all eight sorted straight to the top, together, with nothing
+   to collapse them.
+
+**Why not just flip the order outright (pure level-first, no promotion).**
+Tried first. It fixes "bag" (dedupe is what actually matters there, see
+below) but breaks "paris": an exact ADM2/ADM3 "Paris, France" sorts *behind*
+`prefix`/`word-prefix` noise one level up at ADM1 — "Päris-Soome" (Finnish
+for "France"), "Saint Andrew/David/Joseph Parish" (the word "Parish" word-
+prefix-matches "paris"). Measured below. Unbounded level-first just trades
+one visible bug for another.
+
+**The fix: a *bounded* promotion, one level, not more.** An `exact` match
+is allowed to out-rank a `prefix`/`word-prefix`/`substring` match **one
+admin level up, never two or more** (component (2) above,
+`exactLevelPromotion: 1` by default). This fixes "paris" (a one-level gap)
+without inventing a win for an exact ADM4 "Bag"/"Zurich"-style match
+against ADM0/ADM1 matches three or four levels away — which is exactly what
+*should* lose, per the original "ADM0 first" spec.
+
+**Result diversity is what actually fixes "Bag".** Bounding the promotion
+to one level does *not*, by itself, stop the eight India villages from
+out-ranking Baghdad: they're all `exact` at the same ADM4 level Baghdad's
+`prefix` match sits at, so `matchClassRank` still prefers them there,
+correctly. What fixes it is `applyDiversity()`, now run inside `search()`
+after sorting (see §3.2's `search()`/dedupe description): collapse rows
+identical in `(nameNorm, country, level)` to the single best one (largest
+`area_km2`) annotated with `moreCount`, then cap at `maxPerGroup` (default
+`3`) rows per `(country, level)`, filling the rest of the requested `limit`
+with the next-ranked *distinct* groups. The eight India rows become one
+"Bag (+7 more)" row; that alone frees up enough of the result list for
+Baghdad (and the Hungarian "Bag", also `exact`, with real `area_km2`) to
+appear in it.
+
+**Known residual limitation — measured, accepted, not fixed here.** The
+Overture index's ~2.03M alternate-language-name rows (`name_lang`/`alt_of`)
+can still crowd a short query's top results with translations of unrelated
+countries: Uzbek/Tajik-looking transliterations of "Bahamas" ("Bagam
+orollari", "Bagaman Sared") outrank Baghdad for "bag", and Spanish/Chadian/
+Dominican country-name translations outrank "San Francisco"/"Santiago" for
+"san" — both because they're genuinely shallower admin levels (ADM0) that
+no *bounded, 1-level* promotion can reach across.
+
+This was measured precisely, not just suspected: against the live index,
+"Baghdad" (`name='Baghdad'`, `country='IRQ'`) sits at raw sorted position
+1517 of 5159 "bag" candidates under the pre-amendment comparator, and at
+position 579 under this amendment's comparator — a real, ~2.6× improvement
+— but the Overture index has **54 distinct `(country, level)` groups at
+levels 0–3** that out-rank it for this literal query, which is far more
+than any reasonable dropdown shows (even `limit: 30` wouldn't surface it;
+the live demo's default `limit: 8` is nowhere close). `area_km2` as the
+importance signal actively works against a fix here, too: comparing a
+*city* against a *country* by `area_km2` systematically favours the
+country (Bahamas: 12,054 km²; the USA alt-name match: 314,927 km²) over
+the city (Baghdad: 862 km²) regardless of which one a user actually means
+— `area_km2` is a sound tiebreak *within* a level/feature-kind (two
+villages, two regions) but a poor proxy for "importance" *across* kinds
+(a capital city vs. a country). Properly fixing this would mean weighting
+alternate-language names below primary names, or pulling in Overture's
+`population`/`prominence` columns — neither the bug report nor this fix's
+column-passthrough scope (`parent_name`, `area_km2`, `country_name`)
+covers population/prominence — a materially larger change, left for
+separate follow-up. It does not reproduce against the geoBoundaries index
+(no locality level, no alt-name rows at all — confirmed in the measured
+table below, where "Baghdad"/"Baghdad Province" lands cleanly at #4) and
+is orthogonal to the reported bug (eight *identical* rows for one
+feature-shape), which the reordering + dedupe above do fix, verified live
+(see §7's Playwright verification note and
+`examples/geocoder-demo/screenshot-ranking.png`): the eight-row "Bag"/IND
+pile is gone from the Overture demo's "bag" results — there is no longer
+any duplicate row at all — even though Baghdad itself still doesn't clear
+the ADM0/ADM1 noise within the demo's `limit: 8`. The screenshot shows
+that real, measured state honestly rather than a cropped or cherry-picked
+one.
+
+**Measured examples.** No viewport; `limit: 8`; top 5 of the live result
+shown; "—" = the index has no secondary-context column for that row
+(`parentName` for Overture, `countryName` for geoBoundaries). Queried
+directly against both running indexes (`http://localhost:8788/names/...`
+for Overture, the published geoboundaries-catalog for geoBoundaries) on
+2026-11-12.
+
+*bag / Baghdad — Overture (5.6M names, has `parent_name`/`area_km2`)*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | Bagaman Sared | — | BHS · ADM0 | prefix | 12,054 |
+| 2 | Bagam orollari | — | BHS · ADM0 | prefix | 12,054 |
+| 3 | Bagama Adalary | — | BHS · ADM0 | prefix | 12,054 |
+| 4 | Bagraain | — | BHR · ADM0 | prefix | 793 |
+| 5 | Papua Bagong Ginea | — | PNG · ADM0 | word-prefix | 462,297 |
+
+The deduped "Bag" row (HUN/IND/BIH/CHN, "+N more") and Baghdad (IRQ, ADM4,
+area_km2 862) are both present in the full (undisplayed) result set — dedupe
+and the bounded promotion did their job — but still sort below this ADM0
+alt-name noise: the residual limitation above, measured honestly rather
+than hidden.
+
+*bag / Baghdad — geoBoundaries (CGAZ, ADM0–2 only, no localities, no alt names)*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | Bago | Burma | MMR · ADM1 | prefix | 38,647 |
+| 2 | Bagmati | Nepal | NPL · ADM1 | prefix | 20,504 |
+| 3 | Baghlan | Afghanistan | AFG · ADM1 | prefix | 17,475 |
+| 4 | **Baghdad** | **Iraq** | **IRQ · ADM1** | **prefix** | **862** |
+| 5 | Baguirmi | Chad | TCD · ADM2 | prefix | 27,108 |
+
+No alt-name noise on this cleaner, administrative-only index: "Baghdad
+Province" lands cleanly at #4 among its ADM1 peers, ordered by area_km2.
+
+*paris — Overture*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | **Paris** | Île-de-France | **FRA · ADM2** | **exact** | **105** |
+| 2 | Päris-Soome | Suomi / Finland | FIN · ADM1 | prefix | 10,568 |
+| 3 | Saint Andrew Parish | Dominica | DMA · ADM1 | word-prefix | 186 |
+| 4 | Saint David Parish | Dominica | DMA · ADM1 | word-prefix | 128 |
+| 5 | Saint Joseph Parish | Dominica | DMA · ADM1 | word-prefix | 124 |
+
+Exact "Paris, France" lands at #1, ahead of every ADM1 noise match — the
+bounded promotion working exactly as intended (a one-level gap). Under the
+unbounded-level-first alternative measured above but not shipped, Paris
+drops out of the top 5 entirely in favour of rows 2–5 (plus a 6th: "Fatima
+Parish", Macao).
+
+*paris — geoBoundaries*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | **Paris** | France | **FRA · ADM2** | **exact** | **105** |
+| 2 | Paris Paris | Egypt | EGY · ADM2 | prefix | 37,535 |
+| 3 | Parisi | Brazil | BRA · ADM2 | prefix | 85 |
+
+Only 3 candidates total on this index; the amendment doesn't change the
+order here (pre- and post-amendment comparators agree).
+
+*zurich — Overture*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | Zürich | Schweiz/Suisse/Svizzera/Svizra | CHE · ADM1 | exact | 1,729 |
+| 2 | Zürich | Zürich | CHE · ADM2 | exact | 92 |
+| 3 | Zürich | Zürich | CHE · ADM3 | exact | 92 |
+| 4 | Zurich | Súdwest-Fryslân | NLD · ADM4 | exact | 4.7 |
+| 5 | Zurich | Rooks County | USA · ADM4 (+2 more) | exact | 0.45 |
+
+Unaffected by the amendment: every candidate is an `exact` match, so raw
+`level` alone orders them, same as the pre-amendment comparator.
+
+*zurich — geoBoundaries*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | Zürich | Switzerland | CHE · ADM1 | exact | 1,729 |
+| 2 | Zürich | Switzerland | CHE · ADM2 | exact | 93 |
+
+*london — Overture*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | London | Ontario | CAN · ADM2 | exact | 423 |
+| 2 | Londonas | Ontario | CAN · ADM2 | prefix | 423 |
+| 3 | City of London | England | GBR · ADM2 | word-prefix | 2.5 |
+| 4 | London | Monroe County | USA · ADM4 (+18 more) | exact | 94 |
+| 5 | London | Kiritimati | KIR · ADM4 (+1 more) | exact | 3.0 |
+
+An improvement, not just a wash: "City of London" (ADM2, the real financial
+district) now outranks the flood of random ADM4 villages honestly named
+"London" that the pre-amendment matchClass-first order put first regardless
+of level or real-world prominence.
+
+*london — geoBoundaries*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | London | Canada | CAN · ADM2 | exact | 7,279 |
+| 2 | Londonderry | St Lucia | LCA · ADM2 | prefix | 1.2 |
+| 3 | London Road | St Lucia | LCA · ADM2 | prefix | 0.1 |
+| 4 | New London | United States | USA · ADM2 | word-prefix | 1,801 |
+| 5 | Little London | Jamaica | JAM · ADM2 | word-prefix | 45 |
+
+*san — Overture*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | San | Mali | MLI · ADM1 | exact | 12,893 |
+| 2 | Santrafríka | — | CAF · ADM0 | prefix | 618,719 |
+| 3 | sangu'e | — | ESP · ADM0 | prefix | 506,120 |
+| 4 | Sandominän | — | DOM · ADM0 | prefix | 48,206 |
+| 5 | Sāng, cōng shā, bō lín sān duō dìqū | — | XQ · ADM0 | prefix | 1,462 |
+
+The residual limitation at its most visible: four of five rows are
+alternate-language country-name translations that happen to prefix-match
+"san". "San, Mali" (a real town) survives at #1 only because its bounded
+promotion (`exact`, ADM1 → `effLevel` 0) ties it with these ADM0 rows and
+the `matchClassRank` tiebreak favours the exact match; "San Francisco"/
+"Santiago"-type results don't make positions 2–5 at all. Flagged, not
+fixed, per "Known residual limitation" above.
+
+*san — geoBoundaries*
+
+| # | name | context | country · level | match | area_km2 |
+|---|---|---|---|---|---|
+| 1 | Sanafir & Tiran Is. | — | ADM0 | prefix | 86 |
+| 2 | San Marino | San Marino | SMR · ADM0 | prefix | 61 |
+| 3 | San | Mali | MLI · ADM2 | exact | 6,090 |
+| 4 | Santa Cruz | Bolivia | BOL · ADM1 | prefix | 368,674 |
+| 5 | Santa Cruz | Argentina | ARG · ADM1 | prefix | 239,746 |
+
+No alt-name pollution here (geoBoundaries has none), but the two tiny real
+ADM0 units still sit ahead of "San, Mali" by the same bounded-promotion
+arithmetic as above — accepted as correct, since these are genuine ADM0
+countries, not translation noise.
 
 Usage:
 
@@ -1959,7 +2262,11 @@ An adapter adds exactly five things:
 1. **Search control UI** — an accessible combobox: `<input role="combobox">`
    + `<ul role="listbox">`, `aria-activedescendant`, arrow/enter/escape
    handling, debounce, loading and empty states, and the attribution line that
-   design call #11 requires.
+   design call #11 requires. The default option renderer (overridable via
+   `renderItem`) shows `SearchResult.parentName`/`countryName` as
+   disambiguating secondary text when the loaded index carries one (§3.2
+   amendment, "Dropdown context" — e.g. `"Bag — Rajasthan · IND · ADM4"`),
+   and appends `"(+N more)"` when `moreCount` is set by result diversity.
 2. **Viewport provider** — a `() => BBox` over the live map, passed into
    `search()` for the ranking boost. The only reason the adapter needs the map
    at all for search.
@@ -2161,9 +2468,10 @@ bbox is four ordinary `DOUBLE` columns inside a struct. This satisfies the
 | `feature_id` | `BYTE_ARRAY` / `String` | **yes** | `shapeID` for geoBoundaries. The stable logical key (design call #5). Never a row offset. |
 | `source` | `BYTE_ARRAY` / `String`, dictionary | **yes** | e.g. `geoboundaries-cgaz`. Lets one index hold several sources and lets a result say where it came from. |
 | `bbox` | `STRUCT<xmin, ymin, xmax, ymax: DOUBLE>` | **yes** | EPSG:4326 degrees. Signed: `xmin > xmax` means antimeridian-crossing (RUS, FJI). Powers the viewport ranking boost at zero extra cost. |
-| `parent_name` | `String` | no | Disambiguates "Springfield" in a result list. Strongly recommended. |
+| `parent_name` | `String` | no | Disambiguates "Springfield" in a result list — rendered as dropdown secondary text (§3.2 amendment, "Dropdown context"). Overture's division-names index carries this; geoBoundaries' CGAZ-names index does not. Strongly recommended. |
 | `parent_id` | `String` | no | `feature_id` of the parent, for a future drill-down. |
-| `area_km2` | `DOUBLE` | no | Display, and a tiebreak if `nameLength` ever proves insufficient. |
+| `area_km2` | `DOUBLE` | no | **Amended 2026-11-12**: no longer just a hypothetical tiebreak — it's component (5) of the ranking comparator (§3.2) and the "keep the biggest" rule in result-diversity's dedupe. Both Overture's and geoBoundaries' names indexes carry this column. |
+| `country_name` | `String` | no | **Added 2026-11-12.** geoBoundaries' CGAZ-names-index column: the ISO country's display name (e.g. `"Switzerland"` alongside `country: "CHE"`). Rendered as dropdown secondary text (§3.2 amendment) in place of `parent_name` when the index has this column instead. Overture's division-names index does not carry this (it has `parent_name` instead). |
 | `geometry_ref` | `STRUCT<file: String(dict), row_group: INT32, row: INT64>` | no | **Advisory** fast path for `select()`. Never authoritative (§6.3). |
 | `name_lang` | `String`, dictionary | no | E8. BCP-47. `null`/absent means "the published name, language unstated". |
 | `alt_of` | `String` | no | E8. An alt-name row sets this to the primary row's `feature_id`; `null` on primary rows. A consumer dedupes by `feature_id` when showing results. |

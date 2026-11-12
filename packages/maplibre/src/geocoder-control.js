@@ -55,6 +55,36 @@ function debounce(fn, ms) {
   };
 }
 
+/**
+ * Default dropdown-option rendering (design doc §3.2 amendment, "Dropdown
+ * context"): disambiguating secondary text when the loaded index carries
+ * it -- Overture's `parentName` ("Rajasthan" for a locality) or
+ * geoBoundaries' `countryName` ("Switzerland" alongside the ISO `country`
+ * code), in that preference order (never both: a human-readable country
+ * name already subsumes the code's job). A collapsed-duplicate row's
+ * `moreCount` (set by `applyDiversity` in geocoder-core, e.g. the reported
+ * "eight identical Bag/IND/ADM4 rows" bug) is appended as "(+N more)".
+ * Falls back to the pre-amendment "{country} · ADM{level}" with no context
+ * when the index has neither optional column.
+ * @param {HTMLLIElement} li
+ * @param {import('@cnmw/geocoder-core').SearchResult} r
+ */
+function renderDefaultOption(li, r) {
+  const name = document.createElement('span');
+  name.className = 'cnmw-option-name';
+  name.textContent = r.name;
+
+  const meta = document.createElement('span');
+  meta.className = 'cnmw-option-meta';
+  const context = r.parentName ?? r.countryName;
+  const base = `${r.country} · ADM${r.level}`;
+  const withMore = r.moreCount ? `${base} (+${r.moreCount} more)` : base;
+  meta.textContent = context ? `— ${context} · ${withMore}` : withMore;
+
+  li.appendChild(name);
+  li.appendChild(meta);
+}
+
 export class GeocoderControl {
   /** @param {import('./types.js').GeocoderControlOptions} [options] */
   constructor(options = {}) {
@@ -215,14 +245,7 @@ export class GeocoderControl {
         if (typeof rendered === 'string') li.innerHTML = rendered;
         else li.appendChild(rendered);
       } else {
-        const name = document.createElement('span');
-        name.className = 'cnmw-option-name';
-        name.textContent = r.name;
-        const meta = document.createElement('span');
-        meta.className = 'cnmw-option-meta';
-        meta.textContent = `${r.country} · ADM${r.level}`;
-        li.appendChild(name);
-        li.appendChild(meta);
+        renderDefaultOption(li, r);
       }
       listbox.appendChild(li);
     });

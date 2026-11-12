@@ -68,6 +68,30 @@ function debounce(fn, ms) {
   };
 }
 
+/**
+ * Default dropdown-option rendering (design doc §3.2 amendment, "Dropdown
+ * context"). Line-for-line the same as @cnmw/maplibre's
+ * `renderDefaultOption` -- see the DUPLICATION NOTE at the top of this
+ * file for why it's not shared.
+ * @param {HTMLLIElement} li
+ * @param {import('@cnmw/geocoder-core').SearchResult} r
+ */
+function renderDefaultOption(li, r) {
+  const name = document.createElement('span');
+  name.className = 'cnmw-option-name';
+  name.textContent = r.name;
+
+  const meta = document.createElement('span');
+  meta.className = 'cnmw-option-meta';
+  const context = r.parentName ?? r.countryName;
+  const base = `${r.country} · ADM${r.level}`;
+  const withMore = r.moreCount ? `${base} (+${r.moreCount} more)` : base;
+  meta.textContent = context ? `— ${context} · ${withMore}` : withMore;
+
+  li.appendChild(name);
+  li.appendChild(meta);
+}
+
 export class GeocoderControl extends Control {
   /** @param {import('./types.js').OlGeocoderControlOptions} [options] */
   constructor(options = {}) {
@@ -211,14 +235,7 @@ export class GeocoderControl extends Control {
         if (typeof rendered === 'string') li.innerHTML = rendered;
         else li.appendChild(rendered);
       } else {
-        const name = document.createElement('span');
-        name.className = 'cnmw-option-name';
-        name.textContent = r.name;
-        const meta = document.createElement('span');
-        meta.className = 'cnmw-option-meta';
-        meta.textContent = `${r.country} · ADM${r.level}`;
-        li.appendChild(name);
-        li.appendChild(meta);
+        renderDefaultOption(li, r);
       }
       listbox.appendChild(li);
     });

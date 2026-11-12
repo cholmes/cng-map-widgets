@@ -10,7 +10,14 @@ import { CnmwError } from '@cnmw/spec';
 import { loadHyparquet } from './cdn.js';
 
 const REQUIRED_COLUMNS = ['name', 'name_norm', 'level', 'country', 'feature_id', 'source', 'bbox'];
-const OPTIONAL_COLUMNS = ['parent_name', 'parent_id', 'area_km2', 'geometry_ref'];
+// Optional columns a client reads when present, but never requires:
+// `parent_name` and `area_km2` (Overture's division names index),
+// `country_name` and `area_km2` (geoBoundaries' CGAZ names index). Not
+// enforced by `assertSchema` -- missing means `undefined` on the row, and
+// `Geocoder#_rankAndFilter`/`ranking.js` handle that throughout (ranking
+// sorts a missing `area_km2` last; the dropdown adapters just omit the
+// secondary-text line). See design doc §3.2's amendment, "Index columns".
+const OPTIONAL_COLUMNS = ['parent_name', 'parent_id', 'area_km2', 'country_name', 'geometry_ref'];
 
 /**
  * Fetch and validate the index manifest (design doc §6.4).

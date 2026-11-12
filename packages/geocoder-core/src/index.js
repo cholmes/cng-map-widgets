@@ -8,6 +8,19 @@
 export { Geocoder, DEFAULT_INDEX_URL, VERSION, resolveResolutionMode } from './geocoder.js';
 export { resolveJoinKey, geometryRefRowRange, firstMatch, resolveGeometry } from './geometry-resolver.js';
 export { CDN, loadHyparquet, setHyparquetModules, clearHyparquetModules } from './cdn.js';
-export { compareRanked, classifyMatch, computeViewportRank, rankRow, scoreOf, MATCH_CLASS_RANK, VIEWPORT_RANK } from './ranking.js';
+export {
+  compareRanked,
+  classifyMatch,
+  computeViewportRank,
+  rankRow,
+  scoreOf,
+  applyDiversity,
+  dedupeByNameCountryLevel,
+  capPerCountryLevelGroup,
+  MATCH_CLASS_RANK,
+  VIEWPORT_RANK,
+  DEFAULT_EXACT_LEVEL_PROMOTION,
+  DEFAULT_DIVERSITY,
+} from './ranking.js';
 export { prefixRange, findCandidateGroups, searchRangeIndex } from './index-loader.js';
 export { GenerationGuard } from './generation-guard.js';
