@@ -29,6 +29,18 @@
   progress { width: 100%; margin-top: 6px; }
   a.download-link { display: block; margin-top: 6px; font-size: 12px; }
   #datasetNote { font-size: 11px; color: #666; margin-top: 4px; }
+
+  #formatPicker { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+  .format-option { display: flex; align-items: baseline; gap: 6px; font-size: 12px; padding: 4px 6px; border-radius: 4px; cursor: pointer; }
+  .format-option:hover { background: #f0f0f0; }
+  .format-option input { margin: 0; }
+  .format-option .format-label { font-weight: 600; }
+  .format-option .format-weight { color: #777; font-size: 11px; }
+  .format-option.loading { background: #fff8e1; }
+  .format-option.loading .format-weight { color: #92610a; font-weight: 600; }
+  .format-option.failed { background: #fde2e2; }
+  .format-option.failed .format-weight { color: #a31515; font-weight: 600; }
+  #formatLoadError { display: none; font-size: 12px; background: #fde2e2; border: 1px solid #c33; border-radius: 4px; padding: 8px; margin-top: 6px; color: #7a1414; white-space: pre-wrap; word-break: break-word; }
 </style>
 <!--
   Zero-build ESM, no bundler (design doc §4.3's "published import map"
@@ -43,7 +55,11 @@
     "@cnmw/spec": "../../packages/spec/src/index.js",
     "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
     "@cnmw/maplibre": "../../packages/maplibre/src/index.js",
-    "@cnmw/download-core": "../../packages/download-core/src/index.js"
+    "@cnmw/download-core": "../../packages/download-core/src/index.js",
+    "@cnmw/format-gpkg": "../../packages/format-gpkg/src/index.js",
+    "@cnmw/format-shapefile": "../../packages/format-shapefile/src/index.js",
+    "@cnmw/format-flatgeobuf": "../../packages/format-flatgeobuf/src/index.js",
+    "@cnmw/format-extras": "../../packages/format-extras/src/index.js"
   }
 }
 </script>
@@ -71,14 +87,15 @@
     <button id="acceptCeilingBtn">Download anyway</button>
   </div>
 
-  <label>Download</label>
+  <label>Download format</label>
+  <div id="formatPicker"></div>
   <div class="row">
-    <button id="downloadGeoJsonBtn" disabled>GeoJSON</button>
-    <button id="downloadGeoParquetBtn" disabled>GeoParquet</button>
+    <button id="downloadBtn" class="primary" disabled>Download</button>
   </div>
   <button id="cancelBtn" disabled>Cancel</button>
   <progress id="progressBar" value="0" max="1" style="display:none;"></progress>
   <div id="downloadInfo" style="display:none;"></div>
+  <div id="formatLoadError"></div>
   <a id="downloadLink" class="download-link" style="display:none;"></a>
 </div>
 
@@ -90,7 +107,36 @@ import {
   download,
   memorySink,
   CeilingExceededError,
+  registerLazyFormat,
+  formats as listFormats,
 } from '@cnmw/download-core';
+
+// Heavy/lazy output formats (design doc §3.4 amendment,
+// experiments/e10-heavy-formats/RESULTS.md §8: "the lazy-loading registry
+// amendment"). `registerLazyFormat` only lists the id/label/weight -- none
+// of these fetch anything over the network until a `download()` for that
+// format id actually runs. GeoJSON and GeoParquet need no registration
+// here: they're @cnmw/download-core's own eager built-ins (registered as a
+// side effect of importing that package).
+//
+// `format-gpkg` is the heavy one (sql.js, ~340KB min+gz) and
+// `format-flatgeobuf` fetches a small jsdelivr `+esm` bundle (~10KB);
+// `format-shapefile` and `format-extras` (CSV, Esri JSON) are zero-dependency
+// and would work fine registered eagerly, but are registered lazily here too
+// (their own `load()` just resolves immediately) so this page's format
+// picker can list and weight every non-built-in format through one
+// uniform code path -- exactly the thing RESULTS.md §8 says the registry
+// was designed to demonstrate.
+import { gpkgFormatDescriptor } from '@cnmw/format-gpkg';
+import { shapefileFormatDescriptor } from '@cnmw/format-shapefile';
+import { flatGeobufFormatDescriptor } from '@cnmw/format-flatgeobuf';
+import { csvFormatDescriptor, esriJsonFormatDescriptor } from '@cnmw/format-extras';
+
+registerLazyFormat(gpkgFormatDescriptor);
+registerLazyFormat(shapefileFormatDescriptor);
+registerLazyFormat(flatGeobufFormatDescriptor);
+registerLazyFormat(csvFormatDescriptor);
+registerLazyFormat(esriJsonFormatDescriptor);
 
 const statusEl = document.getElementById('status');
 const setStatus = (text) => { statusEl.textContent = text; };
@@ -262,12 +308,81 @@ document.getElementById('estimateBtn').addEventListener('click', async () => {
       `Files: ${est.files.selected}/${est.files.total}  Row groups: ${est.rowGroups.selected}/${est.rowGroups.total}  HTTP requests: ${est.requests}\n` +
       `Warnings: ${est.warnings.map((w) => w.code).join(', ') || '(none)'}\n` +
       `Ceiling exceeded: ${est.ceiling.exceeded}`;
-    document.getElementById('downloadGeoJsonBtn').disabled = false;
-    document.getElementById('downloadGeoParquetBtn').disabled = false;
+    document.getElementById('downloadBtn').disabled = false;
   } catch (err) {
     infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
   }
 });
+
+// --- Format picker ---------------------------------------------------------
+//
+// Built from download-core's own `formats()` listing (eager + lazy,
+// uniformly) rather than hardcoded markup, so a lazy format's weight and
+// load state are always read from the one place that tracks them
+// (registry.js's `lazyLoadState`/`resolvedLazyFormats`) instead of being
+// duplicated in this page's own state.
+
+let selectedFormat = 'geojson';
+
+// download.js's run() emits the 'loading-format' progress event *before*
+// it calls registry.js's resolveFormat() -- which is the function that
+// actually flips a descriptor's `loadState` to 'loading' (see registry.js:
+// resolveFormat() sets lazyLoadState.set(id, 'loading') as its own first
+// statement). So a picker re-render driven synchronously by that progress
+// event would read `formats()` one statement too early and still see
+// 'idle'. This page-owned flag closes that gap: set the instant the event
+// fires, cleared once the download settles (done or failed) -- so the
+// picker's "loading…" row is accurate for the whole real window a CDN
+// fetch can take, not just the portion registry.js happens to have caught
+// up to yet.
+let pendingLoadFormatId = null;
+
+function formatWeightText(bytes) {
+  if (bytes >= 1000) return `~${Math.round(bytes / 1000)} KB`;
+  return `~${Math.round(bytes)} B`;
+}
+
+/** The caption shown BEFORE a lazy format is selected/loaded (Chris's
+ *  requirement: weight known up front, never hidden behind the fetch). */
+function captionFor(entry) {
+  if (!entry.lazy) return 'built in — no extra fetch';
+  if (entry.id === pendingLoadFormatId || entry.loadState === 'loading') return 'loading…';
+  if (entry.loadState === 'loaded') return 'loaded — cached for this page';
+  if (entry.loadState === 'failed') return 'failed to load — pick it again to retry';
+  const est = entry.approxBytes?.estimate ?? 0;
+  return est > 0 ? `loads ${formatWeightText(est)} on first use` : 'loads instantly on first use (no CDN fetch)';
+}
+
+function renderFormatPicker() {
+  const picker = document.getElementById('formatPicker');
+  const entries = listFormats();
+  picker.innerHTML = '';
+  for (const entry of entries) {
+    const isLoading = entry.id === pendingLoadFormatId || entry.loadState === 'loading';
+    const row = document.createElement('label');
+    row.className = 'format-option' + (isLoading ? ' loading' : '') + (entry.loadState === 'failed' && !isLoading ? ' failed' : '');
+    row.dataset.formatId = entry.id;
+
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'format';
+    input.value = entry.id;
+    input.checked = entry.id === selectedFormat;
+    input.addEventListener('change', () => { selectedFormat = entry.id; });
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'format-label';
+    labelSpan.textContent = entry.label ?? entry.id;
+
+    const weightSpan = document.createElement('span');
+    weightSpan.className = 'format-weight';
+    weightSpan.textContent = `· ${captionFor(entry)}`;
+
+    row.append(input, labelSpan, weightSpan);
+    picker.appendChild(row);
+  }
+}
+renderFormatPicker();
 
 // --- Download ------------------------------------------------------------
 
@@ -279,22 +394,28 @@ function resetDownloadUi() {
   document.getElementById('downloadInfo').style.display = 'none';
   document.getElementById('downloadLink').style.display = 'none';
   document.getElementById('progressBar').style.display = 'none';
-  document.getElementById('downloadGeoJsonBtn').disabled = true;
-  document.getElementById('downloadGeoParquetBtn').disabled = true;
+  document.getElementById('formatLoadError').style.display = 'none';
+  document.getElementById('downloadBtn').disabled = true;
   document.getElementById('cancelBtn').disabled = true;
   lastEstimate = null;
   activeHandle = null;
+  pendingLoadFormatId = null;
+  renderFormatPicker();
 }
 
-function startDownload(format) {
+function startDownload(formatId) {
   const entry = currentEntry();
   const filter = buildFilter(entry);
-  const extension = format === 'geojson' ? 'geojson' : 'parquet';
-  const output = { spec: 'cnmw-output/1.0', format, filename: `${entry.key}.${extension}` };
+  const fmtInfo = listFormats().find((f) => f.id === formatId);
+  const extension = fmtInfo?.extension ?? formatId;
+  const output = { spec: 'cnmw-output/1.0', format: formatId, filename: `${entry.key}.${extension}` };
 
   // The demo uses memorySink() + a <a download> link rather than
   // autoSink()'s File System Access picker, so this page is drivable
   // headlessly (Playwright) without a native file dialog.
+  window.__cnmwLastResult = null;
+  window.__cnmwLastError = null;
+
   const sink = memorySink();
   const handle = download(entry.dataset, area, filter, output, { sink });
   activeHandle = handle;
@@ -302,15 +423,28 @@ function startDownload(format) {
   const progressBar = document.getElementById('progressBar');
   const downloadInfo = document.getElementById('downloadInfo');
   const downloadLink = document.getElementById('downloadLink');
+  const formatLoadError = document.getElementById('formatLoadError');
   progressBar.style.display = 'block';
   progressBar.removeAttribute('value');
   downloadInfo.style.display = 'block';
   downloadInfo.textContent = 'Planning…';
   downloadLink.style.display = 'none';
+  formatLoadError.style.display = 'none';
   document.getElementById('cancelBtn').disabled = false;
 
   handle.on('progress', (p) => {
-    if (p.phase === 'reading' && p.rowGroupsTotal > 0) {
+    if (p.phase === 'loading-format') {
+      // Driven by registry.js's 'loading-format' progress event
+      // (download.js: emitted once, right before `resolveFormat()` calls
+      // a lazy descriptor's `load()` -- i.e. right before the real CDN
+      // `import()` for sql.js/flatgeobuf fires). `pendingLoadFormatId`
+      // (not just the registry's own loadState -- see its declaration)
+      // flips the selected row to its "loading…" caption for the whole
+      // real window the CDN fetch takes.
+      pendingLoadFormatId = formatId;
+      downloadInfo.textContent = `Loading the "${fmtInfo?.label ?? formatId}" format plugin (first use, ${fmtInfo?.approxBytes ? formatWeightText(fmtInfo.approxBytes.estimate) : 'small'})…`;
+      renderFormatPicker();
+    } else if (p.phase === 'reading' && p.rowGroupsTotal > 0) {
       progressBar.value = p.rowGroupsDone / p.rowGroupsTotal;
       progressBar.removeAttribute('max');
       progressBar.max = 1;
@@ -326,28 +460,42 @@ function startDownload(format) {
 
   handle.result.then(
     (result) => {
+      pendingLoadFormatId = null;
       progressBar.style.display = 'none';
       document.getElementById('cancelBtn').disabled = true;
       downloadInfo.textContent =
         `Done: ${result.rows} rows, ${result.bytes.toLocaleString()} bytes written, ${result.readBytes.toLocaleString()} bytes read, ${result.requests} requests, ${result.elapsedMs.toFixed(0)} ms.`;
-      const blob = sink.blob ?? new Blob(sink.chunks, { type: format === 'geojson' ? 'application/geo+json' : 'application/vnd.apache.parquet' });
+      const blob = sink.blob ?? new Blob(sink.chunks, { type: fmtInfo?.mediaType ?? 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
       downloadLink.href = url;
       downloadLink.download = output.filename;
       downloadLink.textContent = `Save ${output.filename} (${result.bytes.toLocaleString()} bytes)`;
       downloadLink.style.display = 'block';
       window.__cnmwLastResult = result;
+      renderFormatPicker();
     },
     (err) => {
+      pendingLoadFormatId = null;
       progressBar.style.display = 'none';
       document.getElementById('cancelBtn').disabled = true;
-      downloadInfo.textContent = `${err.code === 'CANCELLED' ? 'Cancelled.' : `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`}`;
+      // FORMAT_LOAD_FAILED (registry.js's resolveFormat(), thrown when a
+      // lazy descriptor's load() -- the real CDN import() -- rejects) gets
+      // its own clean failure box rather than sharing the generic
+      // downloadInfo line every other error uses, per the task's bar.
+      if (err.code === 'FORMAT_LOAD_FAILED') {
+        downloadInfo.style.display = 'none';
+        formatLoadError.style.display = 'block';
+        formatLoadError.textContent = `Format failed to load (FORMAT_LOAD_FAILED): ${err.message}\nPick "${fmtInfo?.label ?? formatId}" and click Download again to retry.`;
+      } else {
+        downloadInfo.textContent = `${err.code === 'CANCELLED' ? 'Cancelled.' : `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`}`;
+      }
+      window.__cnmwLastError = { code: err.code, message: err.message };
+      renderFormatPicker();
     },
   );
 }
 
-document.getElementById('downloadGeoJsonBtn').addEventListener('click', () => startDownload('geojson'));
-document.getElementById('downloadGeoParquetBtn').addEventListener('click', () => startDownload('geoparquet'));
+document.getElementById('downloadBtn').addEventListener('click', () => startDownload(selectedFormat));
 document.getElementById('cancelBtn').addEventListener('click', () => activeHandle?.cancel('user cancelled'));
 
 window.__cnmwDownloadDemo = { geocoder, control, map, get area() { return area; }, get lastEstimate() { return lastEstimate; } };

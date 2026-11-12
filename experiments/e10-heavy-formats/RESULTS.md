@@ -301,3 +301,103 @@ same-file commit race rather than risking it).
   32/10 for floats) rather than computed from the actual schema's known
   range; real data with extreme magnitudes could still overflow into the
   `*` marker. Flagged, not fixed, in this round.
+
+---
+
+## 10. Browser verification (2026-11-12, follow-up)
+
+§9's "No real browser smoke test" gap is closed. `examples/download-demo`
+now wires every format package from this round into a real **format
+picker** (GeoJSON/GeoParquet eager, GeoPackage/Shapefile/FlatGeobuf/CSV/
+Esri JSON all through `registerLazyFormat`), and
+`examples/download-demo/verify.mjs` drives it end to end with Playwright
+against a real Chromium page, the live geoBoundaries gazetteer (area
+search: "liechtenstein"), and the live FTW Liechtenstein GeoParquet (the
+same 218 KB / 795-field file this package's own tests already used) --
+not Node's `setXModule()` injection seam, which cannot exercise an
+absolute-URL dynamic `import()` at all.
+
+**What this proved, measured, not assumed:**
+
+- **The real `import('https://cdn.jsdelivr.net/...')` path works, in an
+  actual browser, for both heavy/lazy formats.** sql.js
+  (`@cnmw/format-gpkg`) and flatgeobuf's `geojson` submodule
+  (`@cnmw/format-flatgeobuf`) both load via their exact pinned CDN URLs
+  from `cdn.js` in each package -- `https://cdn.jsdelivr.net/npm/sql.js@1.13.0/+esm`
+  (plus `dist/sql-wasm.wasm` via `locateFile`) and
+  `https://cdn.jsdelivr.net/npm/flatgeobuf@4.6.1/dist/esm/geojson.js/+esm`
+  -- and the resulting plugin writes a correct file. **No descriptor fix
+  was needed**: both URLs were already absolute, pinned CDN URLs (not a
+  bare specifier or a Node-only path), and `curl`-ing each one ahead of
+  the browser run confirmed `200`, `content-type:
+  application/javascript`, and real bundled ESM content (jsdelivr's
+  Rollup/esbuild header comment) before ever opening a page.
+- **The lazy-loading proof, via real network capture (Playwright's
+  Chromium request events, backed by the CDP `Network` domain):** across
+  the whole happy-path run, zero requests to `cdn.jsdelivr.net` matching
+  `sql-wasm`/`sql.js`/`flatgeobuf` occurred before that format was
+  explicitly selected in the picker and "Download" was clicked. After
+  selecting GeoPackage, exactly two sql.js requests fired (`+esm` glue,
+  then `dist/sql-wasm.wasm`) and both are timestamped after the click;
+  likewise FlatGeobuf's one `+esm` request. Every other registered lazy
+  format (Shapefile, CSV, Esri JSON) loaded with **zero** network
+  requests at all, confirmed the same way -- the registry's "lazy but
+  free" and "lazy and heavy" paths really are one uniform code path, as
+  RESULTS.md §8 claimed from the Node-only evidence available at the
+  time.
+- **Every format, downloaded for real and validated locally, per the
+  task's own validation bar** (GDAL 3.10.3 `ogrinfo`, DuckDB v1.4.1 with
+  the `spatial` extension) -- all 769 rows (Liechtenstein, FTW fields,
+  `confidence >= 0.5`), all matching `result.rows` exactly:
+
+  | format | bytes written | validated with | feature/row count |
+  |---|---|---|---|
+  | GeoJSON | 938,135 | (existing E5 coverage) | 769 |
+  | GeoParquet | 193,541 | (existing E5 coverage) | 769 |
+  | GeoPackage (`.gpkg`) | 798,720 | `ogrinfo -al -so` | 769 |
+  | Shapefile (`.shp.zip`) | 728,799 | `ogrinfo -al -so` (opens the zip directly) | 769 |
+  | FlatGeobuf (`.fgb`) | 667,256 | `duckdb` `ST_Read` (spatial ext.) | 769 |
+  | CSV (WKT geometry) | 1,387,466 | `duckdb` `read_csv` | 769 |
+  | Esri JSON (FeatureSet) | 1,461,432 | `ogrinfo -al -so` (`ESRIJSON` driver) | 769 |
+
+- **`FORMAT_LOAD_FAILED` shows a clean, dedicated failure, not a garbled
+  one.** A second page intercepted (`page.route`) sql.js's CDN request
+  and aborted it -- a real network-level failure, not a mock of
+  `resolveFormat()` -- and selecting GeoPackage + clicking Download
+  produced the registry's real `FORMAT_LOAD_FAILED` error, which the demo
+  renders in its own `#formatLoadError` box (distinct from the generic
+  `#downloadInfo` error line every other failure uses) with a plain-
+  language retry hint. The picker's GeoPackage row simultaneously
+  reflects the registry's `loadState: 'failed'`.
+- **A real UI bug found and fixed in the demo's own wiring** (not in any
+  `@cnmw/format-*` package, and not a pre-existing bug -- it was
+  introduced, and caught, in this same round of work): `download.js`'s
+  `run()` emits the `'loading-format'` progress event **before** calling
+  `resolveFormat()`, and `resolveFormat()` is what actually flips
+  `registry.js`'s `lazyLoadState` to `'loading'` (its own first
+  statement). A picker re-render driven synchronously from that progress
+  event therefore reads `formats()` one statement too early and never
+  observes `loadState: 'loading'` -- the loading row silently never
+  appeared. Fixed in `examples/download-demo/index.html` with a page-
+  owned `pendingLoadFormatId` flag, set the instant the event fires and
+  cleared when the download settles, independent of the registry's own
+  timing. This is a lesson for any other consumer of `'loading-format'`
+  wanting to reflect `formatLoadState()` live, not just this demo: don't
+  assume the registry's own state has already caught up to its own
+  event.
+
+**Evidence:** `examples/download-demo/verify.mjs` (extended to drive all
+seven formats, the network-capture lazy-load proof, and the
+`FORMAT_LOAD_FAILED` path), run against the live catalog with
+`node examples/download-demo/verify.mjs <port>` (serve.py must be
+running). Screenshots committed alongside the demo:
+`examples/download-demo/screenshot.png` (the picker, every weight label
+visible, nothing loaded yet), `screenshot-loading-gpkg.png` (GeoPackage's
+"loading…" row mid-fetch), and `screenshot-format-load-failed.png` (the
+dedicated `FORMAT_LOAD_FAILED` box).
+
+**Still not covered:** terrio-js and gdal3.js remain Node-measured only
+(§1/§2) -- this round's browser verification was scoped to the four
+format packages this project actually ships (`format-gpkg`,
+`format-shapefile`, `format-flatgeobuf`, `format-extras`), not the two
+disqualified-on-weight candidates.
