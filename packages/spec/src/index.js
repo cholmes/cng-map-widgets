@@ -9,7 +9,7 @@
 // dependencies and makes zero network requests, so the externalize-to-CDN
 // question (§4.2) does not apply to this package at all.
 
-export const VERSION = '0.1.0-experiment';
+export const VERSION = '0.1.0';
 
 export { AREA_VERSION, generateAreaId, buildArea, validateArea, toAreaDocument, fromAreaDocument } from './area.js';
 export {

@@ -62,7 +62,7 @@ function initialFetchSizeOf(entry) {
 /** @typedef {import('@cnmw/spec').BBox} BBox */
 
 export const DEFAULT_INDEX_URL = './data/index.json';
-export const VERSION = '0.1.0-experiment';
+export const VERSION = '0.1.0';
 
 const DEFAULT_RANKING = {
   viewportBoost: 1,

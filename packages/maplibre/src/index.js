@@ -1,6 +1,6 @@
 // @cnmw/maplibre -- public entry point.
 
-export const VERSION = '0.1.0-experiment';
+export const VERSION = '0.1.0';
 
 export { GeocoderControl } from './geocoder-control.js';
 export { addAreaLayer } from './area-layer.js';

@@ -5,7 +5,7 @@
 // experiment phase. Zero runtime dependencies beyond @cnmw/spec -- no
 // network, no CDN externalization question (design doc §4.2) applies.
 
-export const VERSION = '0.1.0-experiment';
+export const VERSION = '0.1.0';
 
 export { areaFromFile, areaFromGeoJson, attachDropTarget, registerReader } from './upload.js';
 export { geoJsonReader } from './geojson-reader.js';

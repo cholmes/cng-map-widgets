@@ -1,15 +1,32 @@
 {
   "name": "@cnmw/upload-core",
-  "version": "0.1.0-experiment",
-  "description": "Drag/drop or file-pick upload -> Area, the same interface @cnmw/geocoder-core emits (design doc's composability seam). GeoJSON reader built in; registerReader() seam for more formats later.",
+  "version": "0.1.0",
+  "description": "Drag/drop, paste or file-pick a GeoJSON file and get back the same Area object @cnmw/geocoder-core emits -- the composability seam. Validates and repairs real-world GeoJSON (rings, winding, Z, out-of-range coordinates) and reports every repair. registerReader() is the seam for more formats.",
+  "keywords": [
+    "geojson",
+    "upload",
+    "drag-and-drop",
+    "repair",
+    "validate",
+    "area-of-interest",
+    "cloud-native",
+    "cnmw"
+  ],
+  "license": "MIT",
   "type": "module",
   "sideEffects": false,
   "private": true,
   "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
-    "@cnmw/spec": "0.1.0-experiment"
+    "@cnmw/spec": "0.1.0"
   }
 }

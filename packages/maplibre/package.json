@@ -1,18 +1,35 @@
 {
   "name": "@cnmw/maplibre",
-  "version": "0.1.0-experiment",
-  "description": "MapLibre adapter: accessible search combobox control, outline (Area) layer, viewport provider, antimeridian-aware fitBounds.",
+  "version": "0.1.0",
+  "description": "MapLibre GL adapter for the @cnmw widgets: an accessible search combobox control, an Area outline layer (with a dashed ghost of the filter geometry), a viewport provider for the ranking boost, and antimeridian-aware fitBounds.",
+  "keywords": [
+    "maplibre",
+    "maplibre-gl",
+    "geocoder",
+    "control",
+    "map-widget",
+    "combobox",
+    "cloud-native",
+    "cnmw"
+  ],
+  "license": "MIT",
   "type": "module",
   "sideEffects": false,
   "private": true,
   "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "peerDependencies": {
     "maplibre-gl": "^4.0.0 || ^5.0.0"
   },
   "dependencies": {
-    "@cnmw/spec": "0.1.0-experiment"
+    "@cnmw/spec": "0.1.0"
   }
 }

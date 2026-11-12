@@ -1,15 +1,36 @@
 {
   "name": "@cnmw/geocoder-core",
-  "version": "0.1.0-experiment",
-  "description": "Framework-agnostic geocoder: index load (full + range), normalization, prefix search, six-component ranking, geometry resolution -> Area.",
+  "version": "0.1.0",
+  "description": "Framework-agnostic place-name search over a published cloud-native gazetteer: manifest + index load (full or HTTP-range), name normalization, prefix search, a nine-component ranking total order with result diversity, and geometry resolution into an Area. No DOM, no map library.",
+  "keywords": [
+    "geocoder",
+    "gazetteer",
+    "autocomplete",
+    "typeahead",
+    "place-search",
+    "geoparquet",
+    "parquet",
+    "hyparquet",
+    "cloud-native",
+    "geoboundaries",
+    "overture",
+    "cnmw"
+  ],
+  "license": "MIT",
   "type": "module",
   "sideEffects": false,
   "private": true,
   "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
-    "@cnmw/spec": "0.1.0-experiment"
+    "@cnmw/spec": "0.1.0"
   }
 }

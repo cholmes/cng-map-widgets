@@ -1,16 +1,35 @@
 {
   "name": "@cnmw/download-core",
-  "version": "0.1.0-experiment",
-  "description": "Dataset resolution, pruning cascade, estimate, streaming download, sinks, format registry, geojson + geoparquet writers.",
+  "version": "0.1.0",
+  "description": "Clip-free, server-free dataset download in the browser: STAC/Portolan collection resolution, a metadata-only pruning cascade (partition -> part bbox/time -> row-group stats -> row), pre-download estimates with a ceiling and an explicit refusal path, streaming sinks, and geojson + geoparquet writers.",
+  "keywords": [
+    "geoparquet",
+    "parquet",
+    "hyparquet",
+    "download",
+    "stac",
+    "portolan",
+    "spatial-filter",
+    "row-group-pruning",
+    "cloud-native",
+    "cnmw"
+  ],
+  "license": "MIT",
   "type": "module",
   "sideEffects": false,
   "private": true,
   "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
-    "@cnmw/spec": "0.1.0-experiment"
+    "@cnmw/spec": "0.1.0"
   },
   "devDependencies": {
     "hyparquet": "1.33.0",
