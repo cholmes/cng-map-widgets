@@ -8,7 +8,8 @@
 
 export const VERSION = '0.1.0-experiment';
 
-export { resolveDataset } from './dataset-resolve.js';
+export { resolveDataset, descriptorFromCollection, collectionDownloadSupport } from './dataset-resolve.js';
+export { CDN, loadHyparquet, loadHyparquetWriter, setHyparquetModules, clearHyparquetModules } from './cdn.js';
 export { estimate } from './estimate.js';
 export { download, downloadRequest } from './download.js';
 export { registerFormat, formats, registerEngine, engines } from './registry.js';
@@ -18,7 +19,8 @@ export { createGeoJsonFormat } from './formats/geojson.js';
 export { createGeoParquetFormat } from './formats/geoparquet.js';
 export { defaultCeiling, requirementsOf } from './ceiling.js';
 export { evaluatePredicate, evaluateWhere, getPath } from './predicate.js';
-export { rowMatchesArea, bboxIntersectsAny, pointInGeometry, geometriesIntersect } from './spatial.js';
+export { rowMatchesArea, bboxIntersectsAny, pointInGeometry, geometriesIntersect, geometryIntersectsArea } from './spatial.js';
+export { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 export { boundedExact, boundedRange, addBounded, sumBounded, scaleBounded, capBounded, isEstimateWide } from './bounded.js';
 export { enumeratePartitions, partitionPruneCascade } from './partitions.js';
 export { pruneRowGroupsByBBox, pruneRowGroupsByTime } from './prune.js';

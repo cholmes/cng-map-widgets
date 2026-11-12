@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cn-geocoding E6 — Sentinel-2 footprints explorer</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
+  #map { position: absolute; inset: 0; }
+  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+
+  #panel {
+    position: absolute; top: 10px; right: 10px; z-index: 5; width: 420px; max-height: calc(100% - 20px);
+    overflow-y: auto; background: rgba(255,255,255,0.97); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    padding: 14px; box-sizing: border-box;
+  }
+  #panel h1 { font-size: 15px; margin: 0 0 4px; }
+  #panel p.sub { font-size: 11px; color: #666; margin: 0 0 10px; }
+  #panel label { display: block; font-weight: 600; margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; color: #555; }
+  #panel select, #panel button, #panel input[type="number"], #panel input[type="date"] { width: 100%; font-size: 13px; padding: 6px; box-sizing: border-box; }
+  #panel button { margin-top: 6px; cursor: pointer; border: 1px solid #888; border-radius: 4px; background: #f4f4f4; }
+  #panel button:disabled { opacity: 0.5; cursor: default; }
+  #panel button.primary { background: #0b6e4f; color: white; border-color: #084f38; }
+  #areaInfo, #estimateInfo, #downloadInfo, #pruneInfo { font-size: 12px; background: #f7f7f7; border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+  #pruneInfo { font-family: ui-monospace, monospace; font-size: 11px; }
+  #ceilingBox { display: none; background: #fff3cd; border: 1px solid #c99; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 12px; }
+  .row { display: flex; gap: 6px; }
+  .row > * { flex: 1; }
+  .row > button { flex: 1; }
+  progress { width: 100%; margin-top: 6px; }
+  a.download-link { display: block; margin-top: 6px; font-size: 12px; }
+  #datasetNote { font-size: 11px; color: #666; margin-top: 4px; }
+  .checkrow { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+  .checkrow input { width: auto; }
+</style>
+<!--
+  Zero-build ESM, same import-map convention as examples/download-demo and
+  examples/geocoder-demo.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cnmw/spec": "../../packages/spec/src/index.js",
+    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cnmw/maplibre": "../../packages/maplibre/src/index.js",
+    "@cnmw/download-core": "../../packages/download-core/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel">
+  <h1>Sentinel-2 footprints explorer (E6)</h1>
+  <p class="sub">
+    "Type in the country and go" — Sentinel-2 Collection-1 L2A scene
+    footprints, republished as STAC-GeoParquet by tge-labs/s2-stac-geoparquet:
+    30.4M item rows. The ceiling/refusal stress test for
+    <code>@cnmw/download-core</code>.
+  </p>
+  <div id="status" style="font-size:12px;color:#555;">Loading dataset descriptor…</div>
+
+  <label>Country (or any area)</label>
+  <div id="areaInfo">Type a country name in the search box (top-left) to pick an area.</div>
+  <button id="clearAreaBtn" style="margin-top:4px;">Clear area (query the whole world)</button>
+
+  <label>Time window (optional — leave empty + a big country to see the ceiling/refusal path)</label>
+  <div class="row">
+    <input type="date" id="startDate" />
+    <input type="date" id="endDate" />
+  </div>
+  <div id="datasetNote">Loading dataset temporal extent…</div>
+
+  <div class="checkrow">
+    <input type="checkbox" id="includeAssets" />
+    <label for="includeAssets" style="margin:0;text-transform:none;font-weight:normal;">
+      Include the <code>assets</code> column (the full STAC assets JSON — half the bytes of a part; excluded by default per design doc §2.8)
+    </label>
+  </div>
+  <div class="checkrow">
+    <input type="checkbox" id="cloudFilter" />
+    <label for="cloudFilter" style="margin:0;text-transform:none;font-weight:normal;">Cloud cover ≤ 20% only</label>
+  </div>
+
+  <div class="row">
+    <button id="estimateBtn" class="primary" disabled>Estimate</button>
+  </div>
+  <div id="estimateInfo" style="display:none;"></div>
+  <div id="pruneInfo" style="display:none;"></div>
+  <div id="ceilingBox">
+    <div id="ceilingText"></div>
+    <button id="acceptCeilingBtn">Download anyway</button>
+  </div>
+
+  <label>Download (excludes <code>assets</code> by default)</label>
+  <div class="row">
+    <button id="downloadGeoJsonBtn" disabled>GeoJSON</button>
+    <button id="downloadGeoParquetBtn" disabled>GeoParquet</button>
+  </div>
+  <button id="cancelBtn" disabled>Cancel</button>
+  <progress id="progressBar" value="0" max="1" style="display:none;"></progress>
+  <div id="downloadInfo" style="display:none;"></div>
+  <a id="downloadLink" class="download-link" style="display:none;"></a>
+</div>
+
+<script type="module">
+import { Geocoder } from '@cnmw/geocoder-core';
+import { GeocoderControl } from '@cnmw/maplibre';
+import {
+  resolveDataset,
+  estimate,
+  download,
+  memorySink,
+} from '@cnmw/download-core';
+
+const statusEl = document.getElementById('status');
+const setStatus = (text) => { statusEl.textContent = text; };
+
+// --- Dataset: the real, live tge-labs/s2-stac-geoparquet "sentinel-2-c1-l2a"
+// collection (design doc §2.8's worked example; PLAN.md E6 scope).
+// `kind: 'portolan-collection'` so `resolveDataset()` runs the real §2.4
+// derivation: `stac-geoparquet` source (the STAC-column sniff in
+// dataset-resolve.js's `looksLikeStac`), `stac-items` enumeration (12
+// `year=` items; no `collection-mirror` asset published), and the table's
+// columns -- which, honestly, have no usable bbox *covering* (the `bbox`
+// column here is a flat `list<double>`, not the GeoParquet 1.1
+// struct-with-covering-metadata CGAZ/FTW publish), so row-group pruning
+// inside a selected year file degrades to a full scan. Partition-level
+// (year) pruning still works from a time filter, and feature-level
+// filtering (bbox + polygon) still runs correctly per row on read -- see
+// the estimate's prune narration and warnings below for the honest
+// picture, not a dressed-up one.
+const COLLECTION_URL = 'https://data.source.coop/tge-labs/s2-stac-geoparquet/sentinel-2-c1-l2a/collection.json';
+
+let resolvedDataset = null;
+
+async function loadDataset() {
+  const rawCollection = await fetch(COLLECTION_URL).then((r) => r.json());
+  const extent = rawCollection.extent?.temporal?.interval?.[0];
+
+  resolvedDataset = await resolveDataset({
+    spec: 'cnmw-dataset/1.0',
+    id: 'sentinel-2-c1-l2a',
+    title: 'Sentinel-2 Collection 1 L2A — STAC item footprints',
+    source: { kind: 'portolan-collection', url: COLLECTION_URL },
+  });
+
+  document.getElementById('datasetNote').textContent =
+    `Dataset covers ${extent?.[0]?.slice(0, 10)} – ${extent?.[1]?.slice(0, 10)} ` +
+    `(${resolvedDataset.table?.rowCount?.toLocaleString?.() ?? '?'} scenes across ${resolvedDataset.source.keys?.length ? 'year=' : ''}${resolvedDataset.source.fileCount ?? resolvedDataset.source.glob ? '' : ''} partitions).`;
+
+  document.getElementById('estimateBtn').disabled = false;
+  setStatus(`Dataset resolved: ${resolvedDataset.source.kind} source, enumeration=${resolvedDataset.source.enumeration?.kind}, bbox covering=${resolvedDataset.table?.bbox?.kind ?? 'unknown'}.`);
+}
+
+// --- Area ("type a country and go": the full geoBoundaries ADM0-2 index,
+// but the placeholder nudges toward a country search) --------------------
+
+let area = null;
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: [34.5, 0.5], // Kenya-ish, so a real small test query is visible immediately
+  zoom: 5,
+});
+
+const geocoder = new Geocoder({ indexUrl: '../geocoder-demo/data/index.json', limit: 8 });
+geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
+geocoder.on('select', ({ result, area: selectedArea }) => {
+  area = selectedArea;
+  document.getElementById('areaInfo').textContent =
+    `${result.name} (${result.country}, ADM${result.level}) — bbox [${area.bbox.map((n) => n.toFixed(3)).join(', ')}], ${area.vertexCount.filter} filter vertices`;
+  resetDownloadUi();
+});
+
+const control = new GeocoderControl({ geocoder, placeholder: 'Type a country (e.g. "kenya")…' });
+document.getElementById('clearAreaBtn').addEventListener('click', () => {
+  area = null;
+  document.getElementById('areaInfo').textContent = 'Type a country name in the search box (top-left) to pick an area.';
+  resetDownloadUi();
+});
+map.on('load', async () => {
+  map.addControl(control, 'top-left');
+  try {
+    await loadDataset();
+  } catch (err) {
+    setStatus(`Failed to load dataset: ${err.code ?? 'ERROR'} — ${err.message}`);
+  }
+});
+map.on('error', (e) => setStatus('Map style failed to load (offline?) — the rest of the demo still works. ' + (e?.error?.message ?? '')));
+
+// --- Filter construction ---------------------------------------------------
+
+function currentTimeFilter() {
+  const start = document.getElementById('startDate').value;
+  const end = document.getElementById('endDate').value;
+  if (!start && !end) return undefined; // optional here, unlike firms-explorer
+  const endExclusive = end ? new Date(`${end}T00:00:00Z`) : null;
+  if (endExclusive) endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+  return {
+    column: 'datetime',
+    start: start ? `${start}T00:00:00Z` : null,
+    end: endExclusive ? endExclusive.toISOString() : null,
+    closed: '[)',
+  };
+}
+
+function buildFilter() {
+  const time = currentTimeFilter();
+  const includeAssets = document.getElementById('includeAssets').checked;
+  const cloudFilter = document.getElementById('cloudFilter').checked;
+  return {
+    spec: 'cnmw-filter/1.0',
+    spatial: { mode: area ? 'intersects' : 'bbox' },
+    time,
+    where: cloudFilter ? [{ col: 'eo:cloud_cover', op: '<=', value: 20 }] : [],
+    // design doc §2.8: the `assets` column is half the bytes of an S2 part
+    // and almost never wanted for a footprint download -- excluded by
+    // default, opt-in via the checkbox above.
+    columns: includeAssets ? {} : { exclude: ['assets'] },
+    limit: 500,
+  };
+}
+
+function formatBounded(b, unit = '') {
+  if (b.exact) return `${Math.round(b.estimate).toLocaleString()}${unit}`;
+  return `~${Math.round(b.estimate).toLocaleString()}${unit} (range ${Math.round(b.min).toLocaleString()}–${Math.round(b.max).toLocaleString()}${unit})`;
+}
+
+/** Render `est.prune`'s cascade as the narration the task asked for: "X
+ * files -> Y after time prune -> Z after bbox". */
+function renderPruneNarration(est) {
+  const lines = [`Files: ${est.files.total} total, ${est.files.selected} selected after partition pruning`];
+  for (const stage of est.prune) {
+    lines.push(`  [${stage.stage}] ${stage.before} → ${stage.after}  (${stage.basis})`);
+  }
+  lines.push(`Row groups: ${est.rowGroups.total} total → ${est.rowGroups.selected} selected`);
+  lines.push(`HTTP requests planned: ${est.requests}`);
+  return lines.join('\n');
+}
+
+let lastEstimate = null;
+document.getElementById('estimateBtn').addEventListener('click', async () => {
+  const infoEl = document.getElementById('estimateInfo');
+  const pruneEl = document.getElementById('pruneInfo');
+  infoEl.style.display = 'block';
+  pruneEl.style.display = 'block';
+  infoEl.textContent = 'Estimating… (resolves the collection, enumerates year= partitions via STAC items, reads parquet footer metadata only — no row data)';
+  pruneEl.textContent = '';
+  document.getElementById('ceilingBox').style.display = 'none';
+  try {
+    const filter = buildFilter();
+    const est = await estimate(resolvedDataset, area, filter);
+    lastEstimate = est;
+    infoEl.textContent =
+      `Rows: ${formatBounded(est.rows)}\n` +
+      `Read from storage: ${formatBounded(est.readBytes, ' B')}\n` +
+      `Output (generic model): ${formatBounded(est.outputBytes, ' B')}\n` +
+      `Warnings: ${est.warnings.map((w) => w.code).join(', ') || '(none)'}\n` +
+      `Ceiling exceeded: ${est.ceiling.exceeded}${est.ceiling.exceeded ? ' (' + est.ceiling.breaches.join(', ') + ')' : ''}`;
+    pruneEl.textContent = renderPruneNarration(est);
+    document.getElementById('downloadGeoJsonBtn').disabled = false;
+    document.getElementById('downloadGeoParquetBtn').disabled = false;
+  } catch (err) {
+    infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
+  }
+});
+
+// --- Download ---------------------------------------------------------
+
+let activeHandle = null;
+
+function resetDownloadUi() {
+  document.getElementById('estimateInfo').style.display = 'none';
+  document.getElementById('pruneInfo').style.display = 'none';
+  document.getElementById('ceilingBox').style.display = 'none';
+  document.getElementById('downloadInfo').style.display = 'none';
+  document.getElementById('downloadLink').style.display = 'none';
+  document.getElementById('progressBar').style.display = 'none';
+  document.getElementById('downloadGeoJsonBtn').disabled = true;
+  document.getElementById('downloadGeoParquetBtn').disabled = true;
+  document.getElementById('cancelBtn').disabled = true;
+  lastEstimate = null;
+  activeHandle = null;
+}
+
+function startDownload(format) {
+  const filter = buildFilter();
+  const extension = format === 'geojson' ? 'geojson' : 'parquet';
+  const output = { spec: 'cnmw-output/1.0', format, filename: `s2-footprints.${extension}` };
+
+  const sink = memorySink();
+  const handle = download(resolvedDataset, area, filter, output, { sink });
+  activeHandle = handle;
+
+  const progressBar = document.getElementById('progressBar');
+  const downloadInfo = document.getElementById('downloadInfo');
+  const downloadLink = document.getElementById('downloadLink');
+  progressBar.style.display = 'block';
+  progressBar.removeAttribute('value');
+  downloadInfo.style.display = 'block';
+  downloadInfo.textContent = 'Planning…';
+  downloadLink.style.display = 'none';
+  document.getElementById('cancelBtn').disabled = false;
+
+  handle.on('progress', (p) => {
+    if (p.phase === 'reading' && p.rowGroupsTotal > 0) {
+      progressBar.value = p.rowGroupsDone / p.rowGroupsTotal;
+      progressBar.removeAttribute('max');
+      progressBar.max = 1;
+      downloadInfo.textContent = `Reading… row group ${p.rowGroupsDone}/${p.rowGroupsTotal}, ${p.rowsMatched} rows matched, ${p.bytesRead.toLocaleString()} bytes read.`;
+    }
+  });
+  // The ceiling/refusal path (design doc §3.4/§3.5): a big country with no
+  // time filter blows past the row/byte ceilings, download() blocks
+  // *before* fetching any row data, and emits this event rather than
+  // silently starting a 30-million-row read. The UI's only way forward is
+  // `acceptCeiling()` (explicit, logged) or `cancel()`.
+  handle.on('ceiling', ({ estimate: est }) => {
+    const box = document.getElementById('ceilingBox');
+    box.style.display = 'block';
+    document.getElementById('ceilingText').textContent =
+      `Ceiling exceeded: ${est.ceiling.breaches.join(', ')}. Estimated ${formatBounded(est.rows)} rows / ${formatBounded(est.readBytes, ' B')} to read. ` +
+      `This is the refusal path: a big country with no time filter against 30.4M rows. Narrow the area/time window, or accept and download anyway.`;
+    document.getElementById('acceptCeilingBtn').onclick = () => handle.acceptCeiling();
+  });
+
+  handle.result.then(
+    (result) => {
+      progressBar.style.display = 'none';
+      document.getElementById('cancelBtn').disabled = true;
+      downloadInfo.textContent =
+        `Done: ${result.rows} rows, ${result.bytes.toLocaleString()} bytes written, ${result.readBytes.toLocaleString()} bytes read, ${result.requests} requests, ${result.elapsedMs.toFixed(0)} ms.`;
+      const blob = sink.blob ?? new Blob(sink.chunks, { type: format === 'geojson' ? 'application/geo+json' : 'application/vnd.apache.parquet' });
+      const url = URL.createObjectURL(blob);
+      downloadLink.href = url;
+      downloadLink.download = output.filename;
+      downloadLink.textContent = `Save ${output.filename} (${result.bytes.toLocaleString()} bytes)`;
+      downloadLink.style.display = 'block';
+      window.__cnmwLastResult = result;
+    },
+    (err) => {
+      progressBar.style.display = 'none';
+      document.getElementById('cancelBtn').disabled = true;
+      downloadInfo.textContent = `${err.code === 'CANCELLED' ? 'Cancelled.' : `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`}`;
+    },
+  );
+}
+
+document.getElementById('downloadGeoJsonBtn').addEventListener('click', () => startDownload('geojson'));
+document.getElementById('downloadGeoParquetBtn').addEventListener('click', () => startDownload('geoparquet'));
+document.getElementById('cancelBtn').addEventListener('click', () => activeHandle?.cancel('user cancelled'));
+
+window.__cnmwS2Explorer = {
+  geocoder, control, map,
+  get area() { return area; },
+  get lastEstimate() { return lastEstimate; },
+  get resolvedDataset() { return resolvedDataset; },
+  setTimeWindow(start, end) {
+    document.getElementById('startDate').value = start ?? '';
+    document.getElementById('endDate').value = end ?? '';
+  },
+};
+</script>
+</body>
+</html>

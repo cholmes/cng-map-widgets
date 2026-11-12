@@ -9,13 +9,35 @@
 // `ceiling.blobBytes` for non-streaming formats for exactly this reason
 // (design doc §3.4 FormatPlugin.streaming doc comment).
 
-import { bboxOfGeometry, wkbToGeoJson, CnmwError } from '@cnmw/spec';
+import { CnmwError } from '@cnmw/spec';
 import { loadHyparquetWriter } from '../cdn.js';
+import { decodeWkbGeometry, bboxOfAnyGeometry } from '../wkb-geometry.js';
 
+// Regression note (found running this package's E6 stress test, writing
+// real s2-stac-geoparquet columns to GeoParquet output): a declared type
+// this map doesn't recognize becomes `type: undefined` on the
+// hyparquet-writer columnData entry, which falls back to *inferring* a
+// physical type from the sampled values instead of being told one. For an
+// unsigned 32-bit column (s2-stac-geoparquet's `_hilbert`, declared
+// `uint32`; values run the full 0..2^32-1 range), that inference can land
+// on signed INT32 from early small values and then throw
+// ("parquet expected int32 value, got 2164471400") the moment a later
+// value exceeds the signed INT32 range -- hyparquet-writer has no bare
+// unsigned-32 physical type, so `uint8`/`uint16`/`uint32` are all widened
+// to the next physical type guaranteed to hold their full range without
+// overflow (INT32 safely holds every uint8/uint16 value; INT64 safely
+// holds every uint32 value). `int8`/`int16` have no narrower Parquet
+// physical type than INT32 either, so they map there directly.
 const TYPE_MAP = {
   string: 'STRING',
+  int8: 'INT32',
+  int16: 'INT32',
   int32: 'INT32',
   int64: 'INT64',
+  uint8: 'INT32',
+  uint16: 'INT32',
+  uint32: 'INT64',
+  uint64: 'INT64', // best-effort: a uint64 > 2^63-1 would still overflow signed INT64, but none of this project's real datasets carry one
   float32: 'FLOAT',
   float64: 'DOUBLE',
   boolean: 'BOOLEAN',
@@ -37,6 +59,11 @@ export function createGeoParquetFormat() {
       return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
     },
     async open(ctx) {
+      // Loaded once, up front: `writeBatch` needs `geojsonToWkb` on every
+      // row with geometry, not just at `close()` (which already awaited
+      // `loadHyparquetWriter()` for `parquetWriteBuffer`).
+      const { geojsonToWkb } = await loadHyparquetWriter();
+
       /** @type {Record<string, unknown[]>} */
       const columnData = {};
       /** @type {Uint8Array[]} */
@@ -51,24 +78,51 @@ export function createGeoParquetFormat() {
           const colNames = Object.keys(batch.columns);
           for (const name of colNames) {
             if (!columnData[name]) columnData[name] = [];
+            // hyparquet-writer's INT64 physical type demands a real BigInt,
+            // not a Number -- it throws "parquet expected bigint value"
+            // otherwise. A genuine `int64` column already arrives as
+            // BigInt from hyparquet's own reader; `uint32`/`uint64` (widened
+            // to INT64 above specifically to avoid signed-overflow on
+            // write) arrive as plain Numbers, since their *source* physical
+            // type was never INT64 to begin with. Found writing
+            // s2-stac-geoparquet's `_hilbert` (uint32) column during this
+            // package's E6 stress test.
+            const declared = ctx.schema.find((c) => c.name === name)?.type;
+            const needsBigInt = TYPE_MAP[declared] === 'INT64';
             for (let i = 0; i < batch.rows; i++) {
-              const v = batch.columns[name][i]; // hyparquet-writer's TIMESTAMP type accepts a Date directly
+              let v = batch.columns[name][i]; // hyparquet-writer's TIMESTAMP type accepts a Date directly
+              if (needsBigInt && typeof v === 'number') v = BigInt(v);
               columnData[name].push(v ?? null);
             }
           }
           for (let i = 0; i < batch.rows; i++) {
             const wkb = batch.geometry[i];
-            geometryData.push(wkb ?? null);
             if (wkb) {
-              const geom = wkbToGeoJson(wkb);
+              // `batch.geometry[i]` is raw WKB bytes for a GeoParquet-1.x
+              // source (CGAZ, FTW: a plain BYTE_ARRAY column + `geo`
+              // kv-metadata), but is already a *decoded* GeoJSON object for
+              // a GeoParquet-2.0 source with the native Parquet GEOMETRY
+              // logical type (FIRMS, s2-stac-geoparquet -- see
+              // `../wkb-geometry.js`'s module doc). `decodeWkbGeometry`
+              // normalizes either input to a GeoJSON geometry; this format
+              // writes its own geometry column as raw WKB bytes
+              // (`TYPE_MAP`-independent BYTE_ARRAY, below), so round-trip
+              // through `geojsonToWkb` to get real bytes out either way --
+              // writing a decoded object straight into a byte column
+              // crashed hyparquet-writer with "expected Uint8Array value,
+              // got object", found running this package's E6 stress test
+              // against the real FIRMS catalog.
+              const geom = decodeWkbGeometry(wkb);
+              geometryData.push(geojsonToWkb(geom));
               geometryTypes.add(geom.type);
-              const [xmin, ymin, xmax, ymax] = bboxOfGeometry(geom);
+              const [xmin, ymin, xmax, ymax] = bboxOfAnyGeometry(geom);
               bboxCols.xmin.push(xmin);
               bboxCols.ymin.push(ymin);
               bboxCols.xmax.push(xmax);
               bboxCols.ymax.push(ymax);
               overall = overall ? unionBox(overall, [xmin, ymin, xmax, ymax]) : [xmin, ymin, xmax, ymax];
             } else {
+              geometryData.push(null);
               bboxCols.xmin.push(null);
               bboxCols.ymin.push(null);
               bboxCols.xmax.push(null);

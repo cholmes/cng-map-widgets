@@ -41,6 +41,83 @@ test('enumeratePartitions: explicit source.parts short-circuits enumeration enti
   assert.deepEqual(parts, [{ url: 'https://example.test/explicit.parquet' }]);
 });
 
+// Real catalogs (firms-catalog, s2-stac-geoparquet) publish `rel: 'item'`
+// links and asset `href`s as relative URLs -- "./year=2026/2026.json" from
+// the collection document, "./detections.parquet" from the item document.
+// Regression test for the bug where `enumerateStacItems` fetched
+// `itemLinks[i].href` and `dataAsset.href` verbatim instead of resolving
+// them against their containing document's URL, which 404s (or throws, in
+// Node) against every real STAC-GeoParquet catalog of this shape.
+test('enumeratePartitions: stac-items enumeration resolves relative item and asset hrefs against their containing document', async () => {
+  const collectionUrl = 'https://example.test/mock/detections/collection.json';
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    if (url === collectionUrl) {
+      return {
+        ok: true,
+        json: async () => ({
+          links: [
+            { rel: 'item', href: './year=2025/2025.json' },
+            { rel: 'item', href: './year=2026/2026.json' },
+          ],
+        }),
+      };
+    }
+    if (url === 'https://example.test/mock/detections/year=2025/2025.json') {
+      return {
+        ok: true,
+        json: async () => ({
+          bbox: [-10, -10, 10, 10],
+          properties: { start_datetime: '2025-01-01T00:00:00Z', end_datetime: '2025-12-31T23:59:59Z' },
+          assets: { data: { href: './detections.parquet', roles: ['data'] } },
+        }),
+      };
+    }
+    if (url === 'https://example.test/mock/detections/year=2026/2026.json') {
+      return {
+        ok: true,
+        json: async () => ({
+          bbox: [-20, -20, 20, 20],
+          properties: { start_datetime: '2026-01-01T00:00:00Z', end_datetime: '2026-09-14T00:00:00Z' },
+          assets: { data: { href: './detections.parquet', roles: ['data'] } },
+        }),
+      };
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+
+  const source = {
+    kind: 'hive',
+    scheme: 'hive',
+    glob: 'https://example.test/mock/detections/year=*/*.parquet',
+    keys: [{ name: 'year', type: 'int32' }],
+    enumeration: { kind: 'stac-items', collectionUrl },
+  };
+  const { parts, requests } = await enumeratePartitions(source, { fetch: fetchImpl });
+
+  assert.equal(requests, 3); // 1 collection + 2 items
+  assert.deepEqual(
+    parts.map((p) => p.url),
+    [
+      'https://example.test/mock/detections/year=2025/detections.parquet',
+      'https://example.test/mock/detections/year=2026/detections.parquet',
+    ],
+  );
+  assert.deepEqual(parts[0].bbox, [-10, -10, 10, 10]);
+  assert.deepEqual(parts[0].interval, ['2025-01-01T00:00:00Z', '2025-12-31T23:59:59Z']);
+  assert.ok(calls.includes(collectionUrl));
+
+  // Regression: a stac-items-enumerated part must carry `.keys` (recovered
+  // from its own hive-style URL), or `partitionPruneCascade`'s explicit
+  // `filter.partitions` stage silently narrows nothing -- `!p.keys` reads
+  // as "unknown, so keep it" for every part.
+  assert.deepEqual(parts[0].keys, { year: 2025 });
+  assert.deepEqual(parts[1].keys, { year: 2026 });
+  const { selected } = partitionPruneCascade(parts, null, undefined, { year: { op: 'in', values: [2026] } });
+  assert.deepEqual(selected.map((p) => p.keys.year), [2026]);
+});
+
 test('enumeratePartitions: cross product over two partition keys', async () => {
   const source = {
     kind: 'hive',

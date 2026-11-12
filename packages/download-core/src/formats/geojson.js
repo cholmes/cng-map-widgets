@@ -2,7 +2,7 @@
 // format-options table, §3.4 FormatPlugin). Streaming: writes bytes as
 // batches arrive, never buffers the whole result.
 
-import { wkbToGeoJson } from '@cnmw/spec';
+import { decodeWkbGeometry } from '../wkb-geometry.js';
 
 const RS = '\u001e'; // RFC 8142 GeoJSON Text Sequences record separator
 
@@ -74,7 +74,7 @@ export function createGeoJsonFormat() {
               properties[name] = v ?? null;
             }
             const geomBytes = batch.geometry[i];
-            const geometry = geomBytes ? roundGeometry(wkbToGeoJson(geomBytes), precision) : null;
+            const geometry = geomBytes ? roundGeometry(decodeWkbGeometry(geomBytes), precision) : null;
             const feature = { type: 'Feature', properties, geometry };
             if (featureIdColumn && properties[featureIdColumn] !== undefined) feature.id = properties[featureIdColumn];
 

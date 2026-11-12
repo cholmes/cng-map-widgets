@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bboxIntersectsAny, pointInRing, pointInPolygon, pointInGeometry, geometriesIntersect, rowMatchesArea } from '../src/spatial.js';
+import { bboxIntersectsAny, pointInRing, pointInPolygon, pointInGeometry, geometriesIntersect, geometryIntersectsArea, rowMatchesArea } from '../src/spatial.js';
 
 test('bboxIntersectsAny: overlapping boxes match', () => {
   assert.equal(bboxIntersectsAny([-1, -1, 1, 1], [[0, 0, 2, 2]]), true);
@@ -91,6 +91,38 @@ test('rowMatchesArea: intersects mode runs the exact geometry test once bbox pas
   assert.equal(rowMatchesArea({ featureBBox: [4.5, 4.5, 5.5, 5.5], featureGeometry: insideHole }, area, { mode: 'intersects' }), false);
   const outsideHole = { type: 'Polygon', coordinates: [[[1, 1], [2, 1], [2, 2], [1, 2], [1, 1]]] };
   assert.equal(rowMatchesArea({ featureBBox: [1, 1, 2, 2], featureGeometry: outsideHole }, area, { mode: 'intersects' }), true);
+});
+
+// Point/MultiPoint featureGeometry (NASA FIRMS -- E6's real-dataset stress
+// test is a point dataset; `geometriesIntersect` alone assumes both sides
+// are Polygon/MultiPolygon and breaks on a Point's flat [x,y] coordinates).
+test('geometryIntersectsArea: a Point feature inside the filter polygon matches', () => {
+  const inside = { type: 'Point', coordinates: [5, 5] };
+  const outside = { type: 'Point', coordinates: [20, 20] };
+  assert.equal(geometryIntersectsArea(inside, SQUARE), true);
+  assert.equal(geometryIntersectsArea(outside, SQUARE), false);
+});
+
+test('geometryIntersectsArea: a Point inside a polygon\'s hole does not match', () => {
+  const inHole = { type: 'Point', coordinates: [5, 5] };
+  assert.equal(geometryIntersectsArea(inHole, SQUARE_WITH_HOLE), false);
+});
+
+test('geometryIntersectsArea: a MultiPoint matches if any of its points fall inside', () => {
+  const mp = { type: 'MultiPoint', coordinates: [[20, 20], [5, 5]] };
+  assert.equal(geometryIntersectsArea(mp, SQUARE), true);
+  const allOutside = { type: 'MultiPoint', coordinates: [[20, 20], [30, 30]] };
+  assert.equal(geometryIntersectsArea(allOutside, SQUARE), false);
+});
+
+test('rowMatchesArea: a Point feature (FIRMS-shaped row) runs through the full bbox + intersects cascade', () => {
+  const area = { bboxes: [[0, 0, 10, 10]], filterGeometry: SQUARE };
+  const inside = { type: 'Point', coordinates: [5, 5] };
+  assert.equal(rowMatchesArea({ featureBBox: [5, 5, 5, 5], featureGeometry: inside }, area, { mode: 'intersects' }), true);
+  // bbox passes (within the area's bbox) but the exact point falls outside the polygon.
+  const triangleArea = { bboxes: [[0, 0, 10, 10]], filterGeometry: { type: 'Polygon', coordinates: [[[0, 0], [10, 0], [0, 10], [0, 0]]] } };
+  const inBBoxNotInTriangle = { type: 'Point', coordinates: [9, 9] };
+  assert.equal(rowMatchesArea({ featureBBox: [9, 9, 9, 9], featureGeometry: inBBoxNotInTriangle }, triangleArea, { mode: 'intersects' }), false);
 });
 
 test('rowMatchesArea: antimeridian-split area bboxes, point-in-polygon runs against the unsplit geometry', () => {

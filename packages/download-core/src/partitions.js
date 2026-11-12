@@ -102,7 +102,7 @@ export async function enumeratePartitions(source, options = {}) {
   }
 
   if (enumeration.kind === 'stac-items') {
-    return enumerateStacItems(enumeration.collectionUrl, fetchImpl, options.signal);
+    return enumerateStacItems(enumeration.collectionUrl, keys, fetchImpl, options.signal);
   }
 
   if (enumeration.kind === 'bucket-listing') {
@@ -134,7 +134,44 @@ function partFromMirrorRow(row, keys) {
   };
 }
 
-async function enumerateStacItems(collectionUrl, fetchImpl, signal) {
+/**
+ * Recover a part's hive partition key values from its own URL (the
+ * `name=value` path segments every hive layout writes), the same way an
+ * S3/filesystem reader would. A `stac-items`-enumerated part never carries
+ * `keys` otherwise -- unlike `collection-mirror` rows, a STAC Item has no
+ * reason to repeat its own hive directory as a property -- so without this,
+ * `partitionPruneCascade`'s explicit `filter.partitions` stage (the "just
+ * year=2024 regardless of what the time filter implies" escape hatch,
+ * design doc §2.2) silently does nothing for a `stac-items`-enumerated
+ * source: `p.keys` is `undefined` on every part, and that stage's `if
+ * (!p.keys) return true` treats "we don't know" as "it passes" for every
+ * part. Found while exercising `partitions:` filters against the real
+ * FIRMS/s2-stac-geoparquet catalogs for this package's E6 stress test.
+ * @param {string} url @param {import('./types.js').PartitionKey[]} keys
+ * @returns {Record<string, string|number>|undefined}
+ */
+function keysFromHiveUrl(url, keys) {
+  if (!keys || keys.length === 0) return undefined;
+  let pathname;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    pathname = url;
+  }
+  const found = {};
+  for (const match of pathname.matchAll(/([^/=]+)=([^/]+)/g)) {
+    found[match[1]] = match[2];
+  }
+  const partKeys = {};
+  for (const k of keys) {
+    if (!(k.name in found)) continue;
+    const raw = found[k.name];
+    partKeys[k.name] = k.type === 'int32' || k.type === 'int64' || k.type === 'float64' ? Number(raw) : raw;
+  }
+  return Object.keys(partKeys).length ? partKeys : undefined;
+}
+
+async function enumerateStacItems(collectionUrl, keys, fetchImpl, signal) {
   const res = await fetchImpl(collectionUrl, { signal });
   if (!res.ok) throw new CnmwError(`Collection fetch failed: HTTP ${res.status}`, 'DATASET_UNRESOLVED', { context: { status: res.status, url: collectionUrl } });
   const collection = await res.json();
@@ -145,15 +182,28 @@ async function enumerateStacItems(collectionUrl, fetchImpl, signal) {
   async function worker() {
     while (cursor < itemLinks.length) {
       const i = cursor++;
-      const itemRes = await fetchImpl(itemLinks[i].href, { signal });
+      // STAC item `href`s are routinely relative to the document that links
+      // them (every real catalog we tested against -- firms-catalog,
+      // s2-stac-geoparquet -- publishes "./year=2026/2026.json" style
+      // hrefs), so resolve against `collectionUrl` before fetching. A bare
+      // `fetch(itemLinks[i].href)` either throws (Node, no base URL) or
+      // silently resolves against the wrong document (a browser resolves a
+      // relative URL against the *page's* location, not the collection
+      // JSON's), so every item fetch 404s against a real collection.
+      const itemUrl = new URL(itemLinks[i].href, collectionUrl).toString();
+      const itemRes = await fetchImpl(itemUrl, { signal });
       requests += 1;
       if (!itemRes.ok) continue;
       const item = await itemRes.json();
       const dataAsset = Object.values(item.assets ?? {}).find((a) => a.roles?.includes('data')) ?? Object.values(item.assets ?? {})[0];
+      // Same relative-href problem one level down: an asset href is
+      // relative to the *item's* URL, not the collection's.
+      const partUrl = dataAsset?.href ? new URL(dataAsset.href, itemUrl).toString() : undefined;
       parts[i] = {
-        url: dataAsset?.href,
+        url: partUrl,
         bbox: item.bbox,
         interval: [item.properties?.datetime ?? item.properties?.start_datetime ?? null, item.properties?.datetime ?? item.properties?.end_datetime ?? null],
+        keys: partUrl ? keysFromHiveUrl(partUrl, keys) : undefined,
       };
     }
   }

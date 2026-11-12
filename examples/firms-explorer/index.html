@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cn-geocoding E6 — FIRMS fire detections explorer</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
+  #map { position: absolute; inset: 0; }
+  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+
+  #panel {
+    position: absolute; top: 10px; right: 10px; z-index: 5; width: 420px; max-height: calc(100% - 20px);
+    overflow-y: auto; background: rgba(255,255,255,0.97); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    padding: 14px; box-sizing: border-box;
+  }
+  #panel h1 { font-size: 15px; margin: 0 0 4px; }
+  #panel p.sub { font-size: 11px; color: #666; margin: 0 0 10px; }
+  #panel label { display: block; font-weight: 600; margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; color: #555; }
+  #panel select, #panel button, #panel input[type="number"], #panel input[type="date"] { width: 100%; font-size: 13px; padding: 6px; box-sizing: border-box; }
+  #panel button { margin-top: 6px; cursor: pointer; border: 1px solid #888; border-radius: 4px; background: #f4f4f4; }
+  #panel button:disabled { opacity: 0.5; cursor: default; }
+  #panel button.primary { background: #c23b22; color: white; border-color: #a12e18; }
+  #areaInfo, #estimateInfo, #downloadInfo, #pruneInfo { font-size: 12px; background: #f7f7f7; border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+  #pruneInfo { font-family: ui-monospace, monospace; font-size: 11px; }
+  #ceilingBox { display: none; background: #fff3cd; border: 1px solid #c99; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 12px; }
+  .row { display: flex; gap: 6px; }
+  .row > * { flex: 1; }
+  .row > button { flex: 1; }
+  progress { width: 100%; margin-top: 6px; }
+  a.download-link { display: block; margin-top: 6px; font-size: 12px; }
+  #datasetNote { font-size: 11px; color: #666; margin-top: 4px; }
+  .checkrow { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+  .checkrow input { width: auto; }
+</style>
+<!--
+  Zero-build ESM, same import-map convention as examples/download-demo and
+  examples/geocoder-demo. hyparquet/hyparquet-writer are pulled from pinned
+  CDN URLs internally by @cnmw/download-core's src/cdn.js, not by this map.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cnmw/spec": "../../packages/spec/src/index.js",
+    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cnmw/maplibre": "../../packages/maplibre/src/index.js",
+    "@cnmw/download-core": "../../packages/download-core/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel">
+  <h1>FIRMS fire detections explorer (E6)</h1>
+  <p class="sub">
+    NASA FIRMS active fire detections, mirrored by portolan-mirrors/firms-catalog:
+    631M+ rows, hive-partitioned by <code>year=</code>. The hive-partitioned
+    stress test for <code>@cnmw/download-core</code>.
+  </p>
+  <div id="status" style="font-size:12px;color:#555;">Loading dataset descriptor…</div>
+
+  <label>Area</label>
+  <div id="areaInfo">Search for a place on the map (top-left control) to pick an area, or leave empty to query the whole world (not recommended without a tight time window).</div>
+
+  <label>Time window (required)</label>
+  <div class="row">
+    <input type="date" id="startDate" />
+    <input type="date" id="endDate" />
+  </div>
+  <div id="datasetNote">Loading dataset temporal extent…</div>
+
+  <div class="checkrow">
+    <input type="checkbox" id="scienceOnly" />
+    <label for="scienceOnly" style="margin:0;text-transform:none;font-weight:normal;">Science-quality detections only (<code>quality = 'sp'</code>) — off by default: NASA's science-quality reprocessing lags real time by weeks, so a recent window can otherwise come back empty</label>
+  </div>
+
+  <div class="row">
+    <button id="estimateBtn" class="primary" disabled>Estimate</button>
+  </div>
+  <div id="estimateInfo" style="display:none;"></div>
+  <div id="pruneInfo" style="display:none;"></div>
+  <div id="ceilingBox">
+    <div id="ceilingText"></div>
+    <button id="acceptCeilingBtn">Download anyway</button>
+  </div>
+
+  <label>Download</label>
+  <div class="row">
+    <button id="downloadGeoJsonBtn" disabled>GeoJSON</button>
+    <button id="downloadGeoParquetBtn" disabled>GeoParquet</button>
+  </div>
+  <button id="cancelBtn" disabled>Cancel</button>
+  <progress id="progressBar" value="0" max="1" style="display:none;"></progress>
+  <div id="downloadInfo" style="display:none;"></div>
+  <a id="downloadLink" class="download-link" style="display:none;"></a>
+</div>
+
+<script type="module">
+import { Geocoder } from '@cnmw/geocoder-core';
+import { GeocoderControl } from '@cnmw/maplibre';
+import {
+  resolveDataset,
+  estimate,
+  download,
+  memorySink,
+} from '@cnmw/download-core';
+
+const statusEl = document.getElementById('status');
+const setStatus = (text) => { statusEl.textContent = text; };
+
+// --- Dataset: the real, live portolan-mirrors/firms-catalog "detections"
+// collection (design doc §2.7's worked example; PLAN.md E6 scope). The
+// descriptor is deliberately `kind: 'portolan-collection'` -- the task's
+// requirement that this page derive the dataset shape from the collection
+// JSON itself, not a hand-written descriptor -- and `resolveDataset()` is
+// what runs the §2.4 collection->descriptor mapping for real: hive
+// partition scheme/keys/glob, the `stac-items` enumeration (27 `year=`
+// items, no `collection-mirror` asset published), and the table's columns
+// (no bbox covering column -- FIRMS publishes none, honestly reflected in
+// the estimate's "no-covering" warning below).
+const COLLECTION_URL = 'https://data.source.coop/portolan-mirrors/firms-catalog/detections/collection.json';
+
+let resolvedDataset = null;
+let collectionExtentEnd = null; // the dataset's own idea of "now" -- see note below
+
+async function loadDataset() {
+  const rawCollection = await fetch(COLLECTION_URL).then((r) => r.json());
+  collectionExtentEnd = rawCollection.extent?.temporal?.interval?.[0]?.[1] ?? null;
+
+  resolvedDataset = await resolveDataset({
+    spec: 'cnmw-dataset/1.0',
+    id: 'firms-detections',
+    title: 'NASA FIRMS active fire detections',
+    source: { kind: 'portolan-collection', url: COLLECTION_URL },
+  });
+
+  // Default time window: last 30 days of *available* data (per the task
+  // spec), computed from the collection's own declared temporal extent
+  // rather than wall-clock "now" -- a mirror's NRT tail can lag real time,
+  // and defaulting to wall-clock "now" would silently produce an empty
+  // window whenever it does.
+  const end = collectionExtentEnd ? new Date(collectionExtentEnd) : new Date();
+  const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+  document.getElementById('endDate').value = end.toISOString().slice(0, 10);
+  document.getElementById('startDate').value = start.toISOString().slice(0, 10);
+
+  document.getElementById('datasetNote').textContent =
+    `Dataset covers ${rawCollection.extent?.temporal?.interval?.[0]?.[0]?.slice(0, 10)} – ${end.toISOString().slice(0, 10)} ` +
+    `(${resolvedDataset.table?.rowCount?.toLocaleString?.() ?? '?'} rows across ${resolvedDataset.source.fileCount ?? '?'} year= partitions). Default window: last 30 days of available data.`;
+
+  document.getElementById('estimateBtn').disabled = false;
+  setStatus(`Dataset resolved: ${resolvedDataset.source.kind} source, ${resolvedDataset.table?.columns?.length ?? 0} columns, enumeration=${resolvedDataset.source.enumeration?.kind}.`);
+}
+
+// --- Area (search reuses @cnmw/geocoder-core + @cnmw/maplibre, pointed at
+// the provisional geocoder-demo index via a relative path, same convention
+// as examples/download-demo) ----------------------------------------------
+
+let area = null; // null = "no area" (whole world, within the time window)
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: [-119.4, 36.8], // California, so a real small test query is visible immediately
+  zoom: 5,
+});
+
+const geocoder = new Geocoder({ indexUrl: '../geocoder-demo/data/index.json', limit: 8 });
+geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
+geocoder.on('select', ({ result, area: selectedArea }) => {
+  area = selectedArea;
+  document.getElementById('areaInfo').textContent =
+    `${result.name} (${result.country}, ADM${result.level}) — bbox [${area.bbox.map((n) => n.toFixed(3)).join(', ')}], ${area.vertexCount.filter} filter vertices`;
+  resetDownloadUi();
+});
+
+const control = new GeocoderControl({ geocoder, placeholder: 'Search for an area (e.g. "california")…' });
+map.on('load', async () => {
+  map.addControl(control, 'top-left');
+  try {
+    await loadDataset();
+  } catch (err) {
+    setStatus(`Failed to load dataset: ${err.code ?? 'ERROR'} — ${err.message}`);
+  }
+});
+map.on('error', (e) => setStatus('Map style failed to load (offline?) — the rest of the demo still works. ' + (e?.error?.message ?? '')));
+
+// --- Filter construction ---------------------------------------------------
+
+function currentTimeFilter() {
+  const start = document.getElementById('startDate').value;
+  const end = document.getElementById('endDate').value;
+  if (!start || !end) return null;
+  // Half-open [start, end) at UTC midnight, +1 day on `end` so the picked
+  // end date is inclusive of that whole day (design doc §2.2 TimeFilter's
+  // default `closed: '[)'`).
+  const endExclusive = new Date(`${end}T00:00:00Z`);
+  endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+  return {
+    column: 'acq_datetime',
+    start: `${start}T00:00:00Z`,
+    end: endExclusive.toISOString(),
+    closed: '[)',
+  };
+}
+
+function buildFilter() {
+  const time = currentTimeFilter();
+  const scienceOnly = document.getElementById('scienceOnly').checked;
+  return {
+    spec: 'cnmw-filter/1.0',
+    spatial: { mode: area ? 'intersects' : 'bbox' },
+    time,
+    where: scienceOnly ? [{ col: 'quality', op: '=', value: 'sp' }] : [],
+    columns: { exclude: ['instrument', 'satellite'] },
+    // Modest on purpose: FIRMS publishes no bbox covering column (the
+    // estimate's "no-covering" warning is the honest reason), so a selected
+    // year= file is read row-group by row-group in file order until this
+    // many rows match -- there is no way to skip straight to a county's
+    // detections. A small limit keeps "Estimate" and "Download" fast for a
+    // real demo query; a serious bulk pull would raise this (or drop it)
+    // and accept the longer, fuller scan.
+    limit: 20,
+  };
+}
+
+function formatBounded(b, unit = '') {
+  if (b.exact) return `${Math.round(b.estimate).toLocaleString()}${unit}`;
+  return `~${Math.round(b.estimate).toLocaleString()}${unit} (range ${Math.round(b.min).toLocaleString()}–${Math.round(b.max).toLocaleString()}${unit})`;
+}
+
+/** Render `est.prune`'s cascade (design doc §2.7: "pruning cascade, in
+ * order, each stage reported in the estimate") as the narration the task
+ * asked for: "X files -> Y after time prune -> Z after bbox". */
+function renderPruneNarration(est) {
+  const lines = [`Files: ${est.files.total} total, ${est.files.selected} selected after partition pruning`];
+  for (const stage of est.prune) {
+    lines.push(`  [${stage.stage}] ${stage.before} → ${stage.after}  (${stage.basis})`);
+  }
+  lines.push(`Row groups: ${est.rowGroups.total} total → ${est.rowGroups.selected} selected`);
+  lines.push(`HTTP requests planned: ${est.requests}`);
+  return lines.join('\n');
+}
+
+let lastEstimate = null;
+document.getElementById('estimateBtn').addEventListener('click', async () => {
+  if (!currentTimeFilter()) {
+    alert('A time window (start and end date) is required.');
+    return;
+  }
+  const infoEl = document.getElementById('estimateInfo');
+  const pruneEl = document.getElementById('pruneInfo');
+  infoEl.style.display = 'block';
+  pruneEl.style.display = 'block';
+  infoEl.textContent = 'Estimating… (resolves the collection, enumerates year= partitions via STAC items, reads parquet footer metadata only — no row data)';
+  pruneEl.textContent = '';
+  document.getElementById('ceilingBox').style.display = 'none';
+  try {
+    const filter = buildFilter();
+    const est = await estimate(resolvedDataset, area, filter);
+    lastEstimate = est;
+    infoEl.textContent =
+      `Rows: ${formatBounded(est.rows)}\n` +
+      `Read from storage: ${formatBounded(est.readBytes, ' B')}\n` +
+      `Output (generic model): ${formatBounded(est.outputBytes, ' B')}\n` +
+      `Warnings: ${est.warnings.map((w) => w.code).join(', ') || '(none)'}\n` +
+      `Ceiling exceeded: ${est.ceiling.exceeded}${est.ceiling.exceeded ? ' (' + est.ceiling.breaches.join(', ') + ')' : ''}`;
+    pruneEl.textContent = renderPruneNarration(est);
+    document.getElementById('downloadGeoJsonBtn').disabled = false;
+    document.getElementById('downloadGeoParquetBtn').disabled = false;
+  } catch (err) {
+    infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
+  }
+});
+
+// --- Download ---------------------------------------------------------
+
+let activeHandle = null;
+
+function resetDownloadUi() {
+  document.getElementById('estimateInfo').style.display = 'none';
+  document.getElementById('pruneInfo').style.display = 'none';
+  document.getElementById('ceilingBox').style.display = 'none';
+  document.getElementById('downloadInfo').style.display = 'none';
+  document.getElementById('downloadLink').style.display = 'none';
+  document.getElementById('progressBar').style.display = 'none';
+  document.getElementById('downloadGeoJsonBtn').disabled = true;
+  document.getElementById('downloadGeoParquetBtn').disabled = true;
+  document.getElementById('cancelBtn').disabled = true;
+  lastEstimate = null;
+  activeHandle = null;
+}
+
+function startDownload(format) {
+  const filter = buildFilter();
+  const extension = format === 'geojson' ? 'geojson' : 'parquet';
+  const output = { spec: 'cnmw-output/1.0', format, filename: `firms-detections.${extension}` };
+
+  // memorySink() + <a download> rather than autoSink()'s File System Access
+  // picker, so this page is drivable headlessly (Playwright) without a
+  // native file dialog -- same convention as examples/download-demo.
+  const sink = memorySink();
+  const handle = download(resolvedDataset, area, filter, output, { sink });
+  activeHandle = handle;
+
+  const progressBar = document.getElementById('progressBar');
+  const downloadInfo = document.getElementById('downloadInfo');
+  const downloadLink = document.getElementById('downloadLink');
+  progressBar.style.display = 'block';
+  progressBar.removeAttribute('value');
+  downloadInfo.style.display = 'block';
+  downloadInfo.textContent = 'Planning…';
+  downloadLink.style.display = 'none';
+  document.getElementById('cancelBtn').disabled = false;
+
+  handle.on('progress', (p) => {
+    if (p.phase === 'reading' && p.rowGroupsTotal > 0) {
+      progressBar.value = p.rowGroupsDone / p.rowGroupsTotal;
+      progressBar.removeAttribute('max');
+      progressBar.max = 1;
+      downloadInfo.textContent = `Reading… row group ${p.rowGroupsDone}/${p.rowGroupsTotal}, ${p.rowsMatched} rows matched, ${p.bytesRead.toLocaleString()} bytes read.`;
+    }
+  });
+  handle.on('ceiling', ({ estimate: est }) => {
+    const box = document.getElementById('ceilingBox');
+    box.style.display = 'block';
+    document.getElementById('ceilingText').textContent = `Ceiling exceeded: ${est.ceiling.breaches.join(', ')}. `;
+    document.getElementById('acceptCeilingBtn').onclick = () => handle.acceptCeiling();
+  });
+
+  handle.result.then(
+    (result) => {
+      progressBar.style.display = 'none';
+      document.getElementById('cancelBtn').disabled = true;
+      downloadInfo.textContent =
+        `Done: ${result.rows} rows, ${result.bytes.toLocaleString()} bytes written, ${result.readBytes.toLocaleString()} bytes read, ${result.requests} requests, ${result.elapsedMs.toFixed(0)} ms.`;
+      const blob = sink.blob ?? new Blob(sink.chunks, { type: format === 'geojson' ? 'application/geo+json' : 'application/vnd.apache.parquet' });
+      const url = URL.createObjectURL(blob);
+      downloadLink.href = url;
+      downloadLink.download = output.filename;
+      downloadLink.textContent = `Save ${output.filename} (${result.bytes.toLocaleString()} bytes)`;
+      downloadLink.style.display = 'block';
+      window.__cnmwLastResult = result;
+    },
+    (err) => {
+      progressBar.style.display = 'none';
+      document.getElementById('cancelBtn').disabled = true;
+      downloadInfo.textContent = `${err.code === 'CANCELLED' ? 'Cancelled.' : `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`}`;
+    },
+  );
+}
+
+document.getElementById('downloadGeoJsonBtn').addEventListener('click', () => startDownload('geojson'));
+document.getElementById('downloadGeoParquetBtn').addEventListener('click', () => startDownload('geoparquet'));
+document.getElementById('cancelBtn').addEventListener('click', () => activeHandle?.cancel('user cancelled'));
+
+window.__cnmwFirmsExplorer = {
+  geocoder, control, map,
+  get area() { return area; },
+  get lastEstimate() { return lastEstimate; },
+  get resolvedDataset() { return resolvedDataset; },
+  setTimeWindow(start, end) {
+    document.getElementById('startDate').value = start;
+    document.getElementById('endDate').value = end;
+  },
+};
+</script>
+</body>
+</html>

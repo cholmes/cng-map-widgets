@@ -2,12 +2,13 @@
 // doc §3.4 Engine, design call #2: hyparquet-first, DuckDB strictly
 // opt-in).
 
-import { wkbToGeoJson, bboxOfGeometry, CancelledError } from '@cnmw/spec';
+import { CancelledError } from '@cnmw/spec';
 import { planRequest } from './estimate.js';
 import { readRows } from './parquet-io.js';
 import { rowMatchesArea } from './spatial.js';
 import { evaluateWhere } from './predicate.js';
 import { coveringPaths } from './prune.js';
+import { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 
 export const HYPARQUET_ENGINE_ID = 'hyparquet';
 
@@ -39,16 +40,18 @@ function rowBBox(row, covering, geometryColumn, decodedGeometryCache) {
     if ([xmin, ymin, xmax, ymax].every((v) => typeof v === 'number')) return [xmin, ymin, xmax, ymax];
   }
   const geom = decodedGeometry(row, geometryColumn, decodedGeometryCache);
-  return geom ? bboxOfGeometry(geom) : null;
+  return geom ? bboxOfAnyGeometry(geom) : null;
 }
 
 /**
  * Decode a row's geometry to GeoJSON. `row[geometryColumn]` is always raw
  * WKB bytes here -- never hyparquet's own auto-decoded GeoJSON object --
  * because `parquet-io.js`'s `openParquetFile` fetches metadata with
- * `geoparquet: false` specifically so that `@cnmw/spec`'s `wkbToGeoJson` is
- * the one, uniform decode path for every dataset, whether or not it
- * carries GeoParquet `geo` key-value metadata (both the FTW and
+ * `geoparquet: false` specifically so that this package's one, uniform
+ * decode path (`./wkb-geometry.js`'s `decodeWkbGeometry`, which delegates
+ * to `@cnmw/spec`'s `wkbToGeoJson` for everything but Point/MultiPoint --
+ * see that module's doc comment) is used for every dataset, whether or not
+ * it carries GeoParquet `geo` key-value metadata (both the FTW and
  * tge-labs/CGAZ files this package targets do carry it; a bare/non-geo
  * parquet file would not, and previously took a silently different code
  * path through this same function -- see git history for the fix).
@@ -56,7 +59,7 @@ function rowBBox(row, covering, geometryColumn, decodedGeometryCache) {
 function decodedGeometry(row, geometryColumn, cache) {
   if (cache.has(row)) return cache.get(row);
   const raw = row[geometryColumn];
-  const geom = raw ? wkbToGeoJson(raw) : null;
+  const geom = raw ? decodeWkbGeometry(raw) : null;
   cache.set(row, geom);
   return geom;
 }

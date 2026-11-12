@@ -148,12 +148,32 @@ export function geometriesIntersect(a, b) {
 }
 
 /**
+ * Exact geometry test between a row's feature geometry and the area's
+ * filter polygon, dispatching on the feature's own type. `geometriesIntersect`
+ * (above) assumes both sides are Polygon/MultiPolygon, which breaks for a
+ * point dataset (NASA FIRMS -- every row's geometry is a WKB Point; see
+ * `./wkb-geometry.js`'s module doc for why that decode isn't in
+ * `@cnmw/spec`). A point "intersects" a polygon area exactly when it falls
+ * inside it, which `pointInGeometry` already answers directly -- no
+ * ring/edge intersection test needed for a feature with no edges.
+ * @param {GeoJSON.Point|GeoJSON.MultiPoint|GeoJSON.Polygon|GeoJSON.MultiPolygon} featureGeometry
+ * @param {GeoJSON.Polygon|GeoJSON.MultiPolygon} filterGeometry
+ */
+export function geometryIntersectsArea(featureGeometry, filterGeometry) {
+  if (featureGeometry.type === 'Point') return pointInGeometry(featureGeometry.coordinates, filterGeometry);
+  if (featureGeometry.type === 'MultiPoint') {
+    return featureGeometry.coordinates.some((pt) => pointInGeometry(pt, filterGeometry));
+  }
+  return geometriesIntersect(featureGeometry, filterGeometry);
+}
+
+/**
  * The full row-level spatial test (design doc §2.2 / §2.6's pruning
  * cascade step 4): bbox prune, then (for `intersects`) exact geometry test.
  *
  * @param {{
  *   featureBBox: BBox,
- *   featureGeometry?: GeoJSON.Polygon|GeoJSON.MultiPolygon|null,
+ *   featureGeometry?: GeoJSON.Point|GeoJSON.MultiPoint|GeoJSON.Polygon|GeoJSON.MultiPolygon|null,
  * }} row
  * @param {{ bboxes: BBox[], filterGeometry: GeoJSON.Polygon|GeoJSON.MultiPolygon|null }} area
  * @param {{ mode: 'bbox'|'intersects'|'clip', includeBboxTouch?: boolean }} spatial
@@ -166,5 +186,5 @@ export function rowMatchesArea(row, area, spatial) {
   // intersects (and clip, which is `intersects` + a post-process the caller
   // handles -- see download-core's clip refusal in estimate/engine).
   if (!area.filterGeometry || !row.featureGeometry) return true; // degraded-to-bbox
-  return geometriesIntersect(row.featureGeometry, area.filterGeometry);
+  return geometryIntersectsArea(row.featureGeometry, area.filterGeometry);
 }
