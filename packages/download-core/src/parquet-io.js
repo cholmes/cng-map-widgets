@@ -38,7 +38,31 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
   }
   let metadata;
   try {
-    metadata = await hyparquet.parquetMetadataAsync(file, opts.initialFetchSize ?? 65_536);
+    // `geoparquet: false` is load-bearing, not cosmetic: hyparquet >=1.x
+    // auto-detects a GeoParquet `geo` key-value-metadata column (which
+    // DuckDB writes by default for a native GEOMETRY column -- both the
+    // FTW and tge-labs/CGAZ files this package targets carry it) and
+    // silently replaces the raw WKB bytes with its own pre-decoded
+    // GeoJSON object, independent of any `utf8`-style option. Passing
+    // `geoparquet: false` here (once, at metadata-fetch time -- the flag
+    // lives on the returned `metadata`'s schema, not on each read call)
+    // keeps every column, geometry included, as raw bytes, so
+    // `@cnmw/spec`'s `wkbToGeoJson` is the single, uniform decode path
+    // for every dataset regardless of whether it carries `geo` metadata.
+    // Same fix, same reasoning, as `@cnmw/geocoder-core`'s
+    // geometry-resolver.js/index-loader.js (commit c3cd2ea).
+    //
+    // NOTE: passing a bare number here previously (before this fix) was
+    // *also* silently wrong -- `parquetMetadataAsync`'s second argument
+    // is always an options object (`{ parsers, initialFetchSize,
+    // geoparquet }`), so the old `opts.initialFetchSize ?? 65_536` call
+    // destructured `initialFetchSize`/`geoparquet` off of a `Number`,
+    // got `undefined` for both, and silently fell back to hyparquet's
+    // own (larger, unconfigurable) defaults for the footer-read size.
+    metadata = await hyparquet.parquetMetadataAsync(file, {
+      initialFetchSize: opts.initialFetchSize ?? 65_536,
+      geoparquet: false,
+    });
   } catch (cause) {
     throw new CnmwError(`Couldn't read parquet metadata: ${url}`, 'DATASET_UNRESOLVED', { cause, context: { url } });
   }
@@ -98,6 +122,21 @@ export async function readRows(handle, range) {
       rowEnd: range.rowEnd,
       columns: range.columns,
       compressors,
+      // `utf8: false` is the other half of the openParquetFile's
+      // `geoparquet: false` fix: disabling GeoParquet auto-decode alone
+      // only removes the GEOMETRY *logical type* hyparquet would have
+      // assigned -- it does NOT, by itself, make the column come back as
+      // raw bytes. hyparquet's own fallback for any BYTE_ARRAY column
+      // with no converted/logical type is to decode it as a UTF-8
+      // *string* by default (`utf8: true` is the hyparquet default), which
+      // silently mangles binary WKB. `utf8: false` only affects columns
+      // with no declared string type -- a real VARCHAR/STRING column
+      // (`converted_type: 'UTF8'` or a STRING logical type, which every
+      // non-geometry text column here has) decodes as a string either
+      // way. Verified against both a DuckDB-written GEOMETRY column (geo
+      // kv-metadata present) and a plain BLOB column (no geo metadata) --
+      // both need both flags to come back as Uint8Array.
+      utf8: false,
     });
   } catch (cause) {
     throw new CnmwError('Failed to read parquet row data.', 'DATASET_UNRESOLVED', { cause });

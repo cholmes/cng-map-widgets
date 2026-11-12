@@ -8,7 +8,6 @@ import { readRows } from './parquet-io.js';
 import { rowMatchesArea } from './spatial.js';
 import { evaluateWhere } from './predicate.js';
 import { coveringPaths } from './prune.js';
-import { loadHyparquetWriter } from './cdn.js';
 
 export const HYPARQUET_ENGINE_ID = 'hyparquet';
 
@@ -44,20 +43,20 @@ function rowBBox(row, covering, geometryColumn, decodedGeometryCache) {
 }
 
 /**
- * Decode a row's geometry to GeoJSON. hyparquet auto-decodes a GeoParquet
- * `encoding: "WKB"` column straight to a GeoJSON object when the file
- * declares `geo` metadata (confirmed against real FTW and CGAZ files, both
- * of which do) -- so `row[geometryColumn]` is *usually* already GeoJSON,
- * not raw WKB bytes. Handle both: a `Uint8Array` (no/unsupported `geo`
- * metadata, or a non-GeoParquet column) is decoded with `@cnmw/spec`'s WKB
- * reader; an already-decoded object is used as-is.
+ * Decode a row's geometry to GeoJSON. `row[geometryColumn]` is always raw
+ * WKB bytes here -- never hyparquet's own auto-decoded GeoJSON object --
+ * because `parquet-io.js`'s `openParquetFile` fetches metadata with
+ * `geoparquet: false` specifically so that `@cnmw/spec`'s `wkbToGeoJson` is
+ * the one, uniform decode path for every dataset, whether or not it
+ * carries GeoParquet `geo` key-value metadata (both the FTW and
+ * tge-labs/CGAZ files this package targets do carry it; a bare/non-geo
+ * parquet file would not, and previously took a silently different code
+ * path through this same function -- see git history for the fix).
  */
 function decodedGeometry(row, geometryColumn, cache) {
   if (cache.has(row)) return cache.get(row);
   const raw = row[geometryColumn];
-  let geom = null;
-  if (raw instanceof Uint8Array) geom = wkbToGeoJson(raw);
-  else if (raw && typeof raw === 'object' && 'type' in raw) geom = raw;
+  const geom = raw ? wkbToGeoJson(raw) : null;
   cache.set(row, geom);
   return geom;
 }
@@ -79,9 +78,6 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
   let rowGroupsDone = 0;
   let rowsScannedTotal = 0;
   const rowGroupsTotal = perPart.reduce((n, p) => n + p.selectedRowGroups.length, 0);
-  // `FeatureBatch.geometry` is WKB per the design doc's format-plugin
-  // contract (§3.4), independent of how the engine happened to decode it.
-  const { geojsonToWkb } = await loadHyparquetWriter();
 
   outer: for (const part of perPart) {
     for (const rg of part.selectedRowGroups) {
@@ -113,7 +109,7 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
       }
 
       if (matched.length > 0) {
-        const batch = buildBatch(matched, outputColumns, geometryColumn, cache, geojsonToWkb);
+        const batch = buildBatch(matched, outputColumns, geometryColumn);
         await onBatch(batch);
         rows += matched.length;
       }
@@ -151,19 +147,16 @@ function sumColumnBytes(rg, columnNames) {
   return bytes;
 }
 
-function buildBatch(rows, outputColumns, geometryColumn, cache, geojsonToWkb) {
+function buildBatch(rows, outputColumns, geometryColumn) {
   /** @type {Record<string, unknown[]>} */
   const columns = {};
   for (const name of outputColumns) {
     if (name === geometryColumn) continue;
     columns[name] = rows.map((r) => r[name] ?? null);
   }
-  const geometry = rows.map((r) => {
-    const raw = r[geometryColumn];
-    if (raw == null) return null;
-    if (raw instanceof Uint8Array) return raw; // already WKB
-    const decoded = cache.get(r) ?? raw; // reuse the already-decoded GeoJSON when we have it
-    return geojsonToWkb(decoded); // already a Uint8Array
-  });
+  // Always raw WKB already (parquet-io.js's `geoparquet: false`), so
+  // `FeatureBatch.geometry`'s WKB contract (design doc §3.4) is satisfied
+  // with no decode/re-encode round trip.
+  const geometry = rows.map((r) => r[geometryColumn] ?? null);
   return { rows: rows.length, columns, geometry };
 }

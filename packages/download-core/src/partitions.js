@@ -87,7 +87,16 @@ export async function enumeratePartitions(source, options = {}) {
   if (enumeration.kind === 'collection-mirror') {
     const { hyparquet, compressors } = await loadHyparquet();
     const file = await hyparquet.asyncBufferFromUrl({ url: enumeration.url, fetch: fetchImpl, requestInit: { cache: 'no-store', signal: options.signal } });
-    const rows = await hyparquet.parquetReadObjects({ file, compressors });
+    // `geoparquet: false` for the same reason as parquet-io.js's
+    // openParquetFile: a collection-mirror is itself a STAC-GeoParquet
+    // file and may carry a `geo`-tagged footprint geometry column.
+    // `partFromMirrorRow` doesn't currently read that column, but a
+    // stray auto-decode shouldn't silently change what `parquetReadObjects`
+    // hands back here either.
+    const metadata = await hyparquet.parquetMetadataAsync(file, { geoparquet: false });
+    // `utf8: false` alongside `geoparquet: false` -- see parquet-io.js's
+    // readRows() for why both are needed together.
+    const rows = await hyparquet.parquetReadObjects({ file, metadata, compressors, utf8: false });
     const parts = rows.map((row) => partFromMirrorRow(row, keys));
     return { parts, requests: 1 };
   }
