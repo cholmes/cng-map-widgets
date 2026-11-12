@@ -1,5 +1,14 @@
 # Cloud-Native Map Widgets — Experiment Plan
 
+> **Naming decision (2026-11-12, Chris):** the DATA products are **cloud-native
+> gazetteers** — the names indexes and the catalogs that publish them
+> (geoboundaries-catalog, cn-gazetteer-overture — renamed from
+> cn-geocoder-overture — whosonfirst-catalog). The client widget keeps
+> **geocoder** naming (@cnmw/geocoder-core etc.) because that's the term
+> developers search for; docs state it's place-name/boundary lookup over
+> gazetteer data, not address geocoding. A future public umbrella repo name
+> should prefer "gazetteer" over "geocoding".
+
 **Date:** 2026-11-12
 **Status:** Draft for review
 
