@@ -81,6 +81,22 @@ sidecar GeoParquet should be low single-digit MB — small enough to load fully
 into memory on first focus of the search box, giving truly instant typeahead
 with zero further network per keystroke.
 
+## Data-source decisions (2026-11-12, post-E0)
+
+- **Primary (decided by Chris):** pure geoBoundaries CGAZ — cleanest license
+  (CC-BY). Evaluated fieldmaps.io edge-matched geoparquets directly: rich
+  multilingual schema and good hosting (CORS, ranges), but **ODbL** even for
+  the geoBoundaries-only "open" variant (OSM in the edge-matching chain), plus
+  poor layout (ADM2: 4,868 row groups of 1–10 rows; 1.4–2.6 GB full-res
+  files; no ADM0 file). Decision: our catalog mirrors geoBoundaries itself.
+- **E0 verdicts** (details in `experiments/e0-data-recon/RESULTS.md`):
+  #2 source = fieldmaps COD-AB (CC-BY-3.0-IGO, real multilingual names),
+  conditional on its global build landing + a 6-point checklist; fallback =
+  World Bank Official Boundaries (CC-BY 4.0, ADM0–2, ready today). E8
+  multilingual = Overture divisions (country avg ~202 translated names) as a
+  separate ODbL opt-in artifact only. GAUL/GISCO/ERM excluded (non-commercial
+  licenses).
+
 ## Experiments
 
 Each experiment produces working code + a short RESULTS.md with numbers.
