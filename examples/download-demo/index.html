@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cn-geocoding E5 demo — download widget</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
+  #map { position: absolute; inset: 0; }
+  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+
+  #panel {
+    position: absolute; top: 10px; right: 10px; z-index: 5; width: 380px; max-height: calc(100% - 20px);
+    overflow-y: auto; background: rgba(255,255,255,0.97); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    padding: 14px; box-sizing: border-box;
+  }
+  #panel h1 { font-size: 15px; margin: 0 0 8px; }
+  #panel label { display: block; font-weight: 600; margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; color: #555; }
+  #panel select, #panel button, #panel input[type="number"] { width: 100%; font-size: 13px; padding: 6px; box-sizing: border-box; }
+  #panel button { margin-top: 6px; cursor: pointer; border: 1px solid #888; border-radius: 4px; background: #f4f4f4; }
+  #panel button:disabled { opacity: 0.5; cursor: default; }
+  #panel button.primary { background: #2563eb; color: white; border-color: #1d4ed8; }
+  #areaInfo, #estimateInfo, #downloadInfo { font-size: 12px; background: #f7f7f7; border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+  #ceilingBox { display: none; background: #fff3cd; border: 1px solid #c99; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 12px; }
+  .row { display: flex; gap: 6px; }
+  .row > button { flex: 1; }
+  progress { width: 100%; margin-top: 6px; }
+  a.download-link { display: block; margin-top: 6px; font-size: 12px; }
+  #datasetNote { font-size: 11px; color: #666; margin-top: 4px; }
+</style>
+<!--
+  Zero-build ESM, no bundler (design doc §4.3's "published import map"
+  pattern, pointed at this repo's own packages/ instead of a CDN since
+  nothing has been published yet). hyparquet/hyparquet-writer themselves
+  are pulled from pinned, exact CDN URLs by @cnmw/download-core's
+  src/cdn.js internally, not by this map.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cnmw/spec": "../../packages/spec/src/index.js",
+    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cnmw/maplibre": "../../packages/maplibre/src/index.js",
+    "@cnmw/download-core": "../../packages/download-core/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel">
+  <h1>Download widget demo (E5)</h1>
+  <div id="status" style="font-size:12px;color:#555;">Loading map…</div>
+
+  <label for="dataset">Dataset</label>
+  <select id="dataset"></select>
+  <div id="datasetNote"></div>
+
+  <label>Area</label>
+  <div id="areaInfo">Search for a place on the map (top-left control) to pick an area, or use the whole dataset (no area).</div>
+
+  <div class="row">
+    <button id="estimateBtn" class="primary">Estimate</button>
+  </div>
+  <div id="estimateInfo" style="display:none;"></div>
+  <div id="ceilingBox">
+    <div id="ceilingText"></div>
+    <button id="acceptCeilingBtn">Download anyway</button>
+  </div>
+
+  <label>Download</label>
+  <div class="row">
+    <button id="downloadGeoJsonBtn" disabled>GeoJSON</button>
+    <button id="downloadGeoParquetBtn" disabled>GeoParquet</button>
+  </div>
+  <button id="cancelBtn" disabled>Cancel</button>
+  <progress id="progressBar" value="0" max="1" style="display:none;"></progress>
+  <div id="downloadInfo" style="display:none;"></div>
+  <a id="downloadLink" class="download-link" style="display:none;"></a>
+</div>
+
+<script type="module">
+import { Geocoder, DEFAULT_INDEX_URL } from '@cnmw/geocoder-core';
+import { GeocoderControl } from '@cnmw/maplibre';
+import {
+  estimate,
+  download,
+  memorySink,
+  CeilingExceededError,
+} from '@cnmw/download-core';
+
+const statusEl = document.getElementById('status');
+const setStatus = (text) => { statusEl.textContent = text; };
+
+// --- Datasets (real, remote, per the design doc's worked examples and
+// PLAN.md's data-source decisions) -------------------------------------
+
+/** FTW field boundaries: single GeoParquet per country (design doc §2.6). */
+function ftwDataset(countryCode, countryName) {
+  return {
+    spec: 'cnmw-dataset/1.0',
+    id: `ftw-fields-${countryCode.toLowerCase()}`,
+    title: `Fields of The World — field boundaries (${countryName})`,
+    source: {
+      kind: 'parquet',
+      url: `https://data.source.coop/ftw/global-data/predictions/vectors/alpha/results-by-admin-conf/admin:country_code=${countryCode}/${countryName}.parquet`,
+    },
+    table: {
+      geometryColumn: 'geometry',
+      geometryEncoding: 'WKB',
+      crs: 'OGC:CRS84',
+      bbox: { kind: 'struct', column: 'bbox' },
+      columns: [
+        { name: 'id', type: 'string' },
+        { name: 'geometry', type: 'geometry' },
+        { name: 'confidence', type: 'float32' },
+        { name: 'bbox', type: 'struct' },
+      ],
+    },
+    attribution: [{ text: 'Fields of The World', license: 'CC-BY-4.0', url: 'https://fieldsofthe.world/', shareAlike: false }],
+  };
+}
+
+/** geoBoundaries CGAZ ADM2 (tge-labs mirror): one 97MB, single-row-group file covering every country (PLAN.md's E0 recon finding). "Meta but real": downloading ADM2 units intersecting an area selected *from this same file's own search index*. */
+const CGAZ_ADM2 = {
+  spec: 'cnmw-dataset/1.0',
+  id: 'geoboundaries-cgaz-adm2',
+  title: 'geoBoundaries CGAZ — ADM2 admin boundaries (global)',
+  source: { kind: 'parquet', url: 'https://data.source.coop/tge-labs/admin-boundaries/geoBoundaries/geoBoundariesCGAZ_ADM2.parquet' },
+  table: {
+    geometryColumn: 'geometry',
+    geometryEncoding: 'WKB',
+    crs: 'OGC:CRS84',
+    bbox: { kind: 'struct', column: 'bbox' },
+    columns: [
+      { name: 'id', type: 'string' },
+      { name: 'shapeName', type: 'string' },
+      { name: 'shapeID', type: 'string' },
+      { name: 'shapeGroup', type: 'string' },
+      { name: 'shapeType', type: 'string' },
+      { name: 'geometry', type: 'geometry' },
+      { name: 'bbox', type: 'struct' },
+    ],
+  },
+  attribution: [{ text: 'geoBoundaries CGAZ', license: 'CC-BY-4.0', url: 'https://www.geoboundaries.org/', shareAlike: false }],
+};
+
+const DATASETS = [
+  {
+    key: 'ftw-li',
+    dataset: ftwDataset('LI', 'Liechtenstein'),
+    note: 'Small (218 KB, 795 fields, 1 row group) — recommended for a fast real download in this demo.',
+    where: [{ col: 'confidence', op: '>=', value: 0.5 }],
+    outputColumns: { include: ['id', 'confidence'] },
+  },
+  {
+    key: 'ftw-nl',
+    dataset: ftwDataset('NL', 'Netherlands'),
+    note: 'Design doc §2.6 worked example. 246 MB / 471,584 fields / 8 row groups — a real download here can take a while; pick a small area first.',
+    where: [{ col: 'confidence', op: '>=', value: 0.9 }],
+    outputColumns: { include: ['id', 'confidence'] },
+  },
+  {
+    key: 'cgaz-adm2',
+    dataset: CGAZ_ADM2,
+    note: 'tge-labs mirror, 97 MB / 49,349 units / 1 row group (PLAN.md E0: no useful pruning within the file — every download reads the whole bbox+geometry columns). Downloads every ADM2 unit intersecting the area.',
+    where: [],
+    outputColumns: { include: ['shapeName', 'shapeID', 'shapeGroup'] },
+  },
+];
+
+const datasetSelect = document.getElementById('dataset');
+for (const d of DATASETS) {
+  const opt = document.createElement('option');
+  opt.value = d.key;
+  opt.textContent = d.dataset.title;
+  datasetSelect.appendChild(opt);
+}
+document.getElementById('datasetNote').textContent = DATASETS[0].note;
+datasetSelect.addEventListener('change', () => {
+  const entry = DATASETS.find((d) => d.key === datasetSelect.value);
+  document.getElementById('datasetNote').textContent = entry.note;
+  resetDownloadUi();
+});
+
+function currentEntry() {
+  return DATASETS.find((d) => d.key === datasetSelect.value);
+}
+
+// --- Area (search reuses @cnmw/geocoder-core + @cnmw/maplibre, pointed at
+// the provisional geocoder-demo index via a relative path) -------------
+
+let area = null; // null = "no area" (whole dataset)
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: [9.5, 47.14], // Liechtenstein, so the default dataset's area is visible immediately
+  zoom: 10,
+});
+
+const geocoder = new Geocoder({ indexUrl: '../geocoder-demo/data/index.json', limit: 8 });
+geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
+geocoder.on('select', ({ result, area: selectedArea }) => {
+  area = selectedArea;
+  document.getElementById('areaInfo').textContent =
+    `${result.name} (${result.country}, ADM${result.level}) — bbox [${area.bbox.map((n) => n.toFixed(3)).join(', ')}], ${area.vertexCount.filter} filter vertices`;
+  resetDownloadUi();
+});
+
+const control = new GeocoderControl({ geocoder, placeholder: 'Search for an area (e.g. "liechtenstein")…' });
+map.on('load', () => {
+  map.addControl(control, 'top-left');
+  setStatus('Map loaded. Pick an area (optional), choose a dataset, then Estimate.');
+});
+map.on('error', (e) => setStatus('Map style failed to load (offline?) — the rest of the demo still works. ' + (e?.error?.message ?? '')));
+
+// --- Estimate ------------------------------------------------------------
+
+function buildFilter(entry, spatialMode = 'intersects') {
+  return {
+    spec: 'cnmw-filter/1.0',
+    spatial: { mode: area ? spatialMode : 'bbox' },
+    where: entry.where,
+    columns: entry.outputColumns,
+    limit: 2000,
+  };
+}
+
+function formatBounded(b, unit = '') {
+  if (b.exact) return `${Math.round(b.estimate).toLocaleString()}${unit}`;
+  return `~${Math.round(b.estimate).toLocaleString()}${unit} (range ${Math.round(b.min).toLocaleString()}–${Math.round(b.max).toLocaleString()}${unit})`;
+}
+
+let lastEstimate = null;
+document.getElementById('estimateBtn').addEventListener('click', async () => {
+  const entry = currentEntry();
+  const infoEl = document.getElementById('estimateInfo');
+  infoEl.style.display = 'block';
+  infoEl.textContent = 'Estimating… (reads parquet footer metadata only, no row data)';
+  document.getElementById('ceilingBox').style.display = 'none';
+  try {
+    const filter = buildFilter(entry);
+    const est = await estimate(entry.dataset, area, filter);
+    lastEstimate = est;
+    infoEl.textContent =
+      `Rows: ${formatBounded(est.rows)}\n` +
+      `Read from storage: ${formatBounded(est.readBytes, ' B')}\n` +
+      `Output (generic model): ${formatBounded(est.outputBytes, ' B')}\n` +
+      `Files: ${est.files.selected}/${est.files.total}  Row groups: ${est.rowGroups.selected}/${est.rowGroups.total}  HTTP requests: ${est.requests}\n` +
+      `Warnings: ${est.warnings.map((w) => w.code).join(', ') || '(none)'}\n` +
+      `Ceiling exceeded: ${est.ceiling.exceeded}`;
+    document.getElementById('downloadGeoJsonBtn').disabled = false;
+    document.getElementById('downloadGeoParquetBtn').disabled = false;
+  } catch (err) {
+    infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
+  }
+});
+
+// --- Download ------------------------------------------------------------
+
+let activeHandle = null;
+
+function resetDownloadUi() {
+  document.getElementById('estimateInfo').style.display = 'none';
+  document.getElementById('ceilingBox').style.display = 'none';
+  document.getElementById('downloadInfo').style.display = 'none';
+  document.getElementById('downloadLink').style.display = 'none';
+  document.getElementById('progressBar').style.display = 'none';
+  document.getElementById('downloadGeoJsonBtn').disabled = true;
+  document.getElementById('downloadGeoParquetBtn').disabled = true;
+  document.getElementById('cancelBtn').disabled = true;
+  lastEstimate = null;
+  activeHandle = null;
+}
+
+function startDownload(format) {
+  const entry = currentEntry();
+  const filter = buildFilter(entry);
+  const extension = format === 'geojson' ? 'geojson' : 'parquet';
+  const output = { spec: 'cnmw-output/1.0', format, filename: `${entry.key}.${extension}` };
+
+  // The demo uses memorySink() + a <a download> link rather than
+  // autoSink()'s File System Access picker, so this page is drivable
+  // headlessly (Playwright) without a native file dialog.
+  const sink = memorySink();
+  const handle = download(entry.dataset, area, filter, output, { sink });
+  activeHandle = handle;
+
+  const progressBar = document.getElementById('progressBar');
+  const downloadInfo = document.getElementById('downloadInfo');
+  const downloadLink = document.getElementById('downloadLink');
+  progressBar.style.display = 'block';
+  progressBar.removeAttribute('value');
+  downloadInfo.style.display = 'block';
+  downloadInfo.textContent = 'Planning…';
+  downloadLink.style.display = 'none';
+  document.getElementById('cancelBtn').disabled = false;
+
+  handle.on('progress', (p) => {
+    if (p.phase === 'reading' && p.rowGroupsTotal > 0) {
+      progressBar.value = p.rowGroupsDone / p.rowGroupsTotal;
+      progressBar.removeAttribute('max');
+      progressBar.max = 1;
+      downloadInfo.textContent = `Reading… row group ${p.rowGroupsDone}/${p.rowGroupsTotal}, ${p.rowsMatched} rows matched, ${p.bytesRead.toLocaleString()} bytes read.`;
+    }
+  });
+  handle.on('ceiling', ({ estimate: est }) => {
+    const box = document.getElementById('ceilingBox');
+    box.style.display = 'block';
+    document.getElementById('ceilingText').textContent = `Ceiling exceeded: ${est.ceiling.breaches.join(', ')}. `;
+    document.getElementById('acceptCeilingBtn').onclick = () => handle.acceptCeiling();
+  });
+
+  handle.result.then(
+    (result) => {
+      progressBar.style.display = 'none';
+      document.getElementById('cancelBtn').disabled = true;
+      downloadInfo.textContent =
+        `Done: ${result.rows} rows, ${result.bytes.toLocaleString()} bytes written, ${result.readBytes.toLocaleString()} bytes read, ${result.requests} requests, ${result.elapsedMs.toFixed(0)} ms.`;
+      const blob = sink.blob ?? new Blob(sink.chunks, { type: format === 'geojson' ? 'application/geo+json' : 'application/vnd.apache.parquet' });
+      const url = URL.createObjectURL(blob);
+      downloadLink.href = url;
+      downloadLink.download = output.filename;
+      downloadLink.textContent = `Save ${output.filename} (${result.bytes.toLocaleString()} bytes)`;
+      downloadLink.style.display = 'block';
+      window.__cnmwLastResult = result;
+    },
+    (err) => {
+      progressBar.style.display = 'none';
+      document.getElementById('cancelBtn').disabled = true;
+      downloadInfo.textContent = `${err.code === 'CANCELLED' ? 'Cancelled.' : `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`}`;
+    },
+  );
+}
+
+document.getElementById('downloadGeoJsonBtn').addEventListener('click', () => startDownload('geojson'));
+document.getElementById('downloadGeoParquetBtn').addEventListener('click', () => startDownload('geoparquet'));
+document.getElementById('cancelBtn').addEventListener('click', () => activeHandle?.cancel('user cancelled'));
+
+window.__cnmwDownloadDemo = { geocoder, control, map, get area() { return area; }, get lastEstimate() { return lastEstimate; } };
+</script>
+</body>
+</html>
