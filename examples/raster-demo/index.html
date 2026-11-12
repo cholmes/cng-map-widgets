@@ -85,6 +85,7 @@
     <div id="ceilingText"></div>
     <button id="acceptCeilingBtn">Download anyway</button>
   </div>
+  <button id="saveToDiskBtn" style="display:none;">Save straight to disk (File System Access)</button>
   <button id="cancelBtn" disabled>Cancel</button>
   <div id="downloadInfo" style="display:none;"></div>
   <a id="downloadLink" class="download-link" style="display:none;"></a>
@@ -94,7 +95,7 @@
 <script type="module">
 import { Geocoder } from '@cnmw/geocoder-core';
 import { GeocoderControl } from '@cnmw/maplibre';
-import { memorySink } from '@cnmw/download-core';
+import { memorySink, fileSystemSink } from '@cnmw/download-core';
 import {
   openRaster,
   describeRasterDataset,
@@ -315,13 +316,13 @@ el('estimateBtn').addEventListener('click', async () => {
 
 // --- download ------------------------------------------------------------
 let handle = null;
-async function startDownload(acceptCeiling) {
+async function startDownload(acceptCeiling, customSink) {
   el('downloadInfo').style.display = 'block';
   el('downloadInfo').textContent = 'Reading tiles…';
   el('downloadLink').style.display = 'none';
   el('preview').style.display = 'none';
   el('cancelBtn').disabled = false;
-  const sink = memorySink();
+  const sink = customSink ?? memorySink();
   handle = downloadRaster(descriptor, area, filterSpec(), {}, { sink, sources, acceptCeiling });
   handle.on('progress', (p) => {
     if (p.phase === 'reading') el('downloadInfo').textContent = `Reading band ${p.bandsDone}/${p.bandsTotal} (${fmtBytes(p.bytesRead)}, ${p.requests} requests)…`;
@@ -331,18 +332,20 @@ async function startDownload(acceptCeiling) {
   try {
     const result = await handle.result;
     window.__cnmwLastResult = { ...result, sink: { kind: result.sink.kind } };
-    const blob = new Blob(sink.chunks, { type: 'image/tiff' });
+    const blob = sink.kind === 'memory' ? new Blob(sink.chunks, { type: 'image/tiff' }) : null;
     el('downloadInfo').textContent =
       `Done: ${result.filename}\n` +
       `${result.width} x ${result.height} x ${result.bands.length} ${result.dtype}, EPSG:${result.epsg}, ${result.compression}\n` +
       `file ${fmtBytes(result.bytes)} | fetched ${fmtBytes(result.readBytes)} in ${result.requests} requests | ${result.elapsedMs} ms\n` +
       `vs naive full download ${fmtBytes(result.naiveBytes)}: ${(result.naiveBytes / result.readBytes).toFixed(0)}x less`;
-    const a = el('downloadLink');
-    a.href = URL.createObjectURL(blob);
-    a.download = result.filename;
-    a.textContent = `Save ${result.filename} (${fmtBytes(result.bytes)})`;
-    a.style.display = 'block';
-    await drawPreview(blob, result.bands);
+    if (blob) {
+      const a = el('downloadLink');
+      a.href = URL.createObjectURL(blob);
+      a.download = result.filename;
+      a.textContent = `Save ${result.filename} (${fmtBytes(result.bytes)})`;
+      a.style.display = 'block';
+      await drawPreview(blob, result.bands);
+    }
   } catch (err) {
     el('downloadInfo').textContent = `${err.code === 'CANCELLED' ? 'Cancelled' : `Error (${err.code ?? 'ERROR'})`}: ${err.message}`;
   } finally {
@@ -350,6 +353,22 @@ async function startDownload(acceptCeiling) {
   }
 }
 el('downloadBtn').addEventListener('click', () => startDownload(false));
+
+// The direct-to-disk path: `showSaveFilePicker` needs a user gesture, so the
+// handle is created *after* the picker resolves (design doc 3.4). It is the
+// only way past the 256 MB blob-sink ceiling, so it is offered wherever the
+// API exists.
+if (typeof window.showSaveFilePicker === 'function') {
+  el('saveToDiskBtn').style.display = 'block';
+  el('saveToDiskBtn').addEventListener('click', async () => {
+    try {
+      const fsHandle = await window.showSaveFilePicker({ suggestedName: 'clip.tif' });
+      await startDownload(false, await fileSystemSink({ handle: fsHandle }));
+    } catch (err) {
+      if (err?.name !== 'AbortError') el('downloadInfo').textContent = `Error: ${err.message}`;
+    }
+  });
+}
 el('acceptCeilingBtn').addEventListener('click', () => {
   if (handle?.state === 'blocked') handle.acceptCeiling();
   else startDownload(true);
