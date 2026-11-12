@@ -288,16 +288,8 @@ async function groupSpec() {
 // ===========================================================================
 async function groupGeocoder() {
   console.log('\n@cnmw/geocoder-core (live: data.source.coop)');
-  const geocoderCore = await import('@cnmw/geocoder-core');
-  const {
-    Geocoder,
-    setHyparquetModules,
-    classifyMatch,
-    computeViewportRank,
-    prefixRange,
-    normalizeForTest,
-    VERSION,
-  } = { ...geocoderCore, normalizeForTest: undefined };
+  const { Geocoder, setHyparquetModules, classifyMatch, computeViewportRank, prefixRange, VERSION } =
+    await import('@cnmw/geocoder-core');
   const { normalizeName } = await import('@cnmw/spec');
 
   setHyparquetModules({ hyparquet, compressors });
@@ -455,7 +447,7 @@ async function groupGeocoder() {
   await snippet('geocoder-core/README', 'pure helpers: classifyMatch, computeViewportRank, prefixRange', async () => {
     const allowed = ['exact', 'prefix', 'word-prefix'];
     assert.equal(classifyMatch('paris', 'paris', allowed), 'exact');
-    assert.equal(classifyMatch('paris paris', 'paris', allowed), 'exact' /* whole-string match wins */ ? 'prefix' : 'prefix');
+    assert.equal(classifyMatch('paris paris', 'paris', allowed), 'prefix'); // starts with, but not equal
     assert.equal(classifyMatch('saint andrew parish', 'paris', allowed), 'word-prefix');
     assert.equal(classifyMatch('somewhere else', 'paris', allowed), null);
     assert.equal(classifyMatch('a paris b', 'paris', ['exact']), null); // class not allowed

@@ -246,6 +246,101 @@ at same feature), plus unicode normalization/transliteration in `name_norm`.
 - **NEXT:** E6 example explorers (firms, s2) · E7 portolan-browser branch ·
   demo index-source toggle (geoBoundaries ↔ Overture) once both publish.
 
+## Status snapshot (2026-11-12, overnight — E10 documentation pass)
+
+Both gazetteers are **live and serving**: `geoboundaries-catalog`
+(52,398 names, ADM0/1/2, CC-BY-4.0, 3.9MB index) and `cn-gazetteer-overture`
+(5,604,413 names, 5 levels, ODbL-1.0, 409MB index + an 8.62MiB eager
+`prominent_index`) both answer from `data.source.coop` — so every demo and
+every documented snippet now runs against real published data, not fixtures.
+
+- **DONE tonight — the library is documented and presentable:**
+  - **Root `README.md`** — what it is, a copy-paste quickstart that is
+    `examples/quickstart/index.html` verbatim (Playwright-verified live), the
+    architecture picture, the package table with measured sizes against the
+    §4.5 budgets, both catalogs with their licenses, honest status, a measured
+    known-issues table, and the licensing story.
+  - **`AGENTS.md`** — recipes for agents: setup, geocoder → `Area`, consuming
+    an `Area`, a `DownloadRequest` per dataset kind (parquet / hive /
+    stac-geoparquet / parquet-set), download with estimate+ceiling handling,
+    the manifest contract as a field table, 12 ranked pitfalls.
+  - **Six package READMEs** (spec, geocoder-core, upload-core, download-core,
+    maplibre, openlayers) — API reference read off the actual exports, sizes,
+    runnable minimal examples, error tables, gotchas from this repo's own fix
+    history.
+  - **`docs/verify-snippets.mjs`** — every Node-runnable snippet in all eight
+    documents, executed against live data with the documented outcome
+    asserted. **58/58 groups green.** `npm run verify:docs`.
+  - **`examples/index.html`** — zero-build gallery: six cards, committed
+    screenshots, package badges, fetch-into-`<pre>` "View source", verifier
+    commands.
+  - **`examples/quickstart/`** — the single-file example the README quotes,
+    plus its verifier. **New `examples/download-demo/verify.mjs`** (the one
+    demo that had none).
+  - **Every demo works from a fresh clone.** Four of six pointed at
+    `examples/geocoder-demo/data/index.json`, which `.gitignore`'s `data/`
+    rule excludes; they now default to the live geoBoundaries manifest with
+    `?index=local` preserved. Side benefit: the live index has ADM1, so
+    firms-explorer's own suggested query ("california") resolves at all.
+  - **Consistency pass:** `0.1.0` everywhere (package.json, dependency pins,
+    exported `VERSION`), MIT `LICENSE` in the root and every package,
+    real `description`/`keywords`/`license`/`files`, `exports["./package.json"]`.
+    `npm install` relinked the workspace, picking up `@cnmw/upload-core` and
+    `@cnmw/openlayers`, which had never been symlinked into `node_modules`.
+- **MEASURED tonight (live, over the public path):** cold index load
+  **3.8s from Node / 5.3s in a browser** for the 3.9MB geoBoundaries index
+  (30 jsdelivr requests ≈324KB on first load, 27 of them hyparquet's own
+  unbundled modules) — the design doc's budget was <1s on broadband, so
+  **that budget is not met**; warm keystroke ~1ms (well inside the 150ms
+  budget). `select()` 0.36–2.7s by level. FTW Liechtenstein: estimate
+  795 rows / 204,945 exact read bytes / 2 requests; GeoJSON 769 rows /
+  938,135B; GeoParquet 769 rows / 193,541B with a valid 1.1 covering.
+  FIRMS: 27 `year=` partitions → 1 on a one-week time filter. Sentinel-2:
+  12 → 1 partitions but **838 planned requests**, because reads are
+  sequential and the collection declares no bbox covering.
+- **API-vs-design drift found by reading src against the design doc**,
+  documented in the READMEs rather than silently fixed (all are in the root
+  README's known-issues table):
+  1. A `blocked` `DownloadHandle`'s `result` **waits forever** rather than
+     rejecting with `CeilingExceededError` as §3.4 says. Callers must
+     `acceptCeiling()` or `cancel()`. **The most dangerous one for an
+     automated caller.**
+  2. **Attribution key casing is inconsistent:** a geocoder `Area` carries
+     the manifest's `snake_case` (`share_alike`), download-core's derived
+     attribution uses `shareAlike`. Checking only `shareAlike` **silently
+     reports no share-alike obligation on ODbL data.** Wants one
+     normalization in `@cnmw/spec`.
+  3. `indexUrl` as an array (multi-source) is unimplemented and *silently*
+     falls back to `DEFAULT_INDEX_URL`, which is itself the relative dev path
+     `'./data/index.json'`, not the published URL §10 specifies.
+  4. Specified but not honored: `load:progress` (never emitted),
+     `createDrawTool`, `GeocoderControlOptions.geocoderOptions`,
+     `GeocoderControlOptions.geocoder`'s `new Geocoder()` default,
+     `DownloadCoreOptions.maxConcurrentRequests`,
+     `GeocoderOptions.initialFetchSize`,
+     `GeometryResolverOptions.boundaryUrls`.
+  5. `SearchResult.rank` has `viewportRank`, not §3.2's `viewport`.
+  6. Cancelling a download *during planning* surfaces `NETWORK` and state
+     `'failed'` rather than `CANCELLED`/`'cancelled'`.
+  7. Two error codes exist beyond §3.5's table
+     (`UPLOAD_UNSUPPORTED_FORMAT`, `UPLOAD_PARSE_ERROR`) and one repair kind
+     beyond §1.2's union (`deduped-points`) — all three are real things a
+     user can cause.
+- **PENDING Chris (new):** **confirm the code license.** MIT is in place as a
+  placeholder in the root and all six packages; Apache-2.0 (patent grant) or
+  BSD-3-Clause are the plausible alternatives and it is a one-line change in
+  seven files. Also still open from before: source.coop login · npm scope
+  (`@cnmw`) · gbOpen ADM3/4.
+- **NEXT (recommended order before any npm publish):** (1) one normalization
+  of attribution casing in `@cnmw/spec`; (2) make a blocked handle's `result`
+  reject as specified, or rename the promise; (3) parallel row-group reads —
+  838 requests for one S2 query is the biggest remaining performance lever;
+  (4) a prebundled hyparquet to collapse the 27-file cold-load waterfall;
+  (5) a `prominent_index` on the geoBoundaries catalog, to get first
+  suggestions inside the 1s budget; (6) a build step producing the §4.1
+  three artifacts (`.js` / `.cdn.js` / `.bundle.js`) with `.d.ts` — nothing
+  below needs it, but npm consumers will.
+
 ### hyparquet findings (upstream-feedback candidates)
 1. GeoParquet auto-decode: files with `geo` kv-metadata get geometry
    silently replaced by decoded GeoJSON; `utf8: false` is ignored for that

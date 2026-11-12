@@ -345,6 +345,7 @@ import { classifyMatch, computeViewportRank, prefixRange } from '@cnmw/geocoder-
 
 const allowed = ['exact', 'prefix', 'word-prefix'];
 classifyMatch('paris', 'paris', allowed);                // 'exact'
+classifyMatch('paris paris', 'paris', allowed);          // 'prefix' -- starts with, not equal
 classifyMatch('saint andrew parish', 'paris', allowed);  // 'word-prefix'
 classifyMatch('somewhere else', 'paris', allowed);       // null
 classifyMatch('a paris b', 'paris', ['exact']);          // null -- class not allowed
