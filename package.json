@@ -8,7 +8,7 @@
     "examples/*"
   ],
   "scripts": {
-    "test": "node --test packages/spec/test/*.test.js packages/geocoder-core/test/*.test.js"
+    "test": "node --test packages/spec/test/*.test.js packages/geocoder-core/test/*.test.js packages/upload-core/test/*.test.js packages/openlayers/test/*.test.js"
   },
   "devDependencies": {
     "playwright": "1.65.0"
