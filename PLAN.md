@@ -118,6 +118,17 @@ range vs DuckDB-WASM) against the source files. Experiment with
 low-res sidecar) vs full-res for clipping. Output: mirror-builder script,
 numbers, recommended file recipe (this doubles as the upstream advocacy doc).
 
+> **Update (2026-11-12, from Chris):** the optimized mirror and the E1 search
+> sidecar are built in a structured way as a new **git-backed Portolan
+> catalog**: `portolan-mirrors/geoboundaries` on GitHub, published to
+> source.coop. It pulls from geoBoundaries' published releases via a
+> reproducible script, and is an exemplar catalog (full column descriptions,
+> sources linked, great docs). The index/mirror parquet files are data
+> products of that catalog; cn-geocoding consumes their published URLs. The
+> E1/E2 *benchmarks* still live here; the *builders* live in the catalog repo.
+> This also resolves mirror hosting (open question below) and index/mirror
+> version coupling: one pipeline builds both, keyed by `shapeID`.
+
 ### E3 — Geocoder widget *(opus design, sonnet implement)*
 `packages/geocoder-core`: framework-agnostic TS — input handling, index
 loading, search, ranking; emits an `Area` (geometry + bbox + metadata).
@@ -181,6 +192,59 @@ cn-geocoding/
   examples/           # firms-explorer/ s2-footprints/
   docs/
 ```
+
+## Design calls from builder review (2026-11-12)
+
+A fresh-eyes builder review raised 12 questions; resolutions (all my calls,
+marked for Chris to override):
+
+1. **Clip vs intersect:** three-stage default — bbox prune → `ST_Intersects`
+   (the download default) → exact clip as an opt-in post-process. Keeps the
+   core light; clipping never mutates features silently.
+2. **DuckDB-WASM:** *not* in the shipped core. sentinel-2-catalog already
+   measured it (74–123 GETs, 6.6–49s for app-shaped queries) and moved to
+   hyparquet; we follow. hyparquet(+writer) is the core engine; DuckDB-WASM
+   is an opt-in heavy plugin and a benchmark baseline only. GeoParquet
+   output = hyparquet-writer + hand-built geo metadata (scoped into E5).
+3. **Download bounds:** `download-core` takes `Area` **plus** first-class
+   filters (time window, column predicates, column projection), gives a
+   pre-download row/byte estimate from parquet metadata, and streams via
+   File System Access API; refusal path above a configurable ceiling.
+4. **`Area` contract:** GeoJSON geometry, EPSG:4326 only, with `bbox` +
+   provenance metadata. Multi-feature upload → union by default. Documented
+   vertex ceiling with auto-simplify for the filter geometry. Antimeridian
+   handled by bbox splitting (CGAZ has RUS/FJI).
+5. **Index↔geometry coupling:** stable key is `shapeID` (logical), not row
+   offsets; index + mirror built by one pipeline (now: the geoboundaries
+   catalog repo) and versioned together.
+6. **Multi-source:** index schema is source-agnostic
+   (`name, name_norm, level:int, country, feature_id, source`); one index
+   per source, config picks; merging/dedupe across sources is explicitly
+   out of scope for now.
+7. **QGIS reuse:** the shared artifact is the *declarative* dataset
+   descriptor + filter spec (data, not code) and documented SQL recipes —
+   consumable from the existing Python qgis_plugin_gpq_downloader. No
+   TS-in-QGIS ambitions.
+8. **E7 scope:** v1 handles single-file vector GeoParquet, hive-partitioned
+   (Portolan partition extension, client-side pruning), and STAC-GeoParquet
+   footprint rows. Raster/zarr → graceful "not supported". Dataset
+   descriptor = the collection JSON itself.
+9. **"Near-instant" budgets (falsifiable):** warm per-keystroke < 150 ms;
+   cold focus → first usable suggestions < 1 s on broadband; index fetch is
+   lazy (on focus, not page load) and default index ≤ ~3 MB; range-request
+   path becomes mandatory once an index exceeds ~5 MB (fieldmaps ADM3/4).
+10. **Default index URL:** the published portolan-mirrors/geoboundaries
+    source.coop URLs; `indexUrl` overridable.
+11. **Licensing of index:** default shipped index stays clean CC-BY
+    (geoBoundaries-only). Any Overture-names-enriched index (E8) is a
+    separate opt-in artifact carrying ODbL obligations + required
+    attribution in the widget UI. *(Flagged for Chris.)*
+12. **Stats & E6 shape:** v1 "stats" = pre-download estimates only; real
+    aggregations follow the firms precomputed-sidecar pattern, out of scope.
+    E6 builds fresh minimal example pages first; retrofitting the live
+    firms/s2 apps is follow-on work. Consequence adopted: packages must be
+    **zero-build CDN-consumable ESM** (those apps import from jsdelivr with
+    no bundler).
 
 ## Open questions (non-blocking, will make calls and mark them)
 
