@@ -24,7 +24,7 @@
     "examples/*"
   ],
   "scripts": {
-    "test": "node --test packages/spec/test/*.test.js packages/geocoder-core/test/*.test.js packages/upload-core/test/*.test.js packages/openlayers/test/*.test.js packages/download-core/test/*.test.js",
+    "test": "node --test packages/spec/test/*.test.js packages/geocoder-core/test/*.test.js packages/upload-core/test/*.test.js packages/maplibre/test/*.test.js packages/openlayers/test/*.test.js packages/download-core/test/*.test.js packages/format-gpkg/test/*.test.js packages/format-shapefile/test/*.test.js packages/format-flatgeobuf/test/*.test.js packages/format-extras/test/*.test.js packages/raster-core/test/*.test.js",
     "serve": "python3 serve.py",
     "verify:docs": "node docs/verify-snippets.mjs"
   },
