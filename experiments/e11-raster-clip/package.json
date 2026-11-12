@@ -1,0 +1,17 @@
+{
+  "name": "e11-raster-clip",
+  "version": "0.1.0",
+  "private": true,
+  "description": "E11 harness: windowed COG reads, geotiff.js writer probes, and GDAL validation of the clips (see RESULTS.md). Standalone deps so the scripts run without the workspace.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "probe:read": "node 01-probe-read.mjs",
+    "probe:write": "node 02-probe-write.mjs",
+    "roundtrip": "node 03-roundtrip.mjs"
+  },
+  "dependencies": {
+    "geotiff": "2.1.3",
+    "zstddec": "0.1.0"
+  }
+}

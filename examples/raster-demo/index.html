@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cn-geocoding E11 demo — raster clip &amp; download</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
+  #map { position: absolute; inset: 0; }
+  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+  #panel {
+    position: absolute; top: 10px; right: 10px; z-index: 5; width: 390px; max-height: calc(100% - 20px);
+    overflow-y: auto; background: rgba(255,255,255,0.97); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    padding: 14px; box-sizing: border-box;
+  }
+  #panel h1 { font-size: 15px; margin: 0 0 8px; }
+  #panel label { display: block; font-weight: 600; margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; color: #555; }
+  #panel select, #panel button, #panel input { width: 100%; font-size: 13px; padding: 6px; box-sizing: border-box; }
+  #panel button { margin-top: 6px; cursor: pointer; border: 1px solid #888; border-radius: 4px; background: #f4f4f4; }
+  #panel button:disabled { opacity: 0.5; cursor: default; }
+  #panel button.primary { background: #2563eb; color: white; border-color: #1d4ed8; }
+  #areaInfo, #estimateInfo, #downloadInfo, #sourceInfo { font-size: 12px; background: #f7f7f7; border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+  #ceilingBox { display: none; background: #fff3cd; border: 1px solid #c99; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 12px; }
+  #bandList { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; font-size: 12px; }
+  #bandList label { display: flex; align-items: center; gap: 5px; margin: 0; font-weight: 400; text-transform: none; font-size: 12px; color: #222; }
+  #bandList input { width: auto; }
+  .row { display: flex; gap: 6px; }
+  .row > button { flex: 1; }
+  a.download-link { display: block; margin-top: 6px; font-size: 12px; }
+  #preview { width: 100%; margin-top: 8px; border: 1px solid #ccc; border-radius: 4px; display: none; image-rendering: pixelated; }
+  .note { font-size: 11px; color: #666; margin-top: 4px; }
+</style>
+<!--
+  Zero-build ESM (design doc §4.3), pointed at this repo's packages/.
+  geotiff.js itself is pulled by @cnmw/raster-core's src/cdn.js from an
+  exact pinned CDN URL, lazily, the first time a raster is opened.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cnmw/spec": "../../packages/spec/src/index.js",
+    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cnmw/maplibre": "../../packages/maplibre/src/index.js",
+    "@cnmw/download-core": "../../packages/download-core/src/index.js",
+    "@cnmw/raster-core": "../../packages/raster-core/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel">
+  <h1>Raster clip &amp; download (E11)</h1>
+  <div id="status" style="font-size:12px;color:#555;">Loading map…</div>
+
+  <label for="source">Raster source</label>
+  <select id="source"></select>
+  <input id="cogUrl" type="text" spellcheck="false" style="margin-top:6px;" />
+  <button id="openBtn">Open raster</button>
+  <div id="sourceInfo">Pick a source and open it: one header read tells us size, dtype, CRS, overviews and bands.</div>
+
+  <label>Bands</label>
+  <div id="bandList" class="note">Open a raster to list its bands.</div>
+
+  <label for="resolution">Resolution</label>
+  <select id="resolution">
+    <option value="native" selected>Native (full resolution of the window)</option>
+    <option value="4000000">Fit to ~4 Mpx (uses overviews)</option>
+    <option value="250000">Fit to ~250 kpx (uses overviews)</option>
+  </select>
+
+  <label>Area</label>
+  <div id="areaInfo">Search for a place (top-left), or use the current map view.</div>
+  <button id="useViewBtn">Use current map view as the area</button>
+
+  <div class="row">
+    <button id="estimateBtn" class="primary" disabled>Estimate</button>
+    <button id="downloadBtn" disabled>Download GeoTIFF</button>
+  </div>
+  <div id="estimateInfo" style="display:none;"></div>
+  <div id="ceilingBox">
+    <div id="ceilingText"></div>
+    <button id="acceptCeilingBtn">Download anyway</button>
+  </div>
+  <button id="cancelBtn" disabled>Cancel</button>
+  <div id="downloadInfo" style="display:none;"></div>
+  <a id="downloadLink" class="download-link" style="display:none;"></a>
+  <canvas id="preview"></canvas>
+</div>
+
+<script type="module">
+import { Geocoder } from '@cnmw/geocoder-core';
+import { GeocoderControl } from '@cnmw/maplibre';
+import { memorySink } from '@cnmw/download-core';
+import {
+  openRaster,
+  describeRasterDataset,
+  describeRasterUrl,
+  estimateRasterClip,
+  downloadRaster,
+  loadGeoTiff,
+  APPROX_BYTES,
+} from '@cnmw/raster-core';
+
+const el = (id) => document.getElementById(id);
+const setStatus = (t) => { el('status').textContent = t; };
+const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(2)} MB` : `${(n / 1e3).toFixed(1)} kB`);
+
+// --- the real, CORS-and-range-verified sources E11 measured --------------
+const SOURCES = [
+  {
+    id: 's2-oakland',
+    label: 'Sentinel-2 L2A, MGRS 10SEG, 2025-06-17 (uint16, 10 m, UTM 10N)',
+    kind: 'stac',
+    itemUrl: 'https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2C_10SEG_20250617_0_L2A',
+    center: [-122.25, 37.8],
+    zoom: 12,
+  },
+  {
+    id: 's2-visual',
+    label: 'Sentinel-2 L2A visual (TCI): 3 uint8 bands in ONE file',
+    kind: 'stac',
+    itemUrl: 'https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2C_10SEG_20250617_0_L2A',
+    assetRoles: ['visual'],
+    center: [-122.25, 37.8],
+    zoom: 12,
+  },
+  {
+    id: 'ftw-confidence',
+    label: 'FTW crop-consensus, global 500 m (float32, ZSTD, EPSG:4326, 1.04 GB)',
+    kind: 'url',
+    url: 'https://data.source.coop/ftw/global-data/predictions/confidence/crop-consensus/prue_v1_crop_count_mean_500m.tif',
+    center: [-94, 42],
+    zoom: 8,
+  },
+];
+
+for (const s of SOURCES) {
+  const opt = document.createElement('option');
+  opt.value = s.id;
+  opt.textContent = s.label;
+  el('source').appendChild(opt);
+}
+function currentSource() {
+  return SOURCES.find((s) => s.id === el('source').value);
+}
+function syncUrlBox() {
+  const s = currentSource();
+  el('cogUrl').value = s.kind === 'stac' ? s.itemUrl : s.url;
+  el('cogUrl').title = s.kind === 'stac' ? 'STAC Item URL (bands come from eo:bands/raster:bands)' : 'COG URL';
+}
+el('source').addEventListener('change', () => {
+  syncUrlBox();
+  const s = currentSource();
+  map.jumpTo({ center: s.center, zoom: s.zoom });
+});
+syncUrlBox();
+
+// --- map + geocoder ------------------------------------------------------
+const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+const indexUrl = new URLSearchParams(location.search).get('index') === 'local'
+  ? '../geocoder-demo/data/index.json'
+  : LIVE_INDEX_URL;
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: SOURCES[0].center,
+  zoom: SOURCES[0].zoom,
+});
+
+let area = null;
+function showArea(a, label) {
+  area = a;
+  el('areaInfo').textContent =
+    `${label}\nbbox: ${a.bbox.map((v) => v.toFixed(4)).join(', ')}`;
+  el('estimateBtn').disabled = !descriptor;
+  const [w, s, e, n] = a.bbox;
+  const src = { type: 'geojson', data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } } };
+  if (map.getSource('clipbox')) map.getSource('clipbox').setData(src.data);
+  else {
+    map.addSource('clipbox', src);
+    map.addLayer({ id: 'clipbox-line', type: 'line', source: 'clipbox', paint: { 'line-color': '#2563eb', 'line-width': 2, 'line-dasharray': [2, 1] } });
+  }
+}
+
+const geocoder = new Geocoder({ indexUrl, limit: 8 });
+geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
+geocoder.on('select', ({ result, area: selectedArea }) => {
+  showArea(selectedArea, `${result.name} (${result.country}, ADM${result.level})`);
+});
+const control = new GeocoderControl({ geocoder, placeholder: 'Search for an area (e.g. "oakland")…' });
+map.on('load', () => {
+  map.addControl(control, 'top-left');
+  setStatus('Map loaded. The clip is always the AREA BBOX — raster-core does not mask to the polygon.');
+});
+window.map = map; // the Playwright verifier drives the view through this
+
+map.on('error', (e) => setStatus('Map style failed to load (offline?) — the rest of the demo still works. ' + (e?.error?.message ?? '')));
+
+el('useViewBtn').addEventListener('click', () => {
+  const b = map.getBounds();
+  showArea({ bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()] }, 'Current map view');
+});
+
+// --- open the raster: one header read ------------------------------------
+let descriptor = null;
+let sources = new Map();
+
+el('openBtn').addEventListener('click', async () => {
+  el('openBtn').disabled = true;
+  setStatus(`Loading geotiff.js (~${Math.round(APPROX_BYTES.read / 1024)} KB gz) and reading the header…`);
+  try {
+    const s = currentSource();
+    const url = el('cogUrl').value.trim();
+    const t0 = performance.now();
+    sources = new Map();
+    if (s.kind === 'stac') {
+      const item = await (await fetch(url)).json();
+      descriptor = describeRasterDataset(item, { assetRoles: s.assetRoles ?? ['data'] });
+    } else {
+      descriptor = await describeRasterUrl(url);
+      sources = descriptor._sources ?? new Map();
+    }
+    renderBands();
+    // Open the file behind the first *selected* band -- a Sentinel-2 item
+    // carries 10 m, 20 m and 60 m assets, so "the first band" and "the band
+    // the user is about to clip" are not the same file.
+    const probeUrl = (descriptor.bands.find((b) => selectedBands().includes(b.name)) ?? descriptor.bands[0]).url;
+    if (!sources.has(probeUrl)) sources.set(probeUrl, await openRaster(probeUrl));
+    const src = sources.get(probeUrl);
+    const openMs = Math.round(performance.now() - t0);
+    el('sourceInfo').textContent =
+      `${descriptor.title}\n` +
+      `${src.levels[0].width} x ${src.levels[0].height} px, ${src.dtype}, EPSG:${src.epsg}\n` +
+      `pixel ${src.levels[0].pixelSize.join(' x ')} | tiles ${src.levels[0].tileSize.join('x')} | ${src.levels.length} levels (1 + ${src.levels.length - 1} overviews)\n` +
+      `compression ${src.compression} | nodata ${src.nodata ?? 'none'} | file ${src.fileBytes > 0 ? fmtBytes(src.fileBytes) : 'unknown'}\n` +
+      `header read in ${openMs} ms`;
+    el('estimateBtn').disabled = !area;
+    setStatus('Raster open. Pick bands and an area, then estimate.');
+  } catch (err) {
+    el('sourceInfo').textContent = `Error (${err.code ?? 'ERROR'}): ${err.message}`;
+    setStatus('Could not open that raster.');
+  } finally {
+    el('openBtn').disabled = false;
+  }
+});
+
+function renderBands() {
+  // Default to one resolution, because a clip cannot mix grids. For a
+  // Sentinel-2 item that is the 10 m RGB trio; otherwise the first band.
+  const names = descriptor.bands.map((b) => b.name);
+  const DEFAULT_BANDS = ['B04', 'B03', 'B02'].every((n) => names.includes(n)) ? ['B04', 'B03', 'B02'] : [];
+  const list = el('bandList');
+  list.textContent = '';
+  list.className = '';
+  const ordered = [...descriptor.bands].sort(
+    (a, b) => (a.resolution ?? 0) - (b.resolution ?? 0) || String(a.name).localeCompare(String(b.name)),
+  );
+  ordered.forEach((b, i) => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = b.name;
+    cb.className = 'band';
+    cb.checked = DEFAULT_BANDS.length ? DEFAULT_BANDS.includes(b.name) : i === 0;
+    label.appendChild(cb);
+    const res = b.resolution ? ` ${b.resolution}m` : '';
+    const text = (b.commonName && b.commonName !== b.name ? `${b.name} (${b.commonName})` : b.name) + res;
+    label.appendChild(document.createTextNode(text));
+    list.appendChild(label);
+  });
+}
+const selectedBands = () => [...document.querySelectorAll('input.band:checked')].map((c) => c.value);
+
+function filterSpec() {
+  const r = el('resolution').value;
+  return {
+    bands: selectedBands(),
+    resolution: r === 'native' ? 'native' : { maxPixels: Number(r) },
+    compression: 'deflate',
+  };
+}
+
+// --- estimate ------------------------------------------------------------
+el('estimateBtn').addEventListener('click', async () => {
+  el('estimateInfo').style.display = 'block';
+  el('estimateInfo').textContent = 'Estimating (headers only)…';
+  try {
+    const est = await estimateRasterClip(descriptor, area, filterSpec(), { sources });
+    window.__cnmwLastEstimate = est;
+    el('estimateInfo').textContent =
+      `${est.width} x ${est.height} px x ${est.bands.length} band(s) ${est.dtype}` +
+      `  (level ${est.resolution.level}${est.resolution.native ? ', native' : ''}, ${est.resolution.pixelSize[0]} units/px)\n` +
+      `bands: ${est.bands.join(', ')}\n` +
+      `decoded in memory: ${fmtBytes(est.decodedBytes.estimate)} (exact)\n` +
+      `bytes to fetch: ${fmtBytes(est.readBytes.estimate)} from ${est.tiles.selected} tile(s) in ${est.files.selected} file(s) (exact, from TileByteCounts)\n` +
+      `naive full download: ${fmtBytes(est.naiveBytes)}  ->  ${(est.naiveBytes / est.readBytes.estimate).toFixed(0)}x less\n` +
+      `output file: ~${fmtBytes(est.outputBytes.estimate)} (${fmtBytes(est.outputBytes.min)}–${fmtBytes(est.outputBytes.max)}, deflate)\n` +
+      est.warnings.map((w) => `! ${w.message}`).join('\n');
+    el('ceilingBox').style.display = est.ceiling.exceeded ? 'block' : 'none';
+    el('ceilingText').textContent = est.ceiling.exceeded
+      ? `Over the ceiling (${est.ceiling.breaches.join(', ')}). The window must fit in RAM: ` +
+        `${fmtBytes(est.decodedBytes.estimate)} decoded vs a ${fmtBytes(est.ceiling.limits.decodedBytes)} limit. ` +
+        'Zoom in, pick fewer bands, choose a coarser resolution — or download anyway.'
+      : '';
+    el('downloadBtn').disabled = false;
+  } catch (err) {
+    el('estimateInfo').textContent = `Error (${err.code ?? 'ERROR'}): ${err.message}`;
+  }
+});
+
+// --- download ------------------------------------------------------------
+let handle = null;
+async function startDownload(acceptCeiling) {
+  el('downloadInfo').style.display = 'block';
+  el('downloadInfo').textContent = 'Reading tiles…';
+  el('downloadLink').style.display = 'none';
+  el('preview').style.display = 'none';
+  el('cancelBtn').disabled = false;
+  const sink = memorySink();
+  handle = downloadRaster(descriptor, area, filterSpec(), {}, { sink, sources, acceptCeiling });
+  handle.on('progress', (p) => {
+    if (p.phase === 'reading') el('downloadInfo').textContent = `Reading band ${p.bandsDone}/${p.bandsTotal} (${fmtBytes(p.bytesRead)}, ${p.requests} requests)…`;
+    if (p.phase === 'writing') el('downloadInfo').textContent = 'Encoding GeoTIFF…';
+  });
+  handle.on('ceiling', () => { el('ceilingBox').style.display = 'block'; });
+  try {
+    const result = await handle.result;
+    window.__cnmwLastResult = { ...result, sink: { kind: result.sink.kind } };
+    const blob = new Blob(sink.chunks, { type: 'image/tiff' });
+    el('downloadInfo').textContent =
+      `Done: ${result.filename}\n` +
+      `${result.width} x ${result.height} x ${result.bands.length} ${result.dtype}, EPSG:${result.epsg}, ${result.compression}\n` +
+      `file ${fmtBytes(result.bytes)} | fetched ${fmtBytes(result.readBytes)} in ${result.requests} requests | ${result.elapsedMs} ms\n` +
+      `vs naive full download ${fmtBytes(result.naiveBytes)}: ${(result.naiveBytes / result.readBytes).toFixed(0)}x less`;
+    const a = el('downloadLink');
+    a.href = URL.createObjectURL(blob);
+    a.download = result.filename;
+    a.textContent = `Save ${result.filename} (${fmtBytes(result.bytes)})`;
+    a.style.display = 'block';
+    await drawPreview(blob, result.bands);
+  } catch (err) {
+    el('downloadInfo').textContent = `${err.code === 'CANCELLED' ? 'Cancelled' : `Error (${err.code ?? 'ERROR'})`}: ${err.message}`;
+  } finally {
+    el('cancelBtn').disabled = true;
+  }
+}
+el('downloadBtn').addEventListener('click', () => startDownload(false));
+el('acceptCeilingBtn').addEventListener('click', () => {
+  if (handle?.state === 'blocked') handle.acceptCeiling();
+  else startDownload(true);
+});
+el('cancelBtn').addEventListener('click', () => handle?.cancel('user cancelled'));
+
+/** Read the GeoTIFF we just wrote back with geotiff.js and draw a stretched
+ *  preview -- proof the bytes are a real, readable, georeferenced raster. */
+async function drawPreview(blob, bandNames = []) {
+  const gt = await loadGeoTiff();
+  const tiff = await gt.fromArrayBuffer(await blob.arrayBuffer());
+  const image = await tiff.getImage(0);
+  const w = image.getWidth();
+  const h = image.getHeight();
+  const max = 420;
+  const scale = Math.min(1, max / Math.max(w, h));
+  const rasters = await image.readRasters({ width: Math.round(w * scale), height: Math.round(h * scale), interleave: false });
+  const cw = rasters.width;
+  const ch = rasters.height;
+  const canvas = el('preview');
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(cw, ch);
+  // Map R/G/B to the right bands when we can name them (the band list is
+  // sorted by name, so B02/B03/B04 would otherwise land as R=blue).
+  const rgbNames = [['B04', 'red'], ['B03', 'green'], ['B02', 'blue']];
+  const order = rgbNames.map(([n, common]) => {
+    const i = bandNames.findIndex((b) => b === n || b === common);
+    return i;
+  });
+  const bandFor = (i) => rasters[order[i] >= 0 ? order[i] : Math.min(i, rasters.length - 1)];
+  const stretch = [0, 1, 2].map((i) => {
+    const arr = bandFor(i);
+    const sorted = Float64Array.from(arr).sort();
+    return [sorted[Math.floor(sorted.length * 0.02)], sorted[Math.floor(sorted.length * 0.98)] || 1];
+  });
+  for (let p = 0; p < cw * ch; p++) {
+    for (let c = 0; c < 3; c++) {
+      const [lo, hi] = stretch[c];
+      const v = (bandFor(c)[p] - lo) / Math.max(1e-6, hi - lo);
+      img.data[p * 4 + c] = Math.max(0, Math.min(255, Math.round(v * 255)));
+    }
+    img.data[p * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  canvas.style.display = 'block';
+}
+</script>
+</body>
+</html>
