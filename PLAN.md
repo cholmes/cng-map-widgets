@@ -125,6 +125,14 @@ Metrics: cold start, per-keystroke latency, bytes transferred, index size.
 Output: index-builder script (DuckDB SQL/Python), benchmark page + table,
 recommendation, upstream-advocacy notes.
 
+> **DONE 2026-11-12** — see `experiments/e1-search-index/RESULTS.md`. Verdict:
+> **full-load wins at current scale** (2.5MB index, ~200ms cold, ~0ms warm;
+> budgets were 1s/150ms). Range-request implemented as the >5MB fallback
+> (5.6–25ms per query at 2048-row groups). DuckDB-WASM baseline re-downloads
+> the entire 97MB source file per keystroke (up to 10.9s) — measured
+> confirmation of design call #2 and upstream-advocacy ammunition. Official
+> sidecar recipe: sort by name_norm, ~100–150KB row groups by bytes, zstd.
+
 ### E2 — Fast geometry retrieval + optimized mirror *(sonnet)*
 On selection, get the outline fast. Build an **optimized mirror** of the
 boundary files: sorted (hilbert or country+name), row groups ~1–2K rows,
