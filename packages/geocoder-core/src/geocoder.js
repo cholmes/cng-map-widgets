@@ -69,11 +69,135 @@ function initialFetchSizeOf(entry) {
   return entry?.footer_metadata_bytes ?? entry?.footer_bytes;
 }
 
+/**
+ * Coerce a decoded index-column value to a plain, finite `number`, or
+ * `undefined` when it is absent or not a number at all.
+ *
+ * **This is a load-bearing boundary, not a tidiness nicety.** hyparquet
+ * decodes parquet `INT64` as `BigInt`, and a published index is free to
+ * type an integer column either way: the live Who's On First index types
+ * `population` as `INT64` (so every row arrives as e.g. `2648452n`) while
+ * the Overture index types it as a plain integer. A naive `typeof v ===
+ * 'number'` test -- what this code did before -- therefore reads the WOF
+ * index's `population` column as *absent on every single row*, silently
+ * turning `compareRanked`'s whole prominence tiebreak into a no-op on the
+ * one shipped index that actually populates it. The same `INT64`-decodes-
+ * as-`BigInt` trap is already documented one layer down, on
+ * `geometry-resolver.js`'s `toSafeInt`, for `geometry_ref.row`.
+ *
+ * `BigInt`s beyond `Number.MAX_SAFE_INTEGER` are dropped rather than
+ * silently rounded: an imprecise population is worse than a missing one,
+ * and no real population or row index is anywhere near 2^53.
+ * @param {unknown} value
+ * @returns {number|undefined}
+ */
+function toFiniteNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'bigint') {
+    const abs = value < 0n ? -value : value;
+    return abs <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Project a decoded `geometry_ref` struct onto the camelCase shape
+ * `select()` consumes, **JSON-safe by construction**.
+ *
+ * `geometry_ref.row` is parquet `INT64` on every index that carries the
+ * column, so it decodes as a `BigInt` -- and a `BigInt` anywhere in an
+ * object graph makes `JSON.stringify()` *throw* (`TypeError: Do not know
+ * how to serialize a BigInt`), not degrade. A `SearchResult` is exactly
+ * the kind of value a caller persists to `sessionStorage`, posts to an
+ * analytics endpoint, or logs -- so a search result that cannot be
+ * serialized is a trap, and it was a documented known issue in the root
+ * README before this fix.
+ *
+ * Both fields convert to plain `number`s whenever they are safely
+ * representable, which is every real index (`row` counts rows in a file;
+ * `row_group` counts row groups). For the pathological case that is not,
+ * the `BigInt` is kept -- precision here decides which row `select()`
+ * reads, so rounding it would be worse than useless -- and a
+ * non-enumerable `toJSON` keeps `JSON.stringify` working anyway by
+ * emitting the decimal string. Non-enumerable specifically so that
+ * `deepEqual`/spread/`Object.keys` see exactly the three documented
+ * fields and nothing else.
+ * @param {{ file?: string, row_group?: number|bigint, row?: number|bigint }|null|undefined} raw
+ */
+function projectGeometryRef(raw) {
+  if (!raw) return undefined;
+  const rowGroup = toFiniteNumber(raw.row_group) ?? raw.row_group;
+  const row = toFiniteNumber(raw.row) ?? raw.row;
+  const ref = { file: raw.file, rowGroup, row };
+  if (typeof rowGroup === 'bigint' || typeof row === 'bigint') {
+    Object.defineProperty(ref, 'toJSON', {
+      enumerable: false,
+      value: () => ({ file: raw.file, rowGroup: String(rowGroup), row: String(row) }),
+    });
+  }
+  return ref;
+}
+
 /** @typedef {import('@cnmw/spec').BBox} BBox */
 /** @typedef {import('@cnmw/spec').AreaAttribution} AreaAttribution */
 
-export const DEFAULT_INDEX_URL = './data/index.json';
+/**
+ * The default index manifest: the **published** geoBoundaries CGAZ names
+ * index (design call #10, "Default index URL: the published
+ * portolan-mirrors/geoboundaries URLs; `indexUrl` overridable").
+ *
+ * This was `'./data/index.json'` -- a *relative development* path that
+ * only ever resolved inside this repo's own demo directory, and which
+ * `.gitignore`'s `data/` rule excludes even there. The practical effect
+ * was that a consumer who constructed `new Geocoder()` with no `indexUrl`
+ * (or with one of the shapes that silently fall back to this constant, see
+ * the constructor) got a 404 against their own site root rather than a
+ * working geocoder. An absolute, published, CC-BY-4.0 default is the one
+ * that makes the zero-build quickstart true.
+ *
+ * geoBoundaries, not Overture, deliberately: CC-BY-4.0 carries no
+ * share-alike obligation, so a default nobody chose cannot quietly impose
+ * ODbL terms on a consumer (design call #11). `indexUrl` overrides it, and
+ * an explicit override is unaffected by this change.
+ */
+export const DEFAULT_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
 export const VERSION = '0.1.0';
+
+/**
+ * Resolve the constructor's `indexUrl` option to the one manifest URL this
+ * `Geocoder` will load.
+ *
+ * The design doc types `indexUrl` as `string | readonly string[]`, where an
+ * array means "several sources searched together". **Multi-source search
+ * is not implemented** (and the doc's own design call #6 puts merging and
+ * dedupe across sources out of scope), so it is marked planned in §3.2
+ * rather than pretending to work. What it did before was worse than either:
+ * any non-string -- an array included -- fell through to
+ * `DEFAULT_INDEX_URL` *silently*, so a caller asking for two specific
+ * gazetteers got a third one they never named, with no error and no
+ * warning. A single-element array is accepted, because there is nothing
+ * ambiguous about it; two or more refuse by name.
+ * @param {unknown} indexUrl
+ * @returns {string}
+ */
+function resolveIndexUrl(indexUrl) {
+  if (typeof indexUrl === 'string') return indexUrl;
+  if (indexUrl === undefined || indexUrl === null) return DEFAULT_INDEX_URL;
+  if (Array.isArray(indexUrl)) {
+    const urls = indexUrl.filter((u) => typeof u === 'string');
+    if (urls.length === 1) return urls[0];
+    throw new CnmwError(
+      `Multi-source search is not implemented: \`indexUrl\` was given ${urls.length} URLs. Construct one Geocoder per index instead.`,
+      'INDEX_MULTI_SOURCE_UNSUPPORTED',
+      { context: { indexUrl } },
+    );
+  }
+  throw new CnmwError(
+    `\`indexUrl\` must be a string (the manifest URL); got ${typeof indexUrl}.`,
+    'INDEX_MULTI_SOURCE_UNSUPPORTED',
+    { context: { indexUrl } },
+  );
+}
 
 /**
  * Attribution normalization (follow-up task 3): every manifest shipped so
@@ -162,7 +286,7 @@ export class Geocoder {
     this._attribution = [];
 
     this._manifest = null;
-    this._manifestUrl = typeof options.indexUrl === 'string' ? options.indexUrl : DEFAULT_INDEX_URL;
+    this._manifestUrl = resolveIndexUrl(options.indexUrl);
     this._full = null; // { rows, nameNorms } -- the main index, once loaded
     this._range = null; // main index's range handle, once opened
 
@@ -738,16 +862,23 @@ export class Geocoder {
       if (levels && !levels.includes(row.level)) continue;
       if (countries && !countries.includes(row.country)) continue;
       const rowBBox = [row.bbox.xmin, row.bbox.ymin, row.bbox.xmax, row.bbox.ymax];
-      const areaKm2 = typeof row.area_km2 === 'number' && !Number.isNaN(row.area_km2) ? row.area_km2 : undefined;
-      // `population`/`class` (ranking-residual follow-up, task 5): still
-      // pending columns on every shipped index today -- `undefined` on
-      // every row until a catalog populates them -- passed through
-      // unconditionally so the geocoder never has to change again once
-      // one does. `isAlt` is derived from `alt_of` (already-shipped, E8)
-      // rather than passed through verbatim: `rankRow`/`compareRanked`
-      // only need to know "primary or alt", not which primary this alt
-      // row points at.
-      const population = typeof row.population === 'number' && !Number.isNaN(row.population) ? row.population : undefined;
+      const areaKm2 = toFiniteNumber(row.area_km2);
+      // `population`/`class` (ranking-residual follow-up, task 5) are no
+      // longer the "pending columns on every shipped index" this comment
+      // used to claim: the published Overture divisions index populates
+      // both, the Who's On First names index populates `population` (and
+      // has no `class` column), and a geoBoundaries CGAZ index populates
+      // neither. Read through `toFiniteNumber`, which is what makes
+      // `population` arrive at all on WOF -- it types the column as
+      // parquet `INT64`, and the `typeof === 'number'` test this line used
+      // before read every BigInt-decoded value as absent, silently
+      // reducing `compareRanked`'s whole prominence tiebreak to a measured
+      // no-op on the one index that most needed it. See `toFiniteNumber`.
+      //
+      // `isAlt` is derived from `alt_of` (already-shipped, E8) rather than
+      // passed through verbatim: `rankRow`/`compareRanked` only need to
+      // know "primary or alt", not which primary this alt row points at.
+      const population = toFiniteNumber(row.population);
       const placeClass = typeof row.class === 'string' ? row.class : undefined;
       const isAlt = row.alt_of != null;
       const primaryName = isAlt ? localNameById.get(row.alt_of) ?? fullNameById?.get(row.alt_of) : undefined;
@@ -779,19 +910,23 @@ export class Geocoder {
         parentName: row.parent_name ?? undefined,
         countryName: row.country_name ?? undefined,
         areaKm2,
-        // **Added by the ranking-residual follow-up (task 5).** Both
-        // pending on every shipped index -- `undefined` today, exposed
+        // **Added by the ranking-residual follow-up (task 5).** Exposed
         // here (as `areaKm2` already is) so a UI can use them directly,
-        // e.g. a population badge, once a catalog populates them.
+        // e.g. a population badge. `population` is real data on the
+        // Overture and WOF indexes (and `0` is a real value on WOF, not
+        // "unknown"); `class` is still unpopulated everywhere, and both
+        // are `undefined` on an index without the column.
         population,
         class: placeClass,
         bbox: rowBBox,
         source: row.source,
         rank,
         score: scoreOf(rank),
-        geometryRef: row.geometry_ref
-          ? { file: row.geometry_ref.file, rowGroup: row.geometry_ref.row_group, row: row.geometry_ref.row }
-          : undefined,
+        // JSON-safe by construction: `geometry_ref.row` is parquet
+        // `INT64`, so it decodes as a `BigInt`, and one `BigInt` anywhere
+        // in the object graph makes `JSON.stringify(result)` *throw*. See
+        // `projectGeometryRef`.
+        geometryRef: projectGeometryRef(row.geometry_ref),
       });
     }
     ranked.sort(compareRanked);

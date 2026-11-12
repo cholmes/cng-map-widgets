@@ -17,12 +17,18 @@ const REQUIRED_COLUMNS = ['name', 'name_norm', 'level', 'country', 'feature_id',
 // `Geocoder#_rankAndFilter`/`ranking.js` handle that throughout (ranking
 // sorts a missing `area_km2` last; the dropdown adapters just omit the
 // secondary-text line). See design doc §3.2's amendment, "Index columns".
-// `class` and `population` are the ranking-residual follow-up's pending
-// data columns (design doc §3.2 amendment, "Known residual limitation" /
-// task 5): Overture has not populated either yet on any shipped index, so
-// every row decodes with both `undefined` and the prominence tiebreak in
-// `ranking.js` is a no-op until they land -- adding them here is
-// documentation only, same as the others; nothing enforces their presence.
+// `class` and `population` come from the ranking-residual follow-up
+// (design doc §3.2 amendment, "Known residual limitation" / task 5) and
+// are real, populated data now, not the pending columns this comment used
+// to describe: the published Overture divisions index carries both, the
+// Who's On First names index carries `population` (no `class` column),
+// and a geoBoundaries CGAZ index carries neither. **Watch the decoded
+// type:** WOF types `population` as parquet `INT64`, which hyparquet
+// decodes as a `BigInt`, so anything consuming it must coerce
+// `number|bigint` rather than test for `number` -- geocoder.js's
+// `toFiniteNumber` is that coercion, and `ranking.js` keeps a matching
+// guard. Listing a column here is documentation plus projection; nothing
+// enforces its presence.
 // `alt_of` (an alt-name row's primary `feature_id`, E8/ranking-residual
 // follow-up) belongs on this list too -- it is read directly off the
 // decoded row (`row.alt_of`) in both ranking.js and geocoder.js's
