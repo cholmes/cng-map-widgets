@@ -14,13 +14,13 @@
 
 export const VERSION = '0.1.0';
 
-export { createShapefileFormat } from './shapefile-writer.js';
+export { createShapefileFormat, estimateShapefileBytes } from './shapefile-writer.js';
 export { writeDbf } from './dbf.js';
 export { SHAPE_TYPE, shapeFamilyOf, polygonRingsForShapefile, buildShapeRecordContent, assembleShpShx } from './shp.js';
 export { writeZipStored } from './zip.js';
 export { wkbToGeoJson } from './wkb-decode.js';
 
-import { createShapefileFormat } from './shapefile-writer.js';
+import { createShapefileFormat, estimateShapefileBytes } from './shapefile-writer.js';
 
 export const shapefileFormatDescriptor = {
   id: 'shapefile',
@@ -30,10 +30,7 @@ export const shapefileFormatDescriptor = {
   streaming: false,
   capabilities: { nestedColumns: false, mixedGeometryTypes: false, crs: ['OGC:CRS84', 'EPSG:4326'] },
   approxBytes: { min: 0, max: 2_000, estimate: 500 }, // this package's own code only -- no wasm, no CDN fetch
-  estimateBytes(schema, rows) {
-    const perRow = schema.length * 40 + 90;
-    return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-  },
+  estimateBytes: estimateShapefileBytes, // shared with the plugin, so the two can never drift
   async load() {
     return createShapefileFormat();
   },

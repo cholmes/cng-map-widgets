@@ -9,12 +9,12 @@
 
 export const VERSION = '0.1.0';
 
-export { createCsvFormat } from './csv.js';
-export { createEsriJsonFormat } from './esrijson.js';
+export { createCsvFormat, estimateCsvBytes } from './csv.js';
+export { createEsriJsonFormat, estimateEsriJsonBytes } from './esrijson.js';
 export { wkbToGeoJson, geometryToWkt, esriRingsOf } from './geometry.js';
 
-import { createCsvFormat } from './csv.js';
-import { createEsriJsonFormat } from './esrijson.js';
+import { createCsvFormat, estimateCsvBytes } from './csv.js';
+import { createEsriJsonFormat, estimateEsriJsonBytes } from './esrijson.js';
 
 /** Both resolve immediately -- no CDN fetch, nothing to lazily load. */
 export const csvFormatDescriptor = {
@@ -25,10 +25,9 @@ export const csvFormatDescriptor = {
   streaming: true,
   capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
   approxBytes: { min: 0, max: 1_000, estimate: 300 },
-  estimateBytes(schema, rows) {
-    const perRow = schema.length * 12 + 70;
-    return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-  },
+  // Shared with the plugin itself so the two can never drift (and still
+  // pure JS, no wasm, as `LazyFormatDescriptor.estimateBytes` requires).
+  estimateBytes: estimateCsvBytes,
   async load() {
     return createCsvFormat();
   },
@@ -42,10 +41,7 @@ export const esriJsonFormatDescriptor = {
   streaming: false,
   capabilities: { nestedColumns: false, mixedGeometryTypes: false, crs: ['OGC:CRS84', 'EPSG:4326'] },
   approxBytes: { min: 0, max: 1_000, estimate: 300 },
-  estimateBytes(schema, rows) {
-    const perRow = schema.length * 28 + 180;
-    return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-  },
+  estimateBytes: estimateEsriJsonBytes,
   async load() {
     return createEsriJsonFormat();
   },

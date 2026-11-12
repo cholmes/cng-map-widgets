@@ -18,6 +18,42 @@ function roundGeometry(geometry, precision) {
   return { ...geometry, coordinates: roundCoords(geometry.coordinates, precision) };
 }
 
+/**
+ * `FormatPlugin.estimateBytes` for `geojson` (design doc §3.4, item-7
+ * amendment: the optional third `ctx` argument).
+ *
+ * The geometry term is the honest half of this. Before item 7 this
+ * function modelled geometry as a flat 220 bytes/row, so it under-read
+ * every real dataset: 234,525 modelled against 963,287 written for the
+ * 795 FTW Liechtenstein fields, and 69,760 against 12,379,597 for 218
+ * geoBoundaries CGAZ ADM0 boundaries. `ctx.avgGeometryBytes` is the
+ * dataset's own average WKB bytes per row, read out of the footer (see
+ * `prune.js`'s `avgColumnBytesPerRow`), and the 1.55 factor is measured
+ * against it: summing `JSON.stringify(feature.geometry)` over the
+ * *written* output gives 1.50x the source WKB for FTW Liechtenstein, 1.53x
+ * for CGAZ ADM0 and 1.56x for CGAZ ADM1. The arithmetic behind it: a 2D
+ * coordinate is 16 bytes of WKB and, at this plugin's default
+ * `precision: 7`, about 25 bytes of JSON text (`[-9.1234568,47.1234568]`),
+ * i.e. 1.56x. A caller passing a lower `precision` makes this model
+ * conservative rather than wrong, which is the direction a ceiling check
+ * wants. The flat 40 bytes is the `{"type":"Polygon","coordinates":…}`
+ * wrapper, which only matters for tiny geometries.
+ *
+ * @param {readonly { name: string, type?: string }[]} schema
+ * @param {import('../bounded.js').Bounded} rows
+ * @param {{ avgGeometryBytes?: number|null }} [ctx]
+ * @returns {import('../bounded.js').Bounded}
+ */
+export function estimateGeoJsonBytes(schema, rows, ctx) {
+  // ~25 bytes of punctuation/keys per property + per-column value width.
+  // Measured: 91 B/row of non-geometry text for FTW's 3-column schema,
+  // 108 for CGAZ ADM0's 4.
+  const perRowProps = schema.length * 25;
+  const perRowGeometry = typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 1.55 + 40 : 220;
+  const perRow = perRowProps + perRowGeometry;
+  return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
+}
+
 /** @returns {import('../types.js').FormatPlugin} */
 export function createGeoJsonFormat() {
   return {
@@ -26,16 +62,7 @@ export function createGeoJsonFormat() {
     mediaType: 'application/geo+json',
     streaming: true,
     capabilities: { nestedColumns: true, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
-    estimateBytes(schema, rows) {
-      // Rough JSON text-size model: ~25 bytes of punctuation/keys per
-      // property + per-column value width, plus geometry text (WKB bytes
-      // decoded to coordinate text run noticeably larger -- ~3x is a
-      // common rule of thumb for small polygons).
-      const perRowProps = schema.length * 25;
-      const perRowGeometry = 220; // small polygon text, documented estimate
-      const perRow = perRowProps + perRowGeometry;
-      return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-    },
+    estimateBytes: estimateGeoJsonBytes,
     async open(ctx) {
       const precision = ctx.options.precision ?? 7;
       const newlineDelimited = ctx.options.newlineDelimited ?? false;

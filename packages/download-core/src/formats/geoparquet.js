@@ -44,6 +44,40 @@ const TYPE_MAP = {
   timestamp: 'TIMESTAMP',
 };
 
+/**
+ * `FormatPlugin.estimateBytes` for `geoparquet` (design doc §3.4, item-7
+ * amendment: the optional third `ctx` argument).
+ *
+ * GeoParquet writes the geometry back out as WKB, so its geometry term is
+ * `1.0 x ctx.avgGeometryBytes` -- the same bytes in, the same bytes out,
+ * before this plugin's SNAPPY codec gets at them. That factor is
+ * deliberately the *upper* end of what was measured, because how much
+ * snappy shaves off WKB depends entirely on the data and cannot be read
+ * off the source footer: reading the written file's own geometry column
+ * chunk back gives 36,849 B/row compressed against 37,052 uncompressed
+ * for geoBoundaries CGAZ ADM0 boundaries (0.99x -- irregular coastlines
+ * barely compress), but 220 against 781 for FTW Liechtenstein field
+ * boundaries (0.30x -- those are traced on a 10 m raster grid, so the
+ * high bytes of every coordinate repeat). Modelling 1.0 therefore lands
+ * within 1% on the first and about 3x high on the second, which is the
+ * safe direction for a ceiling check: the alternative under-reports a
+ * file that will not compress.
+ *
+ * @param {readonly { name: string, type?: string }[]} schema
+ * @param {import('../bounded.js').Bounded} rows
+ * @param {{ avgGeometryBytes?: number|null }} [ctx]
+ * @returns {import('../bounded.js').Bounded}
+ */
+export function estimateGeoParquetBytes(schema, rows, ctx) {
+  // Columnar + snappy: attribute columns are much denser than GeoJSON
+  // text. Measured 31 B/row of non-geometry bytes for FTW's 3-column
+  // schema plus its four covering columns, 54 for CGAZ ADM0's 4.
+  const perRowProps = schema.length * 10;
+  const perRowGeometry = typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 1.0 : 60;
+  const perRow = perRowProps + perRowGeometry;
+  return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
+}
+
 /** @returns {import('../types.js').FormatPlugin} */
 export function createGeoParquetFormat() {
   return {
@@ -52,12 +86,7 @@ export function createGeoParquetFormat() {
     mediaType: 'application/vnd.apache.parquet',
     streaming: false,
     capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
-    estimateBytes(schema, rows) {
-      // Columnar + zstd: much denser than GeoJSON text. ~40 bytes/row
-      // properties + ~60 bytes/row compressed WKB polygon, both rough.
-      const perRow = schema.length * 10 + 60;
-      return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-    },
+    estimateBytes: estimateGeoParquetBytes,
     async open(ctx) {
       // Loaded once, up front: `writeBatch` needs `geojsonToWkb` on every
       // row with geometry, not just at `close()` (which already awaited

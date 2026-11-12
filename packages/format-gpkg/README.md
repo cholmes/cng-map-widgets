@@ -121,6 +121,43 @@ ceiling check (`est.outputBytes.max > ceiling.blobBytes` for a
 non-streaming format) is what actually protects a page from a GeoPackage
 download large enough for this to matter.
 
+## Output-size estimates: the geometry term
+
+`estimateBytes(schema, rows, ctx)` takes an additive, optional third
+argument (`ctx.avgGeometryBytes`: the dataset's own average geometry
+bytes per row, derived from parquet footer statistics by `download-core`).
+`estimateGpkgBytes` is exported and shared by the plugin and
+`gpkgFormatDescriptor` — and is pure JS, so the descriptor models output
+bytes without loading sql.js, which is what
+`LazyFormatDescriptor.estimateBytes` requires. Called with two arguments
+it falls back to the old flat per-row constant.
+
+A GeoPackage geometry BLOB is the same WKB the source held plus an 8-byte
+GP header (this writer writes no envelope), so the geometry term is
+`1.05 × avgGeometryBytes + 8` — the 1.05 covering SQLite's record and
+overflow-page overhead around a large BLOB — plus
+`schema.length × 12 + 120` for the attribute columns and SQLite's
+per-row fixed cost (record header, page padding, the rtree row).
+
+Measured against the written file: 1,020 B/row for 795 FTW Liechtenstein
+field boundaries whose WKB is 745 B/row (that's where SQLite's fixed
+per-row cost shows, hence the 120), 11,725 against 10,895 for 400
+geoBoundaries CGAZ ADM1 units, 37,897 against 37,052 for 218 CGAZ ADM0
+boundaries.
+
+Modelled estimate ÷ bytes actually written:
+
+| dataset | before | after |
+|---|---|---|
+| 795 FTW Liechtenstein field boundaries | 84,270 / 811,008 = **0.10×** | 752,454 / 811,008 = **0.93×** |
+| 218 geoBoundaries CGAZ ADM0 boundaries | 25,724 / 8,261,632 = **0.003×** | 8,529,216 / 8,261,632 = **1.03×** |
+
+This matters here more than for a streaming format: the `blobBytes`
+ceiling check above reads `est.outputBytes.max`, and before this the
+number it checked modelled no geometry at all — so a GeoPackage download
+could sail under a 256 MiB blob ceiling and then try to build a
+multi-gigabyte database in the wasm heap.
+
 ## Running this package's tests
 
 ```

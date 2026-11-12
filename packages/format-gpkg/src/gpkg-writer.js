@@ -74,6 +74,37 @@ function unionBbox(a, b) {
 }
 
 /**
+ * `FormatPlugin.estimateBytes` for `gpkg` (design doc §3.4's optional
+ * third `ctx` argument, added for the item-7 geometry term; a plugin that
+ * ignores it keeps working, and this stays pure JS so the lazy
+ * descriptor can share it without loading sql.js).
+ *
+ * A GeoPackage geometry BLOB is the same WKB the source held plus an
+ * 8-byte GP header (this writer emits no envelope), so the geometry term
+ * is `ctx.avgGeometryBytes` nearly 1:1 -- 1.05 covers SQLite's own
+ * record/overflow-page overhead around a big BLOB. Measured against the
+ * written file: 11,725 B/row for 400 geoBoundaries CGAZ ADM1 boundaries
+ * whose WKB is 10,895 B/row (1.08x all-in), 37,897 against 37,052 for 218
+ * CGAZ ADM0 (1.02x), and 1,020 against 745 for 795 FTW Liechtenstein
+ * field boundaries -- that last one is where SQLite's per-row fixed cost
+ * shows, hence the 120 bytes/row constant. Before item 7 this modelled
+ * geometry as a flat 70 bytes/row: 84,270 against 811,008 written (FTW)
+ * and 25,724 against 8,261,632 (ADM0).
+ *
+ * @param {readonly { name: string, type?: string }[]} schema
+ * @param {{ min: number, max: number, estimate: number, exact: boolean }} rows
+ * @param {{ avgGeometryBytes?: number|null }} [ctx]
+ */
+export function estimateGpkgBytes(schema, rows, ctx) {
+  // ~12 bytes/column of SQLite record overhead + value width, plus a
+  // per-row fixed cost (record header, page padding, the rtree index row).
+  const perRowProps = schema.length * 12 + 120;
+  const perRowGeometry = typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 1.05 + 8 : 70;
+  const perRow = perRowProps + perRowGeometry;
+  return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
+}
+
+/**
  * @param {{ Database: new () => any }} SQL - sql.js's `initSqlJs()` result.
  * @returns {import('./types.js').FormatPlugin}
  */
@@ -84,16 +115,7 @@ export function createGpkgFormat(SQL) {
     mediaType: 'application/geopackage+sqlite3',
     streaming: false,
     capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
-    estimateBytes(schema, rows) {
-      // SQLite row overhead (page headers, varint lengths) plus our own
-      // header bytes (8/row, no envelope) make this a little heavier than
-      // the equivalent GeoParquet row, text-ish columns aside: ~12
-      // bytes/column of SQLite record overhead + value width, ~70
-      // bytes/row for a small polygon's WKB + GP header. Rough, like every
-      // other format's model here (`exact: false`).
-      const perRow = schema.length * 12 + 70;
-      return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-    },
+    estimateBytes: estimateGpkgBytes,
     async open(ctx) {
       const layerName = ctx.options?.layerName || 'features';
       const srsId = (ctx.crs === 'EPSG:4326' || ctx.crs === 'OGC:CRS84' || !ctx.crs) ? 4326 : null;

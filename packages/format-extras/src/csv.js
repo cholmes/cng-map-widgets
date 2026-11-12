@@ -20,6 +20,40 @@ function sanitizeValue(v) {
   return v;
 }
 
+/**
+ * `FormatPlugin.estimateBytes` for `csv` (design doc §3.4's optional third
+ * `ctx` argument, added for the item-7 geometry term; a plugin that
+ * ignores it keeps working).
+ *
+ * WKT geometry is most of a CSV row, and before item 7 this model counted
+ * none of it -- 84,270 bytes modelled against 1,423,923 written for the
+ * 795 FTW Liechtenstein field boundaries, 25,724 against 19,217,657 for
+ * 218 geoBoundaries CGAZ ADM0 boundaries. `ctx.avgGeometryBytes` is the
+ * dataset's own average WKB bytes per row, read out of the parquet footer,
+ * and 2.4 is measured against it by summing the WKT cell of every written
+ * row: 2.37x the source WKB for FTW Liechtenstein, 2.38x for CGAZ ADM0,
+ * 2.40x for CGAZ ADM1. It is higher than GeoJSON's 1.55x for one concrete
+ * reason -- `geometryToWkt` writes coordinates at full JS double precision
+ * (`-9.521234567890123 47.123456789012345`, ~37 bytes a pair) where the
+ * geojson plugin rounds to `precision` (7 by default, ~25 bytes a pair),
+ * against 16 bytes of WKB. The flat 16 bytes covers `POLYGON ((` … `))`
+ * and the two quote characters the writer adds because WKT contains
+ * commas.
+ *
+ * @param {readonly { name: string, type?: string }[]} schema
+ * @param {{ min: number, max: number, estimate: number, exact: boolean }} rows
+ * @param {{ avgGeometryBytes?: number|null }} [ctx]
+ */
+export function estimateCsvBytes(schema, rows, ctx) {
+  // Plain ASCII text, no escaping overhead in the common case: ~12
+  // bytes/column of attribute value + delimiter. Measured 26 B/row of
+  // non-geometry text for FTW's 3-column schema, 20 for CGAZ ADM0's 4.
+  const perRowProps = schema.length * 12;
+  const perRowGeometry = typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 2.4 + 16 : 70;
+  const perRow = perRowProps + perRowGeometry;
+  return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
+}
+
 /** @returns {import('./types.js').FormatPlugin} */
 export function createCsvFormat() {
   return {
@@ -28,14 +62,7 @@ export function createCsvFormat() {
     mediaType: 'text/csv',
     streaming: true,
     capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
-    estimateBytes(schema, rows) {
-      // Plain ASCII text, no escaping overhead in the common case: ~12
-      // bytes/column + ~70 bytes/row for a WKT-encoded small polygon
-      // (WKT is noticeably more verbose than WKB -- every coordinate is
-      // decimal text, not 8 raw bytes).
-      const perRow = schema.length * 12 + 70;
-      return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-    },
+    estimateBytes: estimateCsvBytes,
     async open(ctx) {
       const delimiter = ctx.options?.delimiter ?? ',';
       const geometryMode = ctx.options?.geometry ?? 'wkt';

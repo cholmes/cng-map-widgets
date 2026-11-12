@@ -6,7 +6,7 @@ import { CnmwError } from '@cnmw/spec';
 import { resolveDataset } from './dataset-resolve.js';
 import { enumeratePartitions, partitionPruneCascade } from './partitions.js';
 import { openParquetFile } from './parquet-io.js';
-import { pruneRowGroupsByBBox, pruneRowGroupsByTime, readBytesForRowGroups, coveringPaths } from './prune.js';
+import { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, readBytesForRowGroups, coveringPaths, avgColumnBytesPerRow } from './prune.js';
 import { resolveOutputColumns, resolveReadColumns } from './columns.js';
 import { defaultCeiling, requirementsOf } from './ceiling.js';
 import { boundedExact, boundedRange, sumBounded, capBounded, isEstimateWide } from './bounded.js';
@@ -105,7 +105,12 @@ export async function planRequest(dataset, area, filter, options = {}) {
     allRowGroupsTotal += handle.rowGroups.length;
     const bboxPrune = pruneRowGroupsByBBox(handle.rowGroups, covering, areaBBoxes);
     const timePrune = pruneRowGroupsByTime(bboxPrune.selected, table.timeColumn ?? null, filter.time);
-    perPart.push({ part, handle, selectedRowGroups: timePrune.selected, bboxPrune, timePrune });
+    // `where[]` pushdown runs last in the row-group cascade: it is the
+    // cheapest stage to report honestly (statistics it cannot decide
+    // simply keep the row group) and it narrows what the bbox/time stages
+    // already selected, so its `before` is their `after`.
+    const wherePrune = pruneRowGroupsByWhere(timePrune.selected, filter.where);
+    perPart.push({ part, handle, selectedRowGroups: wherePrune.selected, bboxPrune, timePrune, wherePrune });
   }
   if (!table) {
     // No parts at all (every part pruned before footer read, e.g. the
@@ -130,9 +135,27 @@ export async function planRequest(dataset, area, filter, options = {}) {
     after: perPart.reduce((n, p) => n + p.timePrune.stage.after, 0),
     basis: filter.time ? `time ${table.timeColumn ?? '(none declared)'} window` : 'no time filter',
   };
+  const rowGroupWhereStage = {
+    stage: 'row-group-where',
+    before: perPart.reduce((n, p) => n + p.wherePrune.stage.before, 0),
+    after: perPart.reduce((n, p) => n + p.wherePrune.stage.after, 0),
+    basis: perPart[0]?.wherePrune.stage.basis ?? (filter.where?.length ? 'every part pruned before its footer was read' : 'no where filter'),
+  };
+  const whereDecidable = perPart.some((p) => p.wherePrune.decidable);
+  const whereStatsSeen = perPart.some((p) => p.wherePrune.statsSeen);
 
   const selectedRowGroups = perPart.flatMap((p) => p.selectedRowGroups);
   const readBytes = sumBounded(perPart.map((p) => readBytesForRowGroups(p.selectedRowGroups, readColumns)));
+
+  // Item 7: the dataset's own average geometry bytes per row, derived from
+  // footer metadata only, so `FormatPlugin.estimateBytes` can model the
+  // geometry it actually has to write instead of a per-format constant.
+  // Measured over the *selected* row groups (the ones this query will
+  // read), falling back to every row group in the selected parts when the
+  // cascade pruned them all away, so a tiny selection still gets the
+  // file's own figure rather than nothing.
+  const geometryBytesSource = selectedRowGroups.length > 0 ? selectedRowGroups : perPart.flatMap((p) => p.handle.rowGroups);
+  const avgGeometryBytes = avgColumnBytesPerRow(geometryBytesSource, geometryColumn);
 
   // --- row-count estimate (O12: metadata-only, with a bbox-area-overlap
   // selectivity heuristic when an Area is present) -----------------------
@@ -157,6 +180,10 @@ export async function planRequest(dataset, area, filter, options = {}) {
     partStages,
     rowGroupBboxStage,
     rowGroupStatsStage,
+    rowGroupWhereStage,
+    whereDecidable,
+    whereStatsSeen,
+    avgGeometryBytes,
     parts,
     selectedParts,
     allRowGroupsTotal,
@@ -279,6 +306,12 @@ export async function finalizeEstimate(plan, area, filter, options = {}, t0 = pe
   if (filter.time && plan.rowGroupStatsStage.before === plan.rowGroupStatsStage.after && !plan.table.timeColumn) {
     warnings.push({ code: 'no-statistics', message: 'No declared time column; the time filter could not prune row groups.' });
   }
+  // Honest about `where[]` pushdown: say so when the predicate *could*
+  // have pruned from statistics but the files carry none for its columns,
+  // rather than letting a full scan look like an unselective predicate.
+  if (plan.whereDecidable && !plan.whereStatsSeen) {
+    warnings.push({ code: 'no-statistics', message: 'No column statistics for the where[] predicate columns; the predicate could not prune row groups and is applied per row after the read.' });
+  }
 
   const breaches = [];
   if (plan.rows.max > ceiling.rows) breaches.push('rows');
@@ -298,7 +331,7 @@ export async function finalizeEstimate(plan, area, filter, options = {}, t0 = pe
     files: { total: plan.parts.length, selected: plan.selectedParts.length },
     rowGroups: { total: plan.allRowGroupsTotal, selected: plan.selectedRowGroupsTotal },
     requests: plan.requests,
-    prune: [...plan.partStages, plan.rowGroupBboxStage, plan.rowGroupStatsStage],
+    prune: [...plan.partStages, plan.rowGroupBboxStage, plan.rowGroupStatsStage, plan.rowGroupWhereStage],
     columns: plan.outputColumns,
     warnings,
     ceiling: { exceeded: breaches.length > 0, limits: ceiling, breaches },

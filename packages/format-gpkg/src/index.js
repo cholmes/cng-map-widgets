@@ -19,11 +19,11 @@
 
 export const VERSION = '0.1.0';
 
-export { createGpkgFormat } from './gpkg-writer.js';
+export { createGpkgFormat, estimateGpkgBytes } from './gpkg-writer.js';
 export { CDN, APPROX_BYTES, loadSqlJs, setSqlJsModule, clearSqlJsModule } from './cdn.js';
 export { geojsonToWkb, gpkgGeometryBlob, wkbTypeName } from './wkb.js';
 
-import { createGpkgFormat } from './gpkg-writer.js';
+import { createGpkgFormat, estimateGpkgBytes } from './gpkg-writer.js';
 import { loadSqlJs, APPROX_BYTES } from './cdn.js';
 
 /**
@@ -41,10 +41,10 @@ export const gpkgFormatDescriptor = {
   streaming: false,
   capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
   approxBytes: APPROX_BYTES,
-  estimateBytes(schema, rows) {
-    const perRow = schema.length * 12 + 70;
-    return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-  },
+  // Shared with the plugin, so the descriptor's estimate and the loaded
+  // plugin's can never disagree -- and still pure JS (no sql.js needed to
+  // model bytes-per-row), as `LazyFormatDescriptor.estimateBytes` requires.
+  estimateBytes: estimateGpkgBytes,
   async load() {
     const SQL = await loadSqlJs();
     return createGpkgFormat(SQL);

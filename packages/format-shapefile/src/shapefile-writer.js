@@ -61,6 +61,40 @@ function geometryBbox(geometry) {
   return [xmin, ymin, xmax, ymax];
 }
 
+/**
+ * `FormatPlugin.estimateBytes` for `shapefile` (design doc §3.4's optional
+ * third `ctx` argument, added for the item-7 geometry term; pure JS, so
+ * the lazy descriptor shares it).
+ *
+ * A shapefile shape record stores the same float64 coordinate pairs WKB
+ * does, so the geometry term is `ctx.avgGeometryBytes` at 1.0, plus 60
+ * bytes/row of fixed structure: the 8-byte .shp record header, the
+ * polygon record's own header (type + bbox + part counts), and the 8-byte
+ * .shx index entry. The .zip this plugin writes is *stored*, not
+ * deflated, so none of that is compressed away. Measured against the
+ * written archive: 942 B/row for 795 FTW Liechtenstein field boundaries
+ * whose WKB is 745 B/row, 11,165 against 10,895 for 400 geoBoundaries
+ * CGAZ ADM1, 37,228 against 37,052 for 218 CGAZ ADM0 -- 1.00-1.02x
+ * all-in once the dBase record is accounted for. Before item 7 this
+ * modelled geometry as a flat 90 bytes/row and reported 166,950 against
+ * 748,985 written (FTW), 54,500 against 8,115,740 (ADM0).
+ *
+ * @param {readonly { name: string, type?: string }[]} schema
+ * @param {{ min: number, max: number, estimate: number, exact: boolean }} rows
+ * @param {{ avgGeometryBytes?: number|null }} [ctx]
+ */
+export function estimateShapefileBytes(schema, rows, ctx) {
+  // dBase fixed-width records are plain-text digits/chars, no
+  // compression: typically *heavier* per row than GeoParquet or even
+  // GeoJSON for numeric-heavy schemas. ~40 bytes/column (the generous
+  // field widths this plugin declares) + 90 bytes/row of .dbf/.shx/zip
+  // structure.
+  const perRowProps = schema.length * 40 + 90;
+  const perRowGeometry = typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 1.0 + 60 : 0;
+  const perRow = perRowProps + perRowGeometry;
+  return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
+}
+
 /** @returns {import('./types.js').FormatPlugin} */
 export function createShapefileFormat() {
   return {
@@ -69,15 +103,7 @@ export function createShapefileFormat() {
     mediaType: 'application/zip',
     streaming: false,
     capabilities: { nestedColumns: false, mixedGeometryTypes: false, crs: ['OGC:CRS84', 'EPSG:4326'] },
-    estimateBytes(schema, rows) {
-      // dBase fixed-width records are plain-text digits/chars, no
-      // compression: typically *heavier* per row than GeoParquet or even
-      // GeoJSON for numeric-heavy schemas. ~40 bytes/column (generous
-      // field widths this plugin declares) + ~90 bytes/row for a small
-      // polygon's shape record.
-      const perRow = schema.length * 40 + 90;
-      return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-    },
+    estimateBytes: estimateShapefileBytes,
     async open(ctx) {
       if (ctx.crs !== 'EPSG:4326' && ctx.crs !== 'OGC:CRS84' && ctx.crs) {
         const { CnmwError } = await import('@cnmw/spec');

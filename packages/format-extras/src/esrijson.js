@@ -55,6 +55,30 @@ function esriGeometryOf(geometry) {
   }
 }
 
+/**
+ * `FormatPlugin.estimateBytes` for `esrijson` (design doc §3.4's optional
+ * third `ctx` argument, added for the item-7 geometry term).
+ *
+ * Esri JSON rings are full-precision coordinate text, so the geometry
+ * term tracks CSV's WKT rather than GeoJSON's rounded text: measured
+ * against the dataset's own WKB bytes per row (`ctx.avgGeometryBytes`,
+ * from the parquet footer), the written output runs ~2.39x for the 795
+ * FTW Liechtenstein field boundaries and ~2.44x for 218 geoBoundaries
+ * CGAZ ADM0 boundaries; 2.45 is the top of that range. Before item 7 this
+ * modelled geometry as a flat 180 bytes/row and reported 209,880 bytes
+ * against 1,500,215 written (FTW) and 63,656 against 19,728,426 (ADM0).
+ *
+ * @param {readonly { name: string, type?: string }[]} schema
+ * @param {{ min: number, max: number, estimate: number, exact: boolean }} rows
+ * @param {{ avgGeometryBytes?: number|null }} [ctx]
+ */
+export function estimateEsriJsonBytes(schema, rows, ctx) {
+  const perRowProps = schema.length * 28; // verbose JSON attribute keys, repeated per feature
+  const perRowGeometry = typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 2.45 + 20 : 180;
+  const perRow = perRowProps + perRowGeometry;
+  return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
+}
+
 /** @returns {import('./types.js').FormatPlugin} */
 export function createEsriJsonFormat() {
   return {
@@ -63,10 +87,7 @@ export function createEsriJsonFormat() {
     mediaType: 'application/json',
     streaming: false,
     capabilities: { nestedColumns: false, mixedGeometryTypes: false, crs: ['OGC:CRS84', 'EPSG:4326'] },
-    estimateBytes(schema, rows) {
-      const perRow = schema.length * 28 + 180; // verbose JSON keys per feature, plus Esri's ring/path nesting
-      return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-    },
+    estimateBytes: estimateEsriJsonBytes,
     async open(ctx) {
       if (ctx.crs !== 'EPSG:4326' && ctx.crs !== 'OGC:CRS84' && ctx.crs) {
         const { CnmwError } = await import('@cnmw/spec');

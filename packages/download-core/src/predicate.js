@@ -36,13 +36,51 @@ function likeToRegExp(pattern, caseInsensitive) {
   return new RegExp(`^${re}$`, caseInsensitive ? 'is' : 's');
 }
 
+/**
+ * Exact three-way compare of a BigInt against a double, at any magnitude.
+ *
+ * `Math.floor` of a finite double is itself integer-valued, so `BigInt()`
+ * of it is exact even past 2^53 -- which is why this does not simply
+ * widen one side to the other's type. The previous version of
+ * `compareScalar` coerced the float side with `BigInt(Math.trunc(n))`,
+ * which made `0n < 0.5` evaluate to *false*: every INT64 column compared
+ * against a fractional threshold filtered wrongly, and
+ * `prune.js`'s `where[]` pushdown (which must agree with this function
+ * row for row) had to refuse that whole case to stay sound.
+ */
+export function compareBigIntToNumber(bi, num) {
+  if (Number.isNaN(num)) return null;
+  if (num === Infinity) return -1;
+  if (num === -Infinity) return 1;
+  const floor = BigInt(Math.floor(num));
+  if (bi < floor) return -1;
+  if (bi > floor) return 1;
+  // bi === floor(num): equal only when num is itself an integer, else
+  // floor(num) < num, so bi < num.
+  return Number.isInteger(num) ? 0 : -1;
+}
+
 function compareScalar(a, b) {
   if (a === null || a === undefined || b === null || b === undefined) return null;
   if (a instanceof Date) a = a.getTime();
   if (b instanceof Date) b = b.getTime();
-  if (typeof a === 'bigint' || typeof b === 'bigint') {
-    a = typeof a === 'bigint' ? a : BigInt(Math.trunc(Number(a)));
-    b = typeof b === 'bigint' ? b : BigInt(Math.trunc(Number(b)));
+  const aBig = typeof a === 'bigint';
+  const bBig = typeof b === 'bigint';
+  if (aBig || bBig) {
+    if (aBig && bBig) return a < b ? -1 : a > b ? 1 : 0;
+    const other = aBig ? b : a;
+    // A BigInt against anything but a number/boolean is not comparable:
+    // the old coercion ran `BigInt(Math.trunc(Number('abc')))`, which
+    // throws, and `BigInt(…)` of a true/false reads as 1n/0n, which is
+    // the one widening that is actually exact.
+    if (typeof other === 'boolean') {
+      const bigSide = aBig ? a : b;
+      const cmp = compareBigIntToNumber(bigSide, other ? 1 : 0);
+      return cmp === null ? null : aBig ? cmp : -cmp;
+    }
+    if (typeof other !== 'number') return null;
+    const cmp = aBig ? compareBigIntToNumber(a, b) : compareBigIntToNumber(b, a);
+    return cmp === null ? null : aBig ? cmp : -cmp;
   }
   if (a < b) return -1;
   if (a > b) return 1;

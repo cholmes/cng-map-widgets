@@ -7,11 +7,11 @@
 
 export const VERSION = '0.1.0';
 
-export { createFlatGeobufFormat } from './flatgeobuf-writer.js';
+export { createFlatGeobufFormat, estimateFlatGeobufBytes } from './flatgeobuf-writer.js';
 export { CDN, APPROX_BYTES, loadFlatGeobuf, setFlatGeobufModule, clearFlatGeobufModule } from './cdn.js';
 export { wkbToGeoJson } from './wkb-decode.js';
 
-import { createFlatGeobufFormat } from './flatgeobuf-writer.js';
+import { createFlatGeobufFormat, estimateFlatGeobufBytes } from './flatgeobuf-writer.js';
 import { loadFlatGeobuf, APPROX_BYTES } from './cdn.js';
 
 export const flatGeobufFormatDescriptor = {
@@ -22,10 +22,7 @@ export const flatGeobufFormatDescriptor = {
   streaming: false,
   capabilities: { nestedColumns: true, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
   approxBytes: APPROX_BYTES,
-  estimateBytes(schema, rows) {
-    const perRow = schema.length * 15 + 50;
-    return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
-  },
+  estimateBytes: estimateFlatGeobufBytes, // shared with the plugin, so the two can never drift
   async load() {
     const mod = await loadFlatGeobuf();
     return createFlatGeobufFormat(mod);

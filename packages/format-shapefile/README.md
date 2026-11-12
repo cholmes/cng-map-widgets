@@ -72,6 +72,35 @@ hole-subtracted area (64.0 for a 10×10 square with a 6×6 hole punched
 out); a winding bug would report 100 (hole ignored) or a self-intersecting
 mess.
 
+## Output-size estimates: the geometry term
+
+`estimateBytes(schema, rows, ctx)` takes an additive, optional third
+argument (`ctx.avgGeometryBytes`: the dataset's own average geometry
+bytes per row, derived from parquet footer statistics by `download-core`).
+`estimateShapefileBytes` is exported and shared by the plugin and
+`shapefileFormatDescriptor`, so the two can never drift; called with two
+arguments it falls back to the old flat per-row constant.
+
+A shapefile shape record stores the same float64 coordinate pairs WKB
+does, and the `.zip` this plugin writes is **stored, not deflated**, so
+nothing is compressed away. The geometry term is therefore
+`1.0 × avgGeometryBytes + 60` — the 60 being the 8-byte `.shp` record
+header, the polygon record's own header (type, bbox, part counts) and the
+8-byte `.shx` index entry — on top of the existing
+`schema.length × 40 + 90` dBase/zip term.
+
+Measured against the written archive: 942 B/row for 795 FTW Liechtenstein
+field boundaries whose WKB is 745 B/row, 11,165 against 10,895 for 400
+geoBoundaries CGAZ ADM1 units, 37,228 against 37,052 for 218 CGAZ ADM0
+boundaries — 1.00–1.02× all-in once the dBase record is accounted for.
+
+Modelled estimate ÷ bytes actually written:
+
+| dataset | before | after |
+|---|---|---|
+| 795 FTW Liechtenstein field boundaries | 166,950 / 748,985 = **0.22×** | 807,101 / 748,985 = **1.08×** |
+| 218 geoBoundaries CGAZ ADM0 boundaries | 54,500 / 8,115,740 = **0.007×** | 8,154,102 / 8,115,740 = **1.00×** |
+
 ## What you give up versus GeoPackage/GeoParquet
 
 - No nested/struct columns — dBase III has no such concept (the design
