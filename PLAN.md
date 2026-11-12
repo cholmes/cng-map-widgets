@@ -1,5 +1,45 @@
 # Cloud-Native Map Widgets — Experiment Plan
 
+> **Overnight ledger (2026-11-12 → 13).** Everything below landed, each
+> verified by its agent AND re-verified at integration (suite 584/584,
+> verify:docs 60/60, three local servers live):
+> E10 heavy formats (terrio: works, 6.1MB gz — rejected on weight; shipped
+> format-gpkg 339KB / shapefile ~5KB / flatgeobuf 10KB / csv+esrijson ~2KB,
+> all ogrinfo/duckdb-validated, lazy-loaded with weight notices, proven in a
+> real browser via network capture) · E11 raster (COG window+band-subset →
+> valid GeoTIFF in-browser, 0 mismatched pixels of 8.4M vs GDAL; geotiff.js
+> writer unusable — replaced; shipped raster-core ~27KB + demo) ·
+> whosonfirst-catalog built+pushed (9.5M-row gazetteer, license:"other" with
+> per-source evidence, 4 data defects fixed, upstream layout measured as the
+> mirror justification; awaiting source.coop repo) · library docs (README,
+> per-package APIs, AGENTS.md for AI consumers, 58→60 verified snippet
+> groups, examples gallery, MIT placeholder) · search UX (highlighting incl.
+> alt matches, two-wave merge — which had never reached the DOM, IME gating,
+> friendly labels, dark mode, error/retry; OL control leaks fixed) ·
+> ranking (alt-demotion: Deutschland/中国 exact-alt #1; then
+> population promotion ≥100K after finding WOF's INT64 population was
+> silently dropped as BigInt: Brooklyn borough #1, Baghdad city #7→#1) ·
+> range latency ("a" 34–44s → ~1.8s first results, streamed, truncation
+> flagged) · download perf (parallel reads 11× on 825-request S2 query;
+> predicate pushdown 77.6% fewer bytes where stats allow — 4 of 6 real
+> predicates prune nothing, upstream-advocacy material) · API hardening
+> (blocked handle rejects + acceptCeiling continuation, honest CANCELLED,
+> BigInt-safe JSON, observable format loads, geometry-aware output
+> estimates 0.006×→1.01×, DEFAULT_INDEX_URL → published manifest, doc-drift
+> §8) · portolan-browser card (multi-asset picker, time filters: FIRMS
+> 10.2GB→962MB, pause/resume/cancel/success, 7 formats in-app, mobile,
+> en+es; 912 unit/253 e2e) · finisher in flight: AreaDownload new-contract
+> update + 2 download-core API lies.
+> **Upstream-report queue (not filed):** hyparquet ×3 + geoparquet-2.0
+> unconditional decode · geotiff.js writer truncation/geokey corruption ·
+> gpq null-geometry panic · geoBoundaries mojibake/invalid-geoms/ADM1-drift
+> · FIRMS extent vs newest partition + row-group stats · fieldmaps STAC
+> license field · sort-on-filtered-column advocacy.
+> **Chris's queue:** WOF source.coop repo · MIT confirm · @cnmw scope ·
+> gbOpen ADM3/4 (rec: skip) · browser-card decisions (date-window ≥2yr
+> default, "More formats" grouping, CDN writers) · tge-labs deletion after
+> cutover.
+
 > **Naming decision (2026-11-12, Chris):** the DATA products are **cloud-native
 > gazetteers** — the names indexes and the catalogs that publish them
 > (geoboundaries-catalog, cn-gazetteer-overture — renamed from
