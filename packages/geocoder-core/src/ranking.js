@@ -28,6 +28,68 @@ export const DEFAULT_EXACT_LEVEL_PROMOTION = 1;
  *  doc comment for why. */
 export const DEFAULT_ALT_LEVEL_DEMOTION = 1;
 
+/** Default population at or above which a row earns the bounded
+ *  population promotion below (`DEFAULT_POPULATION_LEVEL_PROMOTION`), per
+ *  the 2026-11-12 "population-promotion" follow-up amendment -- the third
+ *  bounded `effLevel` adjustment, alongside the exact-match promotion and
+ *  the alt-row demotion above.
+ *
+ *  **Chosen from measurement, not taste.** Swept live against the Who's
+ *  On First names index (9.48M rows; `population` populated on 4,075 of
+ *  the 12,800 rows in the row group holding "brooklyn", so ~32%) for the
+ *  query "brooklyn", whose target -- Brooklyn the New York borough,
+ *  `level` 4, `population` 2,504,700 -- did not appear in the top 8 at
+ *  all, buried below `localadmin` townships of 318-11,022 people whose
+ *  `level` 3 decided the comparison at component (1), before any
+ *  prominence tiebreak was reached. Five thresholds, same script, same
+ *  seven other queries (full tables in the amendment):
+ *
+ *  - `10_000`: **breaks the target case outright.** Brooklyn, Ohio
+ *    (`level` 3, population 11,022) clears the threshold too, is promoted
+ *    to `effLevel` 1, and takes position 1 *from* the borough, which lands
+ *    at 2. Also pulls Brooklyn Park (75,781) and Brooklyn Center (30,104)
+ *    -- `prefix` matches, not even exact -- into positions 4-5. The WOF
+ *    population distribution's p90 is ~13.8k, so a 10k threshold promotes
+ *    roughly a tenth of every populated row and discriminates nothing.
+ *  - `50_000`: fixes the target (borough at 1). Costs one place on
+ *    "brooklyn": Brooklyn Park, Minnesota (75,781) is promoted to
+ *    `effLevel` 2 and takes position 4 as a mere `prefix` match, pushing
+ *    an `exact` "Brooklyn" (uMlalazi, ZAF) out of the top 8. Slightly
+ *    *better* than `100_000` on Overture's "bag": Bagua, Peru (95,858)
+ *    clears 50k and rises 6 -> 2.
+ *  - `100_000`: **shipped.** Fixes the target (borough at 1) with no
+ *    `prefix`-over-`exact` inversion anywhere in the eight measured
+ *    query/index pairs. Best measured "springfield": Springfield,
+ *    Massachusetts (153,672) at 1 and Springfield, Missouri (171,589) at
+ *    2, i.e. the two genuinely large Springfields on top, ordered by
+ *    level-then-population exactly as the bounded design intends.
+ *  - `250_000`: identical to `100_000` on seven of the eight pairs, but
+ *    drops Springfield, Missouri (171,589) from position 2 to 6 -- the
+ *    second-most-obvious thing the promotion should fix, lost.
+ *  - `1_000_000`: still fixes "brooklyn" (2.5M) and "baghdad" (7.2M), but
+ *    loses Springfield, Missouri the same way *and* London, Ontario
+ *    (346,765, position 3 at `100_000`, position 6 here). Cleanest "paris"
+ *    of the five, which is the one argument in its favour. Too high.
+ *
+ *  `100_000` is where the two measured failure modes meet: below it,
+ *  `prefix`-matched mid-size towns start out-ranking `exact` matches on
+ *  the queried name; above it, genuinely large cities (Springfield MO,
+ *  London ON) stop being reachable. It is not a plateau -- every
+ *  neighbouring value measurably changes something -- so it is a real
+ *  choice between measured costs, not a round number picked for looks.
+ *  Override per `Geocoder` with
+ *  `ranking: { populationPromotionThreshold: n }`; `Infinity` disables the
+ *  promotion entirely and restores the pre-amendment `effLevel`s. */
+export const DEFAULT_POPULATION_PROMOTION_THRESHOLD = 100_000;
+
+/** Default admin-level promotion granted to a row whose `population` is at
+ *  or above `DEFAULT_POPULATION_PROMOTION_THRESHOLD`. **Bounded to one
+ *  level**, exactly like `DEFAULT_EXACT_LEVEL_PROMOTION` and
+ *  `DEFAULT_ALT_LEVEL_DEMOTION`: a 2.5-million-person `level` 4 borough is
+ *  treated as a `level` 3 for ordering purposes, never as a `level` 0
+ *  country. See `rankRow` and `compareRanked`. */
+export const DEFAULT_POPULATION_LEVEL_PROMOTION = 1;
+
 /** Default result-diversity options (design doc §3.2 amendment, "Result
  *  diversity"): collapse exact (name_norm, country, level) duplicates to
  *  one row, then cap at 3 rows per (country, level) group. */
@@ -91,7 +153,7 @@ export function computeViewportRank(featureBBox, viewport, nearFactor) {
  * against one query. Returns null if the row does not match under the
  * allowed match classes.
  *
- * @param {{ nameNorm: string, level: number, bbox: BBox, featureId: string, areaKm2?: number|null, population?: number|null, class?: string|null, isAlt?: boolean }} row
+ * @param {{ nameNorm: string, level: number, bbox: BBox, featureId: string, areaKm2?: number|null, population?: number|bigint|null, class?: string|null, isAlt?: boolean }} row
  * @param {string} queryNorm
  * @param {{
  *   viewport?: BBox,
@@ -100,6 +162,8 @@ export function computeViewportRank(featureBBox, viewport, nearFactor) {
  *   matchClasses: readonly MatchClass[],
  *   exactLevelPromotion?: number,
  *   altLevelDemotion?: number,
+ *   populationPromotionThreshold?: number,
+ *   populationLevelPromotion?: number,
  * }} options
  * @returns {{ matchClass: MatchClass, level: number, effLevel: number, levelAdjusted: number, viewportRank: ViewportRank, nameLength: number, areaKm2: number|undefined, population: number|undefined, class: string|undefined, isAlt: boolean } | null}
  */
@@ -135,7 +199,56 @@ export function rankRow(row, queryNorm, options) {
   // penalizing it would be exactly backwards from what alt names are for.
   const demotion = isAlt && !isExact ? (options.altLevelDemotion ?? DEFAULT_ALT_LEVEL_DEMOTION) : 0;
 
-  const effLevel = Math.max(0, row.level - promotion + demotion);
+  // Bounded population promotion (2026-11-12 "population-promotion"
+  // follow-up, the third adjustment of the same shape as the two above): a
+  // row whose `population` is at or above `populationPromotionThreshold`
+  // is treated as if it sat `populationLevelPromotion` (default `1`) admin
+  // levels *higher* (closer to ADM0) than it really does. This is what
+  // lets Brooklyn-the-borough (WOF `level` 4, population 2,504,700) reach
+  // the same `effLevel` rung as the `level`-3 `localadmin` townships of
+  // 300-11,000 people that otherwise decide "brooklyn" outright at
+  // `compareRanked` component (1), long before the prominence tiebreak is
+  // reached. See `DEFAULT_POPULATION_PROMOTION_THRESHOLD` for the measured
+  // threshold sweep and `compareRanked` for why prominence had to move
+  // ahead of raw `level` for this adjustment to be able to decide anything.
+  //
+  // **`demotion === 0` is the one gate, and it is measured, not
+  // defensive.** A row that took the alt demotion does *not* also get the
+  // population promotion: the two are the same magnitude and would exactly
+  // cancel, handing a non-exact alt-name match back the level privilege the
+  // alt demotion exists to take away -- on the strength of the population
+  // of the division whose name it merely transliterates. Measured both
+  // ways, same queries, same script:
+  //  - ungated, "paris" (WOF): the Jamaican ADM1 alt rows "Parish of Saint
+  //    Catherine" (516,218), "Parish of Manchester" (189,797) and "Parish
+  //    of Saint James" (183,811) -- `prefix` matches -- have their
+  //    demotion cancelled, reach `effLevel` 1 and take positions 3-5,
+  //    pushing the `exact` "Paris, Paris, FRA" row (2,138,551) down to 6.
+  //    A `prefix` hit on a Jamaican parish out-ranking an `exact` hit on
+  //    Paris is plainly the wrong answer.
+  //  - ungated, "bag" (Overture): "Bagraain" (an alt spelling of Bahrain,
+  //    ADM0, 1,234,571) has its demotion cancelled and keeps position 1 --
+  //    re-opening precisely the bug the 2026-11-12 alt-demotion amendment
+  //    closed.
+  //  - gated (shipped): "paris" positions 1-4 are all genuine Paris rows
+  //    and the parishes fall to 6-8, *better* than the pre-amendment
+  //    baseline; "bag" position 1 becomes Bağcılar (TUR ADM2, primary,
+  //    719,071), clearing all four Bahrain/Bahamas ADM0 alt rows for the
+  //    first time -- the improvement the alt-demotion amendment wanted and
+  //    measured itself unable to reach.
+  // Brooklyn and Baghdad are untouched by the gate: their English-language
+  // rows *are* alt rows, but they are `exact` matches, so `isExact` already
+  // exempted them from the demotion and the gate is open for them. That is
+  // also why the promotion is not restricted to primary rows -- a `!isAlt`
+  // gate would leave both target cases exactly where they started.
+  const population = toPopulation(row.population);
+  const populationThreshold = options.populationPromotionThreshold ?? DEFAULT_POPULATION_PROMOTION_THRESHOLD;
+  const populationPromotion =
+    demotion === 0 && population !== undefined && population >= populationThreshold
+      ? (options.populationLevelPromotion ?? DEFAULT_POPULATION_LEVEL_PROMOTION)
+      : 0;
+
+  const effLevel = Math.max(0, row.level - promotion + demotion - populationPromotion);
   const levelAdjusted = effLevel - (boostEligible ? options.viewportBoost : 0);
 
   return {
@@ -146,10 +259,40 @@ export function rankRow(row, queryNorm, options) {
     viewportRank,
     nameLength: row.nameNorm.length,
     areaKm2: typeof row.areaKm2 === 'number' && !Number.isNaN(row.areaKm2) ? row.areaKm2 : undefined,
-    population: typeof row.population === 'number' && !Number.isNaN(row.population) ? row.population : undefined,
+    population,
     class: typeof row.class === 'string' ? row.class : undefined,
     isAlt,
   };
+}
+
+/**
+ * Coerce a decoded `population` cell to a usable finite number, or
+ * `undefined` when the row has no usable population.
+ *
+ * **Why a `bigint` branch exists (2026-11-12 population-promotion
+ * follow-up).** `population` is an `INT64` column in the Who's On First
+ * names index, and `hyparquet` decodes `INT64` as a JavaScript `BigInt`,
+ * not a `number`. Every `typeof x === 'number'` guard in this file and in
+ * `geocoder.js` therefore rejected it silently: measured live against the
+ * WOF index, *zero* of the 109 "brooklyn" candidate rows reported a
+ * population through `SearchResult.population`, even though 4,075 of the
+ * 12,800 rows in the row group holding them carry one in the Parquet file
+ * (Brooklyn the borough among them, at 2,504,700). This is the real reason
+ * the prominence tiebreak (`compareRanked` component (5)) was still a
+ * measured no-op on WOF after the alt-demotion amendment declared it live
+ * on Overture -- Overture's own `population` column is 32-bit and decodes
+ * as a plain `number`, so the bug was invisible there.
+ *
+ * @param {number|bigint|null|undefined} value
+ * @returns {number|undefined}
+ */
+function toPopulation(value) {
+  if (typeof value === 'bigint') {
+    const asNumber = Number(value);
+    return Number.isFinite(asNumber) ? asNumber : undefined;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  return undefined;
 }
 
 function areaOrNegInf(areaKm2) {
@@ -157,12 +300,17 @@ function areaOrNegInf(areaKm2) {
 }
 
 // Ranking-residual follow-up (design doc §3.2 amendment, "Known residual
-// limitation" / task 5): `class` and `population` are pending data
-// columns -- not yet populated on any shipped index -- so every row below
-// decodes both as `undefined` today and `prominenceKey` returns the same
-// tier-1/no-signal tuple for all of them, making this tiebreak a no-op
-// until a catalog actually fills the columns in. `CLASS_RANK` is the
-// fixed ladder named in the task: city outranks town outranks village
+// limitation" / task 5). **This comment used to say `class` and
+// `population` were "pending data columns, not yet populated on any
+// shipped index"; that is no longer true and was corrected by the
+// 2026-11-12 population-promotion follow-up.** Measured live: the
+// published Overture divisions index populates both (Baghdad: `class`
+// 'city', `population` 7,216,040), and the Who's On First names index
+// populates `population` on roughly a third of its rows (4,075 of the
+// 12,800 in the row group holding "brooklyn") but carries no `class`
+// column at all, so WOF rows take the tier-1 `class` fallback below only
+// when their own `population` is null. `CLASS_RANK` is the fixed ladder
+// named in the original task: city outranks town outranks village
 // outranks hamlet outranks anything else (an unrecognized class string,
 // or no class at all).
 const CLASS_RANK = { city: 0, town: 1, village: 2, hamlet: 3 };
@@ -180,9 +328,10 @@ function classRankOf(klass) {
  * pair so `compareRanked` can compare it lexicographically: tier 0 (a real
  * `population` number) always outranks tier 1 (no population, class-rank
  * fallback), and within a tier the second element is the real comparison
- * key. When both columns are absent on every row (every index shipped so
- * far), every row gets `[1, 4]` and this is a pure no-op -- the comparator
- * falls straight through to `areaKm2`, exactly as before this existed.
+ * key. When both columns are absent on every row (a geoBoundaries CGAZ
+ * index, say, which carries neither), every row gets `[1, 4]` and this is
+ * a pure no-op -- the comparator falls straight through to `areaKm2`,
+ * exactly as before this existed.
  * @param {{ population?: number, class?: string }} rank
  * @returns {[number, number]}
  */
@@ -218,22 +367,27 @@ function prominenceKey(rank) {
  *    identical match against an alt-name row. `isAlt` is `false` for
  *    every row on an index with no `alt_of` column, so this (and the
  *    demotion that feeds it) is a no-op on such an index.
- * 5. `level` -- the true, unpromoted/undemoted admin level. Final
- *    level-based tiebreak for anything still tied (normally redundant
- *    with (2)-(4), but kept as the honest "ADM0 before ADM1" fallback the
- *    original spec asked for).
- * 6. **Prominence** -- added by the ranking-residual follow-up:
- *    `population` descending when the row carries one, else a fixed
- *    `class` ladder (`city` > `town` > `village` > `hamlet` > anything
- *    else/absent) -- see `prominenceKey`. Slots ahead of `areaKm2`
- *    per the task ("a prominence key ... slots ahead of area_km2"),
- *    because population/class-of-place is a better importance signal
- *    *across* feature kinds (a capital city vs. a country) than area is
- *    -- see the amendment's "Known residual limitation" for why `areaKm2`
- *    alone gets this backwards for exactly that comparison. Both columns
- *    are still pending on every shipped index (Overture has not
- *    populated either yet), so every row ties here today and this step
- *    is a no-op, falling straight through to (7).
+ * 5. **Prominence** -- added by the ranking-residual follow-up, and
+ *    **moved here from component (6) by the 2026-11-12
+ *    population-promotion follow-up** (see "Why prominence moved above
+ *    raw `level`" below): `population` descending when the row carries
+ *    one, else a fixed `class` ladder (`city` > `town` > `village` >
+ *    `hamlet` > anything else/absent) -- see `prominenceKey`. Slots ahead
+ *    of `areaKm2` per the original task ("a prominence key ... slots
+ *    ahead of area_km2"), because population/class-of-place is a better
+ *    importance signal *across* feature kinds (a capital city vs. a
+ *    country) than area is -- see the first amendment's "Known residual
+ *    limitation" for why `areaKm2` alone gets this backwards for exactly
+ *    that comparison. **No longer a no-op**: the published Overture
+ *    catalog populates `population` and `class`, and the Who's On First
+ *    names index populates `population` on roughly a third of its rows
+ *    (as an `INT64`, which is why `toPopulation` exists -- see its doc
+ *    comment for the decode bug that kept this step a measured no-op on
+ *    WOF until the population-promotion follow-up).
+ * 6. `level` -- the true, unpromoted/undemoted/unpopulation-promoted
+ *    admin level. Final level-based tiebreak for anything still tied
+ *    (normally redundant with (2)-(4), but kept as the honest "ADM0
+ *    before ADM1" fallback the original spec asked for).
  * 7. `areaKm2` descending, `null`/`undefined` sorted last -- the
  *    importance signal: among same-level, same-match-class rows, the
  *    bigger (or more complete) feature wins. Point-only localities with no
@@ -276,6 +430,28 @@ function prominenceKey(rank) {
  * one four levels away, which is the same honest limit as before --
  * documented, with the live measurements, in the design doc.
  *
+ * Why prominence moved above raw `level` (the 2026-11-12
+ * population-promotion follow-up, "the Brooklyn case"): identical in
+ * structure to the `isAlt` move one amendment earlier. Searching
+ * "brooklyn" on the Who's On First index put seven `localadmin`
+ * townships of 318-11,022 people (`level` 3) above Brooklyn the New York
+ * borough (`level` 4, population 2,504,700) -- component (1) decided it
+ * outright on raw level and prominence was never reached. The bounded
+ * population promotion in `rankRow` closes that one-level gap, bringing
+ * the borough to `effLevel` 2 alongside the townships. But every one of
+ * those rows is an `exact`, alt-name match too, so components (2), (3)
+ * and (4) all tie as well, and the *old* component (5) -- raw `level`,
+ * still 3 vs. 4 -- immediately re-opened the very gap the promotion had
+ * just closed, exactly as raw `level` did to the alt demotion. Prominence
+ * is the component that has to resolve a tie the promotion manufactured
+ * *from* prominence, so it has to be consulted before raw `level`.
+ * Measured consequence of the move on its own (no regression on any of
+ * the seven other queries in the amendment's tables): it only ever
+ * changes the order of rows that already tie on `levelAdjusted`,
+ * `effLevel`, `matchClass` *and* `isAlt` while differing in raw `level`
+ * -- which, by construction, happens only when one of the three bounded
+ * `effLevel` adjustments put them on the same rung in the first place.
+ *
  * @param {{ rank: ReturnType<typeof rankRow>, nameNorm: string, featureId: string }} a
  * @param {{ rank: ReturnType<typeof rankRow>, nameNorm: string, featureId: string }} b
  * @returns {number}
@@ -296,12 +472,19 @@ export function compareRanked(a, b) {
   // with.
   if (a.rank.isAlt !== b.rank.isAlt) return (a.rank.isAlt ? 1 : 0) - (b.rank.isAlt ? 1 : 0);
 
-  if (a.rank.level !== b.rank.level) return a.rank.level - b.rank.level;
-
+  // Prominence before raw level (2026-11-12 population-promotion
+  // follow-up; see "Why prominence moved above raw `level`" below). Same
+  // structural reason `isAlt` moved above raw `level` one amendment
+  // earlier: raw `level` re-opens the exact one-level gap an `effLevel`
+  // adjustment just closed, so any adjustment whose whole purpose is to
+  // create a tie has to have that tie resolved before raw `level` is
+  // consulted.
   const [tierA, prominenceA] = prominenceKey(a.rank);
   const [tierB, prominenceB] = prominenceKey(b.rank);
   if (tierA !== tierB) return tierA - tierB;
   if (prominenceA !== prominenceB) return prominenceA - prominenceB;
+
+  if (a.rank.level !== b.rank.level) return a.rank.level - b.rank.level;
 
   const areaA = areaOrNegInf(a.rank.areaKm2);
   const areaB = areaOrNegInf(b.rank.areaKm2);

@@ -58,11 +58,17 @@ test('search(): class/population survive decode onto SearchResult, undefined whe
 test('search(): a row with a real population outranks a same-level row with none, end to end through search()', async () => {
   const rows = [
     row('Springfield', 'springfield', 'USA', 4, 'SMALL-TOWN', { class: 'city', areaKm2: 900 }),
-    row('Springfield', 'springfield', 'USA', 4, 'BIG-CITY', { population: 500_000, areaKm2: 10 }),
+    // 50_000 sits deliberately *below*
+    // `DEFAULT_POPULATION_PROMOTION_THRESHOLD` (2026-11-12
+    // population-promotion follow-up): this test is about the prominence
+    // tiebreak, and a six-figure population would decide the comparison a
+    // step earlier at `effLevel`, leaving the step under test unexercised.
+    row('Springfield', 'springfield', 'USA', 4, 'BIG-CITY', { population: 50_000, areaKm2: 10 }),
   ];
   const geocoder = makeGeocoder(rows, { limit: 10, diversity: { dedupe: false, maxPerGroup: null } });
   const results = await geocoder.search('springfield');
   assert.equal(results[0].featureId, 'BIG-CITY', 'population must win the prominence tiebreak over a bigger area_km2');
+  assert.equal(results[0].rank.effLevel, results[1].rank.effLevel, 'neither row is population-promoted, so this really is the prominence step');
 });
 
 test('search(): at equal level, a primary-name match ranks above an alt-name match (alt_of set) for the same query', async () => {

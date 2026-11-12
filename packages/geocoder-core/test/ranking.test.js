@@ -359,8 +359,15 @@ test('compareRanked: at equal level, a primary-name match ranks above an alt-nam
 test('compareRanked: population (descending) outranks area_km2 as the prominence tiebreak', () => {
   // Same level/match class, so this isolates the prominence step: the
   // smaller-area, bigger-population row must still win.
+  //
+  // Both populations deliberately sit *below*
+  // `DEFAULT_POPULATION_PROMOTION_THRESHOLD` (2026-11-12
+  // population-promotion follow-up): this test is about the prominence
+  // tiebreak, and a six-figure population here would decide the comparison
+  // one step earlier, at `effLevel`, leaving the step under test unexercised.
   const bigAreaLowPop = ranked('springfield', 2, 'A', { query: 'spring', areaKm2: 900, population: 500 });
-  const smallAreaHighPop = ranked('springfield', 2, 'B', { query: 'spring', areaKm2: 10, population: 500_000 });
+  const smallAreaHighPop = ranked('springfield', 2, 'B', { query: 'spring', areaKm2: 10, population: 50_000 });
+  assert.equal(bigAreaLowPop.rank.effLevel, smallAreaHighPop.rank.effLevel, 'neither row is population-promoted, so effLevel ties');
   assert.ok(compareRanked(smallAreaHighPop, bigAreaLowPop) < 0, 'higher population should win even with less area');
 });
 
@@ -390,7 +397,13 @@ test('compareRanked: class comparison is case-insensitive', () => {
   assert.ok(compareRanked(upper, village) < 0, '"City" (mixed case) must rank as city, ahead of village');
 });
 
-test('compareRanked: with no population/class/isAlt data on either row (every index shipped today), the new tiebreaks are a complete no-op and areaKm2 still decides', () => {
+// The parenthetical here used to read "every index shipped today"; that is
+// no longer true (the published Overture index populates `class` and
+// `population`, and the Who's On First index populates `population`), and
+// was corrected by the 2026-11-12 population-promotion follow-up. A
+// geoBoundaries CGAZ index still carries neither column, so the no-op path
+// this test pins is still a real, shipped configuration.
+test('compareRanked: with no population/class/isAlt data on either row (a geoBoundaries CGAZ index), the prominence/isAlt tiebreaks are a complete no-op and areaKm2 still decides', () => {
   const bigArea = ranked('bag', 4, 'BIG', { query: 'bag', country: 'IND', areaKm2: 40.9 });
   const smallArea = ranked('bag', 4, 'SMALL', { query: 'bag', country: 'IND', areaKm2: 1.2 });
   const sorted = [smallArea, bigArea].sort(compareRanked);
