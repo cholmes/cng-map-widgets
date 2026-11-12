@@ -4,8 +4,60 @@ import { CnmwError, normalizeName, buildArea, simplifyToVertexCeilingAsync, MAX_
 import { Emitter } from './events.js';
 import { loadManifest, resolveManifestUrl, loadFullIndex, openRangeIndex, searchRangeIndex, prefixRange } from './index-loader.js';
 import { rankRow, compareRanked, scoreOf, applyDiversity, DEFAULT_EXACT_LEVEL_PROMOTION, DEFAULT_DIVERSITY } from './ranking.js';
-import { resolveGeometry } from './geometry-resolver.js';
+import { resolveGeometry, openBoundaryFile } from './geometry-resolver.js';
 import { GenerationGuard } from './generation-guard.js';
+
+/**
+ * Schedule `fn` for idle/background execution (task 2's footer prefetch):
+ * `requestIdleCallback` in a browser, `setTimeout(fn, 0)` everywhere else
+ * (Node test environment, a browser old enough to lack it). Not meant to
+ * be precise -- it only needs to run *after* whatever the main thread is
+ * doing right now, specifically after `load()`'s own caller has gotten
+ * its result and moved on to rendering a dropdown.
+ * @param {() => void} fn
+ */
+function scheduleIdle(fn) {
+  if (typeof globalThis.requestIdleCallback === 'function') {
+    globalThis.requestIdleCallback(fn, { timeout: 2000 });
+  } else {
+    setTimeout(fn, 0);
+  }
+}
+
+/**
+ * Two-wave search (task 3): true when `next` contains at least one row
+ * `previous` didn't have, by `featureId`. This is the literal "replacing
+ * the first only if it adds rows" rule from the second wave's semantics --
+ * a final wave that re-ranks the exact same rows (the common case once
+ * the prominent index already held every match) never triggers a second
+ * `'results'` emission.
+ * @param {readonly { featureId: string }[]} previous
+ * @param {readonly { featureId: string }[]} next
+ * @returns {boolean}
+ */
+function resultsAddRows(previous, next) {
+  const previousIds = new Set(previous.map((r) => r.featureId));
+  return next.some((r) => !previousIds.has(r.featureId));
+}
+
+/**
+ * The exact-size footer read (task 1/manifest contract addition): which of
+ * a manifest file-entry's two declared sizes to pass as hyparquet's
+ * `initialFetchSize`. **`footer_metadata_bytes` -- the thrift footer
+ * alone -- not `footer_bytes`.** `footer_bytes` is the whole trailing
+ * span (footer + page index); hyparquet has no sub-chunk read and never
+ * reads the page-index bodies at all, so `footer_metadata_bytes` is
+ * strictly the smaller, sufficient, correct number for it -- fetching
+ * `footer_bytes` worth would just over-fetch page-index bytes nothing in
+ * this codebase reads. Falls back to `footer_bytes` on an older manifest
+ * that declares only that (pre-dating this distinction), then to
+ * `undefined` (the pre-existing default) when neither is declared.
+ * @param {{ footer_metadata_bytes?: number, footer_bytes?: number } | undefined} entry
+ * @returns {number | undefined}
+ */
+function initialFetchSizeOf(entry) {
+  return entry?.footer_metadata_bytes ?? entry?.footer_bytes;
+}
 
 /** @typedef {import('@cnmw/spec').BBox} BBox */
 
@@ -62,8 +114,33 @@ export class Geocoder {
 
     this._manifest = null;
     this._manifestUrl = typeof options.indexUrl === 'string' ? options.indexUrl : DEFAULT_INDEX_URL;
-    this._full = null; // { rows, nameNorms }
-    this._range = null; // range index handle
+    this._full = null; // { rows, nameNorms } -- the main index, once loaded
+    this._range = null; // main index's range handle, once opened
+
+    // Two-wave search (manifest contract addition `prominent_index`, task
+    // 3): a small subset index, eagerly full-loaded alongside (not after)
+    // the main index, so `search()` can answer from it immediately while
+    // the main index is still fetching/opening behind it. `_mainReady`
+    // flips true once `_full`/`_range` above is actually usable;
+    // `_mainReadyPromise` lets `search()` schedule a second wave for a
+    // query that only got to answer from `_prominentFull` for its first.
+    // All stay at their no-op defaults when the manifest has no
+    // `prominent_index` at all.
+    this._hasProminent = false;
+    this._prominentFull = null;
+    this._mainReady = false;
+    this._mainReadyPromise = null;
+
+    // Footer prefetch (manifest contract addition `footer_bytes`, task 2):
+    // one open-file-handle cache per Geocoder instance, keyed by resolved
+    // boundary URL, shared between the background prefetch below and every
+    // `select()`'s own `resolveGeometry` call -- this is also the fix for
+    // "verify handles are already reused across selects": before this,
+    // every `select()` re-opened and re-fetched the footer of its boundary
+    // file from scratch, even a second `select()` against the exact same
+    // file.
+    this._boundaryHandleCache = new Map();
+    this._footerPrefetchStarted = false;
 
     this._loadPromise = null;
     this._searchGeneration = 0;
@@ -91,6 +168,7 @@ export class Geocoder {
       loadFullIndex,
       openRangeIndex,
       resolveGeometry,
+      openBoundaryFile,
       simplifyToVertexCeilingAsync,
       ...options.__deps,
     };
@@ -145,10 +223,81 @@ export class Geocoder {
       defaultSource: manifest.source,
     };
 
-    if (strategy === 'full') {
-      this._full = await this._deps.loadFullIndex(parquetUrl, this._fetch, indexProjection);
+    // Manifest contract addition `footer_bytes`/`footer_metadata_bytes`
+    // (task 1): the range path's one footer fetch becomes exactly-sized
+    // instead of hyparquet's speculative 512 KB default when the manifest
+    // declares it -- `footer_metadata_bytes` preferred over `footer_bytes`,
+    // see `initialFetchSizeOf`. Absent on an older manifest -> `undefined`
+    // -> `openRangeIndex`'s own default (unchanged).
+    const footerBytes = initialFetchSizeOf(manifest.index);
+    const mainIndexRaw = strategy === 'full'
+      ? this._deps.loadFullIndex(parquetUrl, this._fetch, indexProjection)
+      : this._deps.openRangeIndex(parquetUrl, this._fetch, footerBytes, indexProjection);
+
+    const applyMainIndex = (handle) => {
+      if (strategy === 'full') this._full = handle;
+      else this._range = handle;
+      this._mainReady = true;
+      return handle;
+    };
+
+    // Two-wave search (manifest contract addition `prominent_index`, task
+    // 3). Absent manifest field -> `_hasProminent` stays false and every
+    // line below this `if` is dead code for this load -- `search()`'s own
+    // two-wave branch is gated on the same flag, so the feature is a
+    // complete no-op end to end when the catalog hasn't shipped it yet.
+    this._hasProminent = Boolean(manifest.prominent_index?.url);
+    if (this._hasProminent) {
+      const prominentUrl = resolveManifestUrl(this._manifestUrl, manifest.prominent_index.url);
+      const prominentProjection = {
+        featureIdColumn: manifest.prominent_index.feature_id_column ?? indexProjection.featureIdColumn,
+        defaultSource: manifest.prominent_index.source ?? manifest.source,
+      };
+      // Eager full-load, started in parallel with (not after) the main
+      // index above -- "full-load it eagerly on load()". A failure here
+      // is reported as a warning, not a load()-aborting error: the main
+      // index is still on its way, and this geocoder stays entirely
+      // usable without the fast first wave.
+      this._prominentFull = await this._deps
+        .loadFullIndex(prominentUrl, this._fetch, prominentProjection)
+        .catch((err) => {
+          this._emitter.emit('warning', {
+            code: 'PROMINENT_INDEX_FAILED',
+            message: `Prominent index failed to load; search() will wait for the main index instead. ${err?.message ?? err}`,
+            detail: err,
+          });
+          return null;
+        });
+
+      // The main index keeps loading in the background; `load()` resolves
+      // now (right after this method returns) without waiting for it.
+      // `_mainReadyPromise` never rejects into an unhandled rejection even
+      // though nobody may ever await it (a page that never searches again
+      // after its first, prominent-only-answered query): the `.catch`
+      // below both reports the failure once and keeps the promise settled
+      // for any later `.then` (`search()`'s second-wave branch) to see.
+      this._mainReadyPromise = mainIndexRaw
+        .then((handle) => {
+          applyMainIndex(handle);
+          this._emitter.emit('index:upgraded', { strategy, loadMs: handle.loadMs });
+          return handle;
+        })
+        .catch((err) => {
+          this._emitter.emit('error', err);
+          return null;
+        });
+
+      if (!this._prominentFull) {
+        // No usable fast wave at all: behave exactly like the no-prominent
+        // path below, so this geocoder is still usable once `load()`
+        // resolves rather than leaving `state` stuck on `'loading'`.
+        const handle = await mainIndexRaw;
+        applyMainIndex(handle);
+      }
     } else {
-      this._range = await this._deps.openRangeIndex(parquetUrl, this._fetch, undefined, indexProjection);
+      const handle = await mainIndexRaw;
+      applyMainIndex(handle);
+      this._mainReadyPromise = Promise.resolve(handle);
     }
 
     const loadMs = performance.now() - t0;
@@ -164,13 +313,98 @@ export class Geocoder {
       strategy,
       attribution: this._attribution,
       loadMs,
+      // Present only when the manifest declared a prominent index, win or
+      // lose: `ready` is false in the (rare) case its own load failed, so
+      // a caller/UI can tell "two-wave search is active" apart from
+      // "declared but unavailable" without inspecting internals.
+      prominent: this._hasProminent
+        ? {
+            // The shipped manifest field is `row_count` (matching every
+            // other per-file entry's own field name, `boundaries[].full`/
+            // `.display` included) -- `rows` is kept as a first try only
+            // for a manifest that predates this field-name confirmation.
+            rows: manifest.prominent_index.rows ?? manifest.prominent_index.row_count,
+            bytes: manifest.prominent_index.size,
+            ready: this._prominentFull !== null,
+          }
+        : undefined,
     };
     this._setState('ready');
     this._emitter.emit('load', this._info);
+
+    // Footer prefetch (manifest contract addition `footer_bytes`, task 2):
+    // scheduled once `load()` is about to resolve, regardless of which
+    // branch above got us here, so the very first `select()` after this
+    // finds its boundary file's footer already warmed in
+    // `_boundaryHandleCache` instead of paying for it synchronously.
+    this._scheduleFooterPrefetch();
+
     return this._info;
   }
 
   /**
+   * Background footer prefetch (manifest contract addition `footer_bytes`,
+   * task 2): open every declared boundary file's footer in the
+   * background, display variants first (the default `resolution`), then
+   * full, one at a time via `scheduleIdle` so this never competes with
+   * anything the main thread actually needs to do right now. Each opened
+   * handle lands in `_boundaryHandleCache`, the same cache `select()`'s
+   * `resolveGeometry` calls consult -- so by the time a user actually
+   * picks a result, its footer fetch is typically already done.
+   *
+   * Idempotent (guarded by `_footerPrefetchStarted`) and best-effort: a
+   * failed prefetch is removed from the cache so `select()` just performs
+   * the real fetch itself, and is never surfaced as a `warning`/`error`
+   * event -- nothing the user did caused it, and nothing is actually
+   * broken yet.
+   */
+  _scheduleFooterPrefetch() {
+    if (this._footerPrefetchStarted) return;
+    this._footerPrefetchStarted = true;
+    const boundaries = this._manifest?.boundaries ?? [];
+    const queue = [];
+    for (const entry of boundaries) if (entry.display?.url) queue.push(entry.display);
+    for (const entry of boundaries) if (entry.full?.url) queue.push(entry.full);
+    if (queue.length === 0) return;
+
+    const step = () => {
+      const next = queue.shift();
+      if (!next) return;
+      const url = resolveManifestUrl(this._manifestUrl, next.url);
+      if (!this._boundaryHandleCache.has(url)) {
+        const handlePromise = this._deps.openBoundaryFile(url, this._fetch, undefined, initialFetchSizeOf(next));
+        this._boundaryHandleCache.set(url, handlePromise);
+        handlePromise.catch(() => {
+          this._boundaryHandleCache.delete(url);
+        });
+      }
+      if (queue.length > 0) scheduleIdle(step);
+    };
+    scheduleIdle(step);
+  }
+
+  /**
+   * Ranked results. Calls `load()` if needed (which, with a
+   * `prominent_index` declared, resolves as soon as that fast wave is
+   * ready -- not once the whole main index is).
+   *
+   * **Two-wave search semantics** (manifest contract addition
+   * `prominent_index`, task 3): when this query's results come from the
+   * prominent index alone -- the main index isn't `_mainReady` yet --
+   * this promise still resolves with that first wave (fast answers,
+   * exactly as fast as `search()` always resolves against a `'full'`-
+   * strategy index), and the `'results'` event fires once for it, tagged
+   * `wave: 'prominent'`. In the background, once the main index finishes
+   * loading, the *same query* is re-run against it and a **second**
+   * `'results'` event fires, tagged `wave: 'final'` -- but **only if** the
+   * final answer actually adds at least one row the first wave didn't
+   * already have (by `featureId`); an identical re-ranking of the same
+   * rows never re-emits. A query superseded by a later `search()` call
+   * before its second wave lands drops that wave silently, matching every
+   * other superseded-query rule in this class. When the manifest has no
+   * `prominent_index` at all, or the main index is already `_mainReady`
+   * by the time this runs, there is only ever one wave, tagged `'final'`
+   * -- unchanged behaviour from before this existed.
    * @param {string} prefix
    * @param {import('./types.js').SearchOptions} [options]
    */
@@ -190,8 +424,34 @@ export class Geocoder {
     if (generation !== this._searchGeneration) return [];
 
     const elapsedMs = performance.now() - t0;
-    this._emitter.emit('results', { query: prefix, results, elapsedMs });
+    const isFinal = this._mainReady || !this._hasProminent;
+    this._emitter.emit('results', { query: prefix, results, elapsedMs, wave: isFinal ? 'final' : 'prominent' });
+
+    if (!isFinal) this._scheduleSecondWave(prefix, options, generation, results, t0);
+
     return results;
+  }
+
+  /**
+   * The background half of two-wave search: wait for the main index to
+   * finish loading (`_mainReadyPromise`, set up in `_doLoad`), then re-run
+   * the same query against it and emit a second `'results'` event -- but
+   * only when doing so would actually change what the caller sees. See
+   * `search()`'s doc comment for the full semantics.
+   */
+  _scheduleSecondWave(prefix, options, generation, wave1Results, t0) {
+    this._mainReadyPromise
+      ?.then(async (handle) => {
+        if (handle === null) return; // the main index itself failed to load; no final wave to offer
+        if (generation !== this._searchGeneration) return; // superseded by a later search() call
+        options.signal?.throwIfAborted();
+        const wave2Results = await this._runSearch(prefix, options);
+        if (generation !== this._searchGeneration) return;
+        if (!resultsAddRows(wave1Results, wave2Results)) return; // nothing new: never re-emit an identical answer
+        const elapsedMs = performance.now() - t0;
+        this._emitter.emit('results', { query: prefix, results: wave2Results, elapsedMs, wave: 'final' });
+      })
+      .catch(() => {}); // AbortError (user signal) or an abandoned generation: silently dropped, same as search() itself
   }
 
   async _runSearch(prefix, options) {
@@ -199,18 +459,31 @@ export class Geocoder {
     if (prefix.length < minPrefixLength) return [];
     const queryNorm = this._normalize(prefix);
     const limit = options.limit ?? this._options.limit ?? 10;
-
-    let rows;
-    if (this._full) {
-      const [start, end] = prefixRange(this._full.nameNorms, queryNorm);
-      rows = this._full.rows.slice(start, end);
-    } else if (this._range) {
-      rows = await searchRangeIndex(this._range, queryNorm);
-    } else {
-      rows = [];
-    }
-
+    const rows = await this._searchRows(queryNorm);
     return this._rankAndFilter(rows, queryNorm, options, limit);
+  }
+
+  /**
+   * Which loaded source answers a query right now: the main index once
+   * it's `_mainReady`, else the prominent index (two-wave search) when
+   * the manifest declared one and it loaded, else nothing -- which can
+   * only happen while `_doLoad` itself is still running (never after
+   * `load()` has resolved to its caller).
+   * @param {string} queryNorm
+   */
+  async _searchRows(queryNorm) {
+    if (this._mainReady) {
+      if (this._full) {
+        const [start, end] = prefixRange(this._full.nameNorms, queryNorm);
+        return this._full.rows.slice(start, end);
+      }
+      if (this._range) return searchRangeIndex(this._range, queryNorm);
+    }
+    if (this._prominentFull) {
+      const [start, end] = prefixRange(this._prominentFull.nameNorms, queryNorm);
+      return this._prominentFull.rows.slice(start, end);
+    }
+    return [];
   }
 
   /**
@@ -246,8 +519,19 @@ export class Geocoder {
       if (countries && !countries.includes(row.country)) continue;
       const rowBBox = [row.bbox.xmin, row.bbox.ymin, row.bbox.xmax, row.bbox.ymax];
       const areaKm2 = typeof row.area_km2 === 'number' && !Number.isNaN(row.area_km2) ? row.area_km2 : undefined;
+      // `population`/`class` (ranking-residual follow-up, task 5): still
+      // pending columns on every shipped index today -- `undefined` on
+      // every row until a catalog populates them -- passed through
+      // unconditionally so the geocoder never has to change again once
+      // one does. `isAlt` is derived from `alt_of` (already-shipped, E8)
+      // rather than passed through verbatim: `rankRow`/`compareRanked`
+      // only need to know "primary or alt", not which primary this alt
+      // row points at.
+      const population = typeof row.population === 'number' && !Number.isNaN(row.population) ? row.population : undefined;
+      const placeClass = typeof row.class === 'string' ? row.class : undefined;
+      const isAlt = row.alt_of != null;
       const rank = rankRow(
-        { nameNorm: row.name_norm, level: row.level, bbox: rowBBox, featureId: row.feature_id, areaKm2 },
+        { nameNorm: row.name_norm, level: row.level, bbox: rowBBox, featureId: row.feature_id, areaKm2, population, class: placeClass, isAlt },
         queryNorm,
         rankOpts,
       );
@@ -268,6 +552,12 @@ export class Geocoder {
         parentName: row.parent_name ?? undefined,
         countryName: row.country_name ?? undefined,
         areaKm2,
+        // **Added by the ranking-residual follow-up (task 5).** Both
+        // pending on every shipped index -- `undefined` today, exposed
+        // here (as `areaKm2` already is) so a UI can use them directly,
+        // e.g. a population badge, once a catalog populates them.
+        population,
+        class: placeClass,
         bbox: rowBBox,
         source: row.source,
         rank,
@@ -420,6 +710,8 @@ export class Geocoder {
         decodeAsync: true,
         signal: options.signal,
         entry,
+        footerBytes: initialFetchSizeOf(entry.full),
+        handleCache: this._boundaryHandleCache,
       });
       let area = buildSelectedArea(geometry, bbox, 'full', boundaryUrl, false);
       if (area.filterGeometry === null) {
@@ -432,7 +724,11 @@ export class Geocoder {
 
     if (resolution === 'display') {
       const boundaryUrl = resolveManifestUrl(this._manifestUrl, entry.display.url);
-      const { geometry, bbox } = await this._deps.resolveGeometry(result, boundaryUrl, manifest.catalog_version, this._fetch, onVersionSkew, onWarning, { entry });
+      const { geometry, bbox } = await this._deps.resolveGeometry(result, boundaryUrl, manifest.catalog_version, this._fetch, onVersionSkew, onWarning, {
+        entry,
+        footerBytes: initialFetchSizeOf(entry.display),
+        handleCache: this._boundaryHandleCache,
+      });
       let area = buildSelectedArea(geometry, bbox, 'display', boundaryUrl, false);
       if (area.filterGeometry === null) {
         area = { ...area, provenance: { ...area.provenance, pendingUpgrade: true } };
@@ -452,7 +748,7 @@ export class Geocoder {
       this._fetch,
       onVersionSkew,
       onWarning,
-      { entry },
+      { entry, footerBytes: initialFetchSizeOf(entry.display), handleCache: this._boundaryHandleCache },
     );
     const area = buildSelectedArea(displayGeometry, displayBbox, 'display', displayUrl, true);
     const elapsedMs = performance.now() - t0;
@@ -501,7 +797,7 @@ export class Geocoder {
       this._fetch,
       opts.onVersionSkew,
       opts.onWarning,
-      { decodeAsync: true, signal: abortSignal, entry },
+      { decodeAsync: true, signal: abortSignal, entry, footerBytes: initialFetchSizeOf(entry.full), handleCache: this._boundaryHandleCache },
     );
     opts.userSignal?.throwIfAborted();
     if (!this._selectGuard.isCurrent(generation)) return; // superseded while fetching
@@ -605,6 +901,12 @@ export class Geocoder {
     this._range = null;
     this._manifest = null;
     this._loadPromise = null;
+    this._hasProminent = false;
+    this._prominentFull = null;
+    this._mainReady = false;
+    this._mainReadyPromise = null;
+    this._boundaryHandleCache = new Map();
+    this._footerPrefetchStarted = false;
     this._setState('idle');
   }
 }

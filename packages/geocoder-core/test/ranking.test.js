@@ -91,7 +91,16 @@ test('rankRow: returns null when the row does not match', () => {
 });
 
 function ranked(nameNorm, level, featureId, extra = {}) {
-  const row = { nameNorm, level, bbox: extra.bbox ?? [0, 0, 1, 1], featureId, areaKm2: extra.areaKm2 };
+  const row = {
+    nameNorm,
+    level,
+    bbox: extra.bbox ?? [0, 0, 1, 1],
+    featureId,
+    areaKm2: extra.areaKm2,
+    population: extra.population,
+    class: extra.class,
+    isAlt: extra.isAlt,
+  };
   const rank = rankRow(row, extra.query ?? 'contra', { ...rankOpts, viewport: extra.viewport });
   return { nameNorm, featureId, country: extra.country, level, rank };
 }
@@ -282,4 +291,75 @@ test('applyDiversity: dedupe then cap, in that order, with dedupe disabled as an
 
   const withoutDedupe = applyDiversity(rows, { dedupe: false, maxPerGroup: null });
   assert.equal(withoutDedupe.length, 5, 'dedupe: false and maxPerGroup: null is a full opt-out');
+});
+
+// --- Ranking-residual follow-up (design doc §3.2 amendment, "Known
+// residual limitation" / task 5): `class`/`population`/`alt_of` are
+// pending data columns, optional and absent on every index shipped so
+// far. Every test in this block uses `rankOpts`'s plain level/matchClass
+// setup (no viewport), so `levelAdjusted`/`effLevel`/`matchClassRank` all
+// tie identically across the rows compared -- isolating the new
+// `isAlt`/prominence tiebreaks this task adds. ---------------------------
+
+test('rankRow: carries isAlt/population/class through onto the rank record', () => {
+  const row = { nameNorm: 'springfield', level: 1, bbox: [0, 0, 1, 1], featureId: 'A', population: 12345, class: 'City', isAlt: true };
+  const rank = rankRow(row, 'spring', rankOpts);
+  assert.equal(rank.population, 12345);
+  assert.equal(rank.class, 'City');
+  assert.equal(rank.isAlt, true);
+});
+
+test('rankRow: isAlt defaults false, population/class default undefined when the row has none', () => {
+  const row = { nameNorm: 'springfield', level: 1, bbox: [0, 0, 1, 1], featureId: 'A' };
+  const rank = rankRow(row, 'spring', rankOpts);
+  assert.equal(rank.isAlt, false);
+  assert.equal(rank.population, undefined);
+  assert.equal(rank.class, undefined);
+});
+
+test('compareRanked: at equal level, a primary-name match ranks above an alt-name match for the same query', () => {
+  const primary = ranked('paris', 2, 'PRIMARY', { query: 'paris', isAlt: false });
+  const alt = ranked('paris', 2, 'ALT', { query: 'paris', isAlt: true });
+  assert.ok(compareRanked(primary, alt) < 0, 'the primary-name row must sort first');
+});
+
+test('compareRanked: population (descending) outranks area_km2 as the prominence tiebreak', () => {
+  // Same level/match class, so this isolates the prominence step: the
+  // smaller-area, bigger-population row must still win.
+  const bigAreaLowPop = ranked('springfield', 2, 'A', { query: 'spring', areaKm2: 900, population: 500 });
+  const smallAreaHighPop = ranked('springfield', 2, 'B', { query: 'spring', areaKm2: 10, population: 500_000 });
+  assert.ok(compareRanked(smallAreaHighPop, bigAreaLowPop) < 0, 'higher population should win even with less area');
+});
+
+test('compareRanked: a row with a real population always outranks one with none, regardless of class', () => {
+  const noPopulationCity = ranked('springfield', 2, 'A', { query: 'spring', class: 'city' });
+  const lowPopulationHamlet = ranked('springfield', 2, 'B', { query: 'spring', population: 42, class: 'hamlet' });
+  assert.ok(compareRanked(lowPopulationHamlet, noPopulationCity) < 0, 'tier 0 (has population) beats tier 1 (class fallback) even for a tiny population against a "better" class');
+});
+
+test('compareRanked: class ladder (city > town > village > hamlet > unrecognized/absent) breaks ties when population is absent on both sides', () => {
+  const town = ranked('springfield', 2, 'TOWN', { query: 'spring', class: 'town' });
+  const village = ranked('springfield', 2, 'VILLAGE', { query: 'spring', class: 'village' });
+  const hamlet = ranked('springfield', 2, 'HAMLET', { query: 'spring', class: 'hamlet' });
+  const unknown = ranked('springfield', 2, 'UNKNOWN', { query: 'spring', class: 'spaceport' });
+  const none = ranked('springfield', 2, 'NONE', { query: 'spring' });
+  const sorted = [none, unknown, hamlet, village, town].sort(compareRanked);
+  // An unrecognized class string ("spaceport") and no class at all both
+  // fall into the same unranked tier -- the ladder only names four real
+  // ranks -- so UNKNOWN and NONE tie on class and fall through to the
+  // final deterministic featureId tiebreak ('NONE' < 'UNKNOWN').
+  assert.deepEqual(sorted.map((r) => r.featureId), ['TOWN', 'VILLAGE', 'HAMLET', 'NONE', 'UNKNOWN']);
+});
+
+test('compareRanked: class comparison is case-insensitive', () => {
+  const upper = ranked('springfield', 2, 'UPPER', { query: 'spring', class: 'City' });
+  const village = ranked('springfield', 2, 'VILLAGE', { query: 'spring', class: 'village' });
+  assert.ok(compareRanked(upper, village) < 0, '"City" (mixed case) must rank as city, ahead of village');
+});
+
+test('compareRanked: with no population/class/isAlt data on either row (every index shipped today), the new tiebreaks are a complete no-op and areaKm2 still decides', () => {
+  const bigArea = ranked('bag', 4, 'BIG', { query: 'bag', country: 'IND', areaKm2: 40.9 });
+  const smallArea = ranked('bag', 4, 'SMALL', { query: 'bag', country: 'IND', areaKm2: 1.2 });
+  const sorted = [smallArea, bigArea].sort(compareRanked);
+  assert.deepEqual(sorted.map((r) => r.featureId), ['BIG', 'SMALL'], 'areaKm2 (descending) must still be reached and decide, exactly as before this task');
 });

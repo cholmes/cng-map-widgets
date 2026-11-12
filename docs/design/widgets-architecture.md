@@ -1239,6 +1239,17 @@ export interface SearchResult {
    *  biggest" dedupe rule; exposed here so a UI can also use it directly
    *  (e.g. a size badge). */
   readonly areaKm2?: number;
+  /** **Added, pending-data-columns follow-up** (ranking-residual
+   *  amendment, below): Overture's place-prominence column, e.g.
+   *  `"city"`/`"town"`/`"village"`/`"hamlet"`. `undefined` when the
+   *  loaded index has no `class` column -- true for every index shipped
+   *  so far; both this and `population` are reserved, not yet populated,
+   *  columns (same status as O10's `name_lang`/`alt_of` were before E8). */
+  readonly class?: string;
+  /** **Added, pending-data-columns follow-up.** A population estimate for
+   *  the feature, when the source has one. `undefined` when the loaded
+   *  index has no `population` column (every index shipped so far). */
+  readonly population?: number;
   readonly bbox: BBox;
   readonly source: string;
 
@@ -1291,6 +1302,13 @@ export interface IndexInfo {
   readonly attribution: readonly AreaAttribution[];
   /** Milliseconds from `load()` to ready. For the E1 budget check. */
   readonly loadMs: number;
+  /** **Added, client-side speed pass** (manifest contract addition
+   *  `prominent_index`, §6's "Further amendments"). Present only when the
+   *  manifest declared one. `ready: false` is the (rare) case where the
+   *  prominent index's own load failed -- `load()` still resolved, by
+   *  falling back to waiting on the main index, exactly as if
+   *  `prominent_index` had been absent. */
+  readonly prominent?: { readonly rows: number; readonly bytes: number; readonly ready: boolean };
 }
 
 export type GeocoderState = 'idle' | 'loading' | 'ready' | 'error';
@@ -1308,7 +1326,20 @@ export declare class Geocoder {
 
   /** Ranked results. Calls `load()` if needed. Safe to call on every
    *  keystroke: a newer call supersedes an older one, whose promise resolves
-   *  to `[]` rather than rejecting (so a UI never has to track staleness). */
+   *  to `[]` rather than rejecting (so a UI never has to track staleness).
+   *
+   *  **Two-wave search** (manifest contract addition `prominent_index`):
+   *  when a prominent index is declared and loaded but the main index
+   *  isn't ready yet, this promise still resolves with the fast,
+   *  possibly-incomplete answer from the prominent index alone (the
+   *  `'results'` event for it is tagged `wave: 'prominent'`); once the
+   *  main index finishes loading, the same query is re-run against it in
+   *  the background and a **second** `'results'` event fires
+   *  (`wave: 'final'`) -- but only if the final answer actually adds a
+   *  row the first didn't have. A superseded query (a later `search()`
+   *  call before the second wave lands) drops that wave silently. With no
+   *  `prominent_index` declared, there is always exactly one wave,
+   *  tagged `'final'` -- unchanged from before this existed. */
   search(prefix: string, options?: SearchOptions): Promise<SearchResult[]>;
 
   /** Zero-await typeahead. Available only when `state === 'ready'` and the
@@ -1332,10 +1363,28 @@ export interface GeocoderEvents {
   'state': { state: GeocoderState };
   'load:progress': { bytes: number; total: number | null };
   'load': IndexInfo;
-  'results': { query: string; results: SearchResult[]; elapsedMs: number };
+  /** `wave` **added by two-wave search** (manifest contract addition
+   *  `prominent_index`): `'final'` on every emission when there's no
+   *  prominent index, or once the main index is ready; `'prominent'` for
+   *  the fast, possibly-incomplete first answer while the main index is
+   *  still loading behind it. See `search()`'s doc comment above for the
+   *  full merge/supersede semantics. */
+  'results': { query: string; results: SearchResult[]; elapsedMs: number; wave: 'prominent' | 'final' };
   'select': { result: SearchResult; area: Area; elapsedMs: number };
+  /** **Added, client-side speed pass.** Fires once the main index finishes
+   *  loading in the background after a `prominent_index`-driven `load()`
+   *  already resolved early. Informational only -- `search()`'s own
+   *  second-wave `'results'` emission is what a UI should actually react
+   *  to for refreshing a results list; this event exists for anything
+   *  that wants to know "the full index is in now" independent of any
+   *  particular query (e.g. flipping an indicator off). */
+  'index:upgraded': { strategy: 'full' | 'range'; loadMs: number };
   'error': CnmwError;
-  /** Emitted when `onVersionSkew: 'warn'` and a skew was tolerated. */
+  /** Emitted when `onVersionSkew: 'warn'` and a skew was tolerated, or when
+   *  a declared `prominent_index` fails to load (`code:
+   *  'PROMINENT_INDEX_FAILED'`) -- the latter never fails `load()` itself,
+   *  since falling back to the main index alone still leaves the geocoder
+   *  fully usable. */
   'warning': { code: string; message: string; detail?: unknown };
 }
 
@@ -1347,8 +1396,9 @@ export const VERSION: string;
 
 **The ranking rule, normatively.** *(Amended 2026-11-12 — see the amendment
 below for the bug report, the alternatives measured, and why this is the
-order.)* Results are sorted by this tuple, ascending, with every component
-a total order:
+order; further amended the same day by the "Ranking-residual follow-up"
+amendment after it, which adds components (5)/(6) below.)* Results are
+sorted by this tuple, ascending, with every component a total order:
 
 1. `levelAdjusted` = `effLevel − (viewportBoost if viewport is 'inside' or 'overlap' else 0)`.
 2. `effLevel` = `max(0, level − exactLevelPromotion)` when `matchClass` is
@@ -1366,12 +1416,35 @@ a total order:
 4. `level` — the true, unpromoted admin level. Final level-based tiebreak
    for anything (1)–(3) left tied; normally redundant with (2)/(3), kept as
    the honest "ADM0 before ADM1" fallback the original spec asked for.
-5. `areaKm2` descending, `null`/`undefined` sorted last — the importance
-   signal added by this amendment: among rows tied on (1)–(4), the bigger
-   (or more completely attributed) feature wins. A point-only locality
-   with no `area_km2` always sorts after one that has it.
-6. `nameLength` ascending — "Contra Costa" before "Contra Costa Centre".
-7. `nameNorm` ascending, then `featureId` ascending — so the order is
+5. **`isAlt`** — **added by the ranking-residual follow-up.** `false`
+   (primary-name row) before `true` (alt-name row, `alt_of` non-null): at
+   equal level, a match against a feature's primary name outranks the
+   identical match against one of its alt names. Pending data: `alt_of`
+   is populated (E8), but today's alt-name rows virtually never land in
+   the same `(levelAdjusted, effLevel, matchClassRank, level)` bucket as
+   their own primary row — they usually have a *different* `nameNorm`, so
+   they're different query matches, not ties — so this is observably a
+   no-op until an index ships alt rows that actually collide this way.
+6. **Prominence** — also added by the ranking-residual follow-up: tier 0
+   is `population` descending (a row with a real population always beats
+   one without, regardless of the loser's `class`); tier 1 (no
+   `population`) falls back to a fixed `class` ladder — `city` > `town` >
+   `village` > `hamlet` > anything else or absent. Slots **ahead of**
+   `areaKm2` (next), because population/class-of-place is a better
+   importance signal *across* feature kinds (a capital city vs. a
+   country) than area is — see "Known residual limitation" below for why
+   `areaKm2` alone gets exactly that comparison backwards. **Both
+   `population` and `class` are still pending, unpopulated columns on
+   every index shipped so far** (Overture has not filled either in), so
+   every row ties here today and this step is a complete no-op, falling
+   straight through to (7) — see the "Ranking-residual follow-up"
+   amendment for the measured confirmation.
+7. `areaKm2` descending, `null`/`undefined` sorted last — the importance
+   signal added by the first amendment: among rows tied on (1)–(6), the
+   bigger (or more completely attributed) feature wins. A point-only
+   locality with no `area_km2` always sorts after one that has it.
+8. `nameLength` ascending — "Contra Costa" before "Contra Costa Centre".
+9. `nameNorm` ascending, then `featureId` ascending — so the order is
    deterministic and testable.
 
 `viewportRank` (`inside`/`overlap`/`near`/`outside`) is still computed from
@@ -1461,7 +1534,11 @@ alternate-language names below primary names, or pulling in Overture's
 `population`/`prominence` columns — neither the bug report nor this fix's
 column-passthrough scope (`parent_name`, `area_km2`, `country_name`)
 covers population/prominence — a materially larger change, left for
-separate follow-up. It does not reproduce against the geoBoundaries index
+separate follow-up (**the mechanism for which has now landed — see the
+"Ranking-residual follow-up" amendment after the measured-examples table
+below; the Overture index itself has not populated `class`/`population`
+yet, so "bag"/"san" above are not yet re-measured any differently**). It
+does not reproduce against the geoBoundaries index
 (no locality level, no alt-name rows at all — confirmed in the measured
 table below, where "Baghdad"/"Baghdad Province" lands cleanly at #4) and
 is orthogonal to the reported bug (eight *identical* rows for one
@@ -1614,6 +1691,72 @@ No alt-name pollution here (geoBoundaries has none), but the two tiny real
 ADM0 units still sit ahead of "San, Mali" by the same bounded-promotion
 arithmetic as above — accepted as correct, since these are genuine ADM0
 countries, not translation noise.
+
+### Amendment, 2026-11-12 — ranking-residual follow-up: `class`/`population`/`alt_of`
+
+The amendment above explicitly deferred two things as "a materially larger
+change": weighting alt-name rows below their primary, and pulling in a
+real prominence signal (`population`/`class`) instead of `area_km2` for
+the across-feature-kind comparisons `area_km2` gets backwards (city vs.
+country). This amendment lands the *mechanism* for both — the comparator
+extension and the `SearchResult` passthrough — while being explicit about
+what it does **not** land: the data. `population` and `class` are
+Overture columns that have not been populated on any shipped index yet
+(the Overture names index this doc's examples above were measured
+against has neither), so every example above is unchanged until a catalog
+build actually fills them in. This is intentional: the ranking code is the
+long pole (it ships once, in a release), the data is the catalog team's
+and can land on its own schedule without another geocoder-core release.
+
+**What changed, normatively** (folded into "The ranking rule,
+normatively" above as components (5) and (6)):
+
+- `isAlt` (component 5): at equal level, a primary-name match outranks an
+  alt-name match for the same underlying feature. Derived from `alt_of`
+  (already shipped, E8) — `isAlt = alt_of != null` on the matched row —
+  not from a new column.
+- Prominence (component 6): `population` descending when present,
+  else a fixed `class` ladder (`city` > `town` > `village` > `hamlet` >
+  anything else/absent), slotted ahead of `areaKm2`.
+- `SearchResult.class`/`SearchResult.population` (§3.2's interface,
+  above): passed through unconditionally, exactly like `areaKm2`/
+  `parentName`/`countryName` before them, so a UI can use them directly
+  (e.g. a population badge) without geocoder-core needing to change again
+  once a catalog populates the columns.
+
+**Why `isAlt` is defined this way rather than "never show an alt-name row
+at all."** An alt-name row is still the *correct* answer to a query typed
+in that alt name/language — hiding it would regress E8's whole point.
+The fix is ordering, not suppression: when a primary- and an alt-name row
+for the *same* feature genuinely tie on level/match-class/area today (the
+common near-future case once `alt_of` rows multiply), the primary wins
+the tiebreak. It does not, and structurally cannot, address the
+measured residual limitation itself (an alt-name row for a *different,
+unrelated* feature — Bahamas' Uzbek-looking transliteration — outranking
+Baghdad): that is a cross-feature comparison the prominence tiebreak
+(component 6) targets instead, once `population`/`class` are populated.
+
+**Why prominence is a `[tier, key]` pair rather than always comparing
+population, falling back to `-Infinity` on absence (`areaKm2`'s own
+pattern).** `areaKm2`'s "missing sorts last" rule works because every
+row being compared is the *same kind* of thing (an admin boundary with a
+real area). Population/class crosses kinds on purpose: a hamlet's
+`class` is real and known even when its `population` genuinely isn't.
+Falling back to `-Infinity` on no `population` would make every
+classed-but-no-population row (most of them, in practice) sort as if it
+had no prominence signal at all, discarding the `class` ladder entirely
+for rows that need it most. The two-tier shape keeps a row with a known
+`population` always ahead of one without, while still ranking the
+no-population majority by their `class` instead of leaving them all
+tied.
+
+**Scope, explicitly.** `dedupeByNameCountryLevel`'s own "keep the
+biggest" representative-picking rule (§3.2 amendment, "Result
+diversity") still compares by `areaKm2` alone — extending it to prefer
+population/class too is a reasonable future refinement but is not part
+of this follow-up's scope, and changing it changes which *concrete* row
+represents a deduped group, a bigger behavioural change than reordering
+ties. Left as is.
 
 Usage:
 
@@ -2449,6 +2592,91 @@ builder; this section is the interface it must satisfy. Two artifacts: a
 > hyparquet findings in PLAN.md). Alt-name rows may carry null
 > geometry/geometry_ref; consumers resolve via the primary row (`alt_of`).
 
+> **Further amendments (2026-11-12, client-side speed pass — this doc's
+> `footer_bytes`/`footer_metadata_bytes` and `prominent_index` fields
+> below).** All additive and **optional on every manifest entry**:
+> `geocoder-core` is written to no-op gracefully on their absence (an
+> older or not-yet-rebuilt manifest behaves exactly as before), so the
+> catalog side can ship any of them independently and the client never
+> needs a matching release to stay correct — only to stay as fast as it
+> could be. **Shipped and verified live** against
+> `portolan-mirrors/geoboundaries-catalog` the same day (`footer_bytes`/
+> `footer_metadata_bytes` on every file entry; a level-2 `display` file;
+> retuned `row_group_rows`), confirmed field-for-field below.
+>
+> **(4) `footer_bytes` and `footer_metadata_bytes`** — two exact
+> trailing-byte counts, declared on the index manifest's `index` entry and
+> on each boundary level's `full`/`display` entries (both live
+> contiguously at the file's tail, in this order: `[data][page index]
+> [footer metadata][8-byte length + "PAR1"]"`):
+>
+> - `footer_bytes` — the **whole trailing span**, footer metadata plus
+>   page index. One range request of exactly this many bytes from the end
+>   of the file leaves a reader holding all of the file's metadata,
+>   period.
+> - `footer_metadata_bytes` — the **thrift footer alone**, smaller than
+>   `footer_bytes` by however big the page index is. This is the number a
+>   hyparquet client should actually ask for: hyparquet has no sub-chunk
+>   read and never reads page-index bodies at all, so fetching the extra
+>   span `footer_bytes` covers would be pure waste for it.
+>
+> **`geocoder-core` passes `footer_metadata_bytes` as hyparquet's
+> `initialFetchSize` — never `footer_bytes`** — falling back to
+> `footer_bytes` only on a manifest old enough to declare that alone (a
+> single-size field, pre-dating this distinction), then to hyparquet's own
+> default when the entry declares neither
+> (`geocoder.js`'s `initialFetchSizeOf`). Measured live, post-fix, against
+> the geoBoundaries catalog: every boundary-file footer GET came back at
+> exactly its declared `footer_metadata_bytes` (e.g. ADM0 full 271,716 B,
+> ADM0 display 189,008 B, ADM2 display 200,258 B) — never hyparquet's
+> 512 KB default, and never a second round trip. The gap this closes is
+> real and measured on both catalogs: on 5 of the Overture names index's
+> files the plain 512 KB speculative fetch is *short* (a guaranteed second
+> round trip — the full Overture names index's own `footer_metadata_bytes`
+> alone is 2,150,142 bytes), and on the geoBoundaries catalog the
+> speculative fetch was measured *over*-fetching by roughly 5× on an ADM0
+> boundary file (524,288 bytes fetched against an actual
+> `footer_metadata_bytes` need of 271,716). The builder computes both
+> numbers directly from the parquet writer's own footer-length output; a
+> client cannot derive either without first fetching the footer, which is
+> exactly the round trip these fields exist to skip.
+>
+> **(5) `prominent_index`** — a top-level manifest field, sibling to
+> `index`: `{ url, size, checksum, row_count, row_groups, row_group_rows,
+> footer_bytes, footer_metadata_bytes, sorted_by, load: "eager",
+> rows_per_level, criteria: { ..., fallback } }` — the same per-file shape
+> as a `boundaries[].full`/`.display` entry, plus catalog-authored
+> `criteria` documenting *what* counts as prominent and *when a client
+> should fall back* to the full index (machine-readable, but advisory —
+> `geocoder-core` reads only `url`/`size`/`rows` (falling back to
+> `row_count`, below) /`footer_bytes`/`footer_metadata_bytes`; `criteria`
+> is for a UI or a human to read, not parsed). **Field name note:** the
+> shipped Overture staging manifest uses `row_count`, not `rows`, matching
+> every other per-file entry in this doc's schema (`boundaries[].full`/
+> `.display` both use `row_count`) — `IndexInfo.prominent.rows` is filled
+> from `prominent_index.rows ?? prominent_index.row_count` for this
+> reason. Rows in the prominent index **share `feature_id`/`geometry_ref`/
+> `name_norm` with the full index's own rows** for the same feature — a
+> client must dedupe the two waves by `feature_id`, which is exactly what
+> `search()`'s two-wave `resultsAddRows` check (below) already does.
+>
+> Names a **small (the shipped Overture one: 8.62 MiB, 108,919 rows —
+> comfortably inside this doc's original ≤ 8 MB framing) subset** of the
+> full names index — the catalog's own choice of what counts as
+> "prominent" (the shipped criteria: every primary row at levels 0–3,
+> every level-0 alt-language spelling, and level-4 localities at
+> `cartography.prominence >= 50`) — built as an ordinary standalone
+> names-index parquet satisfying every rule in §6.2/§6.3 on its own (sorted
+> by `name_norm`, same schema, same `catalog_version`). The client
+> eager-loads it in full on `load()`, in parallel with (not after) opening
+> the main index, so `search()` can answer from it before the main index
+> -- which may be tens of MB and take seconds to open in `range` mode --
+> is even ready. See §3.2's `Geocoder#search()` doc comment and the
+> "Two-wave search" semantics there for exactly how the two answers are
+> merged/superseded; absence of this field is a complete no-op (every
+> `search()` behaves exactly as it did before this existed, with exactly
+> one answer per query).
+
 ### 6.1 Format
 
 **Plain Parquet, not GeoParquet.** The index carries no geometry column, so
@@ -2474,7 +2702,9 @@ bbox is four ordinary `DOUBLE` columns inside a struct. This satisfies the
 | `country_name` | `String` | no | **Added 2026-11-12.** geoBoundaries' CGAZ-names-index column: the ISO country's display name (e.g. `"Switzerland"` alongside `country: "CHE"`). Rendered as dropdown secondary text (§3.2 amendment) in place of `parent_name` when the index has this column instead. Overture's division-names index does not carry this (it has `parent_name` instead). |
 | `geometry_ref` | `STRUCT<file: String(dict), row_group: INT32, row: INT64>` | no | **Advisory** fast path for `select()`. Never authoritative (§6.3). |
 | `name_lang` | `String`, dictionary | no | E8. BCP-47. `null`/absent means "the published name, language unstated". |
-| `alt_of` | `String` | no | E8. An alt-name row sets this to the primary row's `feature_id`; `null` on primary rows. A consumer dedupes by `feature_id` when showing results. |
+| `alt_of` | `String` | no | E8. An alt-name row sets this to the primary row's `feature_id`; `null` on primary rows. A consumer dedupes by `feature_id` when showing results. **Also consumed by the ranking-residual follow-up** (§3.2): `isAlt = alt_of != null` is the comparator's primary-vs-alt tiebreak. |
+| `class` | `String`, dictionary | no | **Reserved by the ranking-residual follow-up (§3.2), unpopulated on every index shipped so far.** A place-prominence class, e.g. `"city"`/`"town"`/`"village"`/`"hamlet"` — Overture's own vocabulary. Powers the ranking comparator's prominence tiebreak when `population` is absent. |
+| `population` | `DOUBLE` or `INT64` | no | **Reserved by the ranking-residual follow-up (§3.2), unpopulated on every index shipped so far.** Powers the ranking comparator's prominence tiebreak (descending) ahead of `area_km2`, and is passed through to `SearchResult.population` for direct UI use. |
 
 Validation on load: a missing required column → `INDEX_SCHEMA_MISMATCH` naming
 the column. A present-but-wrong-typed column is the same error. No silent
@@ -2572,23 +2802,30 @@ tells the geocoder what it is about to load:
   "index": {
     "url": "./names.parquet",
     "size": 2847193,
+    "footer_bytes": 61440,
     "checksum": "1220f3a1…",
     "row_groups": 18
+  },
+  "prominent_index": {
+    "url": "./names-prominent.parquet",
+    "size": 612000,
+    "footer_bytes": 8192,
+    "rows": 4800
   },
   "boundaries": [
     {
       "level": 0,
       "feature_id_column": "shapeID",
       "geometry_column": "geometry",
-      "full": { "url": "../adm0/boundaries.parquet", "size": 93458112, "row_count": 218 },
-      "display": { "url": "../adm0/display.parquet", "size": 7340032, "row_count": 218 }
+      "full": { "url": "../adm0/boundaries.parquet", "size": 93458112, "footer_bytes": 180224, "row_count": 218 },
+      "display": { "url": "../adm0/display.parquet", "size": 7340032, "footer_bytes": 32768, "row_count": 218 }
     },
     { "level": 1, "feature_id_column": "shapeID", "geometry_column": "geometry",
-      "full": { "url": "../adm1/boundaries.parquet", "size": 104857600, "row_count": 3600 },
-      "display": { "url": "../adm1/display.parquet", "size": 9437184, "row_count": 3600 } },
+      "full": { "url": "../adm1/boundaries.parquet", "size": 104857600, "footer_bytes": 212992, "row_count": 3600 },
+      "display": { "url": "../adm1/display.parquet", "size": 9437184, "footer_bytes": 40960, "row_count": 3600 } },
     { "level": 2, "feature_id_column": "shapeID", "geometry_column": "geometry",
-      "full": { "url": "../adm2/boundaries.parquet", "size": 101711872, "row_count": 49349 },
-      "display": { "url": "../adm2/display.parquet", "size": 14680064, "row_count": 49349 } }
+      "full": { "url": "../adm2/boundaries.parquet", "size": 101711872, "footer_bytes": 245760, "row_count": 49349 },
+      "display": { "url": "../adm2/display.parquet", "size": 14680064, "footer_bytes": 57344, "row_count": 49349 } }
   ],
   "attribution": [
     { "text": "Boundaries: geoBoundaries CGAZ", "license": "CC-BY-4.0",
@@ -2596,6 +2833,13 @@ tells the geocoder what it is about to load:
   ]
 }
 ```
+
+`footer_bytes`/`prominent_index` are both optional (see the "Further
+amendments" block in §6's intro, above the format section) — the example
+shows them populated only because this is the target shape once the
+catalog side ships them; a manifest missing either is still fully valid
+and `geocoder-core` reads it exactly as it did before either field
+existed.
 
 **The pinning rule.** `catalog_version` appears in three places, and all three
 must agree:
@@ -2624,10 +2868,40 @@ design call #5, and it is why `geometry_ref` is advisory:
 1. If `geometry_ref` is present and `catalog_version` matches: range-read that
    row group, decode `shapeID` for that row, **assert it equals
    `result.featureId`**. On mismatch, fall through — never trust the hint.
+   **Client-side speed pass:** since `geometry_ref` already names the
+   exact row, the verification read and the geometry read for that *same*
+   row are issued in parallel rather than sequentially -- the geometry
+   read is purely speculative until the verification read confirms the
+   join key, and is discarded (not awaited further) on a mismatch. This
+   trades one wasted speculative read in the rare mismatch case for
+   shaving a full round trip off the overwhelmingly common hit.
 2. Otherwise: read the boundary file's `shapeID` column chunks (dictionary-
    encoded, small, and the file is sorted by `(country, shapeID)` per the mirror
    recipe) to locate the row, then range-read that row group's geometry column.
 3. If `shapeID` is absent entirely: `GEOMETRY_NOT_FOUND`.
+
+**Handle reuse, across both paths.** The file handle + parsed footer
+opened above is cached per `Geocoder` instance, keyed by boundary URL
+(`footer_bytes`'s "Further amendments" block, above, covers the footer
+read itself): a second `select()` against the same boundary file -- or
+one that lands after the background footer prefetch (below) already
+warmed the cache -- reuses it rather than re-opening the file and
+re-fetching the footer. A cached handle never carries a particular
+caller's `AbortSignal` (it can be shared by several concurrent/later
+selects, and one caller's abort must never cancel another's read of the
+same file); only the geometry decode itself still observes the signal.
+
+**Footer prefetch.** Once `load()` is ready, `Geocoder` opens every
+boundary file's footer declared in the manifest -- display variants
+first (the default `resolution`), then full -- in the background, one at
+a time via `requestIdleCallback` (`setTimeout` outside a browser), using
+the same per-instance handle cache above. A failed prefetch is simply
+dropped from the cache (never surfaced as a warning or error): nothing
+the user did caused it, and `select()` just performs the real fetch
+itself when it gets there. The effect: by the time a user actually picks
+a result, the footer latency that `select()` → `resolveGeometry` would
+otherwise pay synchronously has typically already been paid in the
+background while they were still reading the dropdown.
 
 **Requirements this places on the E2 boundary mirror**, so the two halves fit:
 

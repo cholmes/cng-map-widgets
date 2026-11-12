@@ -76,7 +76,7 @@ export function computeViewportRank(featureBBox, viewport, nearFactor) {
  * against one query. Returns null if the row does not match under the
  * allowed match classes.
  *
- * @param {{ nameNorm: string, level: number, bbox: BBox, featureId: string, areaKm2?: number|null }} row
+ * @param {{ nameNorm: string, level: number, bbox: BBox, featureId: string, areaKm2?: number|null, population?: number|null, class?: string|null, isAlt?: boolean }} row
  * @param {string} queryNorm
  * @param {{
  *   viewport?: BBox,
@@ -85,7 +85,7 @@ export function computeViewportRank(featureBBox, viewport, nearFactor) {
  *   matchClasses: readonly MatchClass[],
  *   exactLevelPromotion?: number,
  * }} options
- * @returns {{ matchClass: MatchClass, level: number, effLevel: number, levelAdjusted: number, viewportRank: ViewportRank, nameLength: number, areaKm2: number|undefined } | null}
+ * @returns {{ matchClass: MatchClass, level: number, effLevel: number, levelAdjusted: number, viewportRank: ViewportRank, nameLength: number, areaKm2: number|undefined, population: number|undefined, class: string|undefined, isAlt: boolean } | null}
  */
 export function rankRow(row, queryNorm, options) {
   const matchClass = classifyMatch(row.nameNorm, queryNorm, options.matchClasses);
@@ -111,11 +111,51 @@ export function rankRow(row, queryNorm, options) {
     viewportRank,
     nameLength: row.nameNorm.length,
     areaKm2: typeof row.areaKm2 === 'number' && !Number.isNaN(row.areaKm2) ? row.areaKm2 : undefined,
+    population: typeof row.population === 'number' && !Number.isNaN(row.population) ? row.population : undefined,
+    class: typeof row.class === 'string' ? row.class : undefined,
+    isAlt: Boolean(row.isAlt),
   };
 }
 
 function areaOrNegInf(areaKm2) {
   return typeof areaKm2 === 'number' ? areaKm2 : -Infinity;
+}
+
+// Ranking-residual follow-up (design doc §3.2 amendment, "Known residual
+// limitation" / task 5): `class` and `population` are pending data
+// columns -- not yet populated on any shipped index -- so every row below
+// decodes both as `undefined` today and `prominenceKey` returns the same
+// tier-1/no-signal tuple for all of them, making this tiebreak a no-op
+// until a catalog actually fills the columns in. `CLASS_RANK` is the
+// fixed ladder named in the task: city outranks town outranks village
+// outranks hamlet outranks anything else (an unrecognized class string,
+// or no class at all).
+const CLASS_RANK = { city: 0, town: 1, village: 2, hamlet: 3 };
+const UNRANKED_CLASS = 4;
+
+function classRankOf(klass) {
+  if (typeof klass !== 'string') return UNRANKED_CLASS;
+  return CLASS_RANK[klass.toLowerCase()] ?? UNRANKED_CLASS;
+}
+
+/**
+ * Prominence tiebreak: `population` wins when present on a row (compared
+ * descending, so bigger population = more prominent), falling back to the
+ * fixed `class` ladder above when it is absent. Returns a `[tier, key]`
+ * pair so `compareRanked` can compare it lexicographically: tier 0 (a real
+ * `population` number) always outranks tier 1 (no population, class-rank
+ * fallback), and within a tier the second element is the real comparison
+ * key. When both columns are absent on every row (every index shipped so
+ * far), every row gets `[1, 4]` and this is a pure no-op -- the comparator
+ * falls straight through to `areaKm2`, exactly as before this existed.
+ * @param {{ population?: number, class?: string }} rank
+ * @returns {[number, number]}
+ */
+function prominenceKey(rank) {
+  if (typeof rank.population === 'number' && !Number.isNaN(rank.population)) {
+    return [0, -rank.population]; // tier 0; negate so ascending compare = descending population
+  }
+  return [1, classRankOf(rank.class)];
 }
 
 /**
@@ -137,12 +177,34 @@ function areaOrNegInf(areaKm2) {
  *    tiebreak for anything still tied (normally redundant with (2)/(3),
  *    but kept as the honest "ADM0 before ADM1" fallback the original spec
  *    asked for).
- * 5. `areaKm2` descending, `null`/`undefined` sorted last -- the
+ * 5. `isAlt` -- **added by the ranking-residual follow-up** (task 5): at
+ *    equal level, a match against a primary-name row ranks above the
+ *    identical match against an alt-name row for the same underlying
+ *    feature (`alt_of` non-null on the matched row). `isAlt` is `false`
+ *    for every row on an index with no `alt_of` column, so this is a
+ *    no-op until one is populated with alt-name rows that actually tie on
+ *    (1)-(4) with their own primary row -- which, today, none do (the
+ *    primary and its alt rows differ in `nameNorm`, so they are different
+ *    *query matches* far more often than they land in the same result
+ *    set at all).
+ * 6. **Prominence** -- also added by the ranking-residual follow-up:
+ *    `population` descending when the row carries one, else a fixed
+ *    `class` ladder (`city` > `town` > `village` > `hamlet` > anything
+ *    else/absent) -- see `prominenceKey`. Slots ahead of `areaKm2`
+ *    per the task ("a prominence key ... slots ahead of area_km2"),
+ *    because population/class-of-place is a better importance signal
+ *    *across* feature kinds (a capital city vs. a country) than area is
+ *    -- see the amendment's "Known residual limitation" for why `areaKm2`
+ *    alone gets this backwards for exactly that comparison. Both columns
+ *    are still pending on every shipped index (Overture has not
+ *    populated either yet), so every row ties here today and this step
+ *    is a no-op, falling straight through to (7).
+ * 7. `areaKm2` descending, `null`/`undefined` sorted last -- the
  *    importance signal: among same-level, same-match-class rows, the
  *    bigger (or more complete) feature wins. Point-only localities with no
  *    `area_km2` always sort after ones that have it.
- * 6. `nameLength` ascending -- "Contra Costa" before "Contra Costa Centre".
- * 7. `nameNorm` ascending, then `featureId` ascending -- deterministic,
+ * 8. `nameLength` ascending -- "Contra Costa" before "Contra Costa Centre".
+ * 9. `nameNorm` ascending, then `featureId` ascending -- deterministic,
  *    testable tiebreak.
  *
  * Why `effLevel` is bounded rather than matchClass dominating outright
@@ -171,6 +233,13 @@ export function compareRanked(a, b) {
   if (mcA !== mcB) return mcA - mcB;
 
   if (a.rank.level !== b.rank.level) return a.rank.level - b.rank.level;
+
+  if (a.rank.isAlt !== b.rank.isAlt) return (a.rank.isAlt ? 1 : 0) - (b.rank.isAlt ? 1 : 0);
+
+  const [tierA, prominenceA] = prominenceKey(a.rank);
+  const [tierB, prominenceB] = prominenceKey(b.rank);
+  if (tierA !== tierB) return tierA - tierB;
+  if (prominenceA !== prominenceB) return prominenceA - prominenceB;
 
   const areaA = areaOrNegInf(a.rank.areaKm2);
   const areaB = areaOrNegInf(b.rank.areaKm2);

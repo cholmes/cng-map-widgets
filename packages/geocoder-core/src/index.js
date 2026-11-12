@@ -6,7 +6,7 @@
 // ./cdn.js -- that part of the design is honored even without a bundler.
 
 export { Geocoder, DEFAULT_INDEX_URL, VERSION, resolveResolutionMode } from './geocoder.js';
-export { resolveJoinKey, geometryRefRowRange, firstMatch, resolveGeometry } from './geometry-resolver.js';
+export { resolveJoinKey, geometryRefRowRange, firstMatch, resolveGeometry, openBoundaryFile } from './geometry-resolver.js';
 export { CDN, loadHyparquet, setHyparquetModules, clearHyparquetModules } from './cdn.js';
 export {
   compareRanked,

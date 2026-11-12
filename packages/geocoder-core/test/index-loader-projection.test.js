@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadFullIndex } from '../src/index-loader.js';
+import { loadFullIndex, openRangeIndex } from '../src/index-loader.js';
 import { setHyparquetModules, clearHyparquetModules } from '../src/cdn.js';
 
 // loadFullIndex's manifest-driven column projection (index-loader.js's
@@ -108,4 +108,40 @@ test('loadFullIndex: no source column and no defaultSource throws INDEX_SCHEMA_M
       return true;
     },
   );
+});
+
+// --- openRangeIndex: footer_bytes (manifest contract addition, task 1) ----
+
+test('openRangeIndex: a declared footer_bytes is passed through as hyparquet\'s initialFetchSize', async () => {
+  const seenOptions = [];
+  setHyparquetModules({
+    hyparquet: {
+      asyncBufferFromUrl: async () => ({ __fake: true }),
+      parquetMetadataAsync: async (file, options) => {
+        seenOptions.push(options);
+        return { row_groups: [{ num_rows: 1, columns: [] }] };
+      },
+    },
+    compressors: {},
+  });
+
+  await openRangeIndex('https://example.test/index.parquet', fakeFetch(), 8_192);
+  assert.equal(seenOptions[0].initialFetchSize, 8_192);
+});
+
+test('openRangeIndex: with no footer_bytes given, falls back to the pre-existing 64KB tuned default', async () => {
+  const seenOptions = [];
+  setHyparquetModules({
+    hyparquet: {
+      asyncBufferFromUrl: async () => ({ __fake: true }),
+      parquetMetadataAsync: async (file, options) => {
+        seenOptions.push(options);
+        return { row_groups: [{ num_rows: 1, columns: [] }] };
+      },
+    },
+    compressors: {},
+  });
+
+  await openRangeIndex('https://example.test/index.parquet', fakeFetch());
+  assert.equal(seenOptions[0].initialFetchSize, 65_536, 'unchanged default when the manifest declares no footer_bytes');
 });

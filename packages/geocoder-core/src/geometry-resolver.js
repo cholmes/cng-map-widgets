@@ -196,15 +196,31 @@ export async function firstMatch(items, concurrency, task) {
  * metadata regardless of which path resolves the geometry); building the
  * candidate-group statistics (`buildGroups`) is deferred to the fallback
  * alone, since the fast path's common case never needs them.
+ *
+ * Exported (not just used internally) so `Geocoder` can call it directly
+ * for its own background footer prefetch (manifest contract addition
+ * `footer_bytes`, task 2) and so a test can fake it via `__deps`.
+ *
  * @param {string} url
  * @param {typeof fetch} fetchImpl
  * @param {AbortSignal} [signal] threaded into every range-fetch `requestInit`
  *   hyparquet issues against this file handle, so aborting it cancels any
  *   in-flight read (used by the progressive `select({ resolution: 'both' })`
  *   background upgrade to cancel a superseded fetch -- design doc task
- *   "a new select() supersedes the pending background upgrade").
+ *   "a new select() supersedes the pending background upgrade"). Omitted
+ *   (as `Geocoder`'s cache and prefetch both do) when the handle may be
+ *   shared by more than one caller, so one caller's abort can never cancel
+ *   another's read of the same file.
+ * @param {number} [footerBytes] the manifest's declared exact trailing-byte
+ *   length of this file's footer + page index (manifest contract addition
+ *   `footer_bytes`, task 1). When given, this is passed as hyparquet's
+ *   `initialFetchSize` so the footer comes back in exactly one range
+ *   request; hyparquet's own default (512 KB, speculative) often forces a
+ *   second request for a large footer and always over-fetches a small one.
+ *   Omitted (an older manifest with no `footer_bytes` declared) falls back
+ *   to hyparquet's own default, unchanged from before this task.
  */
-async function openBoundaryFile(url, fetchImpl, signal) {
+export async function openBoundaryFile(url, fetchImpl, signal, footerBytes) {
   const { hyparquet } = await loadHyparquet();
   const file = await hyparquet.asyncBufferFromUrl({ url, fetch: fetchImpl, requestInit: { cache: 'no-store', signal } });
   // `geoparquet: false`: hyparquet >=1.x auto-detects GeoParquet's `geo`
@@ -218,9 +234,51 @@ async function openBoundaryFile(url, fetchImpl, signal) {
   // which hyparquet's built-in decoder is not); `geoparquet: false` keeps
   // it that way instead of two independent decoders fighting over one
   // column.
-  const metadata = await hyparquet.parquetMetadataAsync(file, { geoparquet: false });
+  const metadataOptions = { geoparquet: false };
+  if (typeof footerBytes === 'number' && footerBytes > 0) metadataOptions.initialFetchSize = footerBytes;
+  const metadata = await hyparquet.parquetMetadataAsync(file, metadataOptions);
   const catalogVersion = metadata.key_value_metadata?.find((kv) => kv.key === 'cnmw:catalog_version')?.value ?? null;
   return { url, file, metadata, catalogVersion };
+}
+
+/**
+ * Resolve the open file handle + parsed footer for `url`, reusing
+ * `options.handleCache` when the caller supplied one. `Geocoder` passes
+ * its own per-instance `Map` here (task 2: "verify handles are already
+ * reused across selects -- if not, fix" -- they were not, each `select()`
+ * re-opened and re-fetched the footer every time; this is that fix), so a
+ * second `select()` against the same boundary file -- or a `select()`
+ * that lands after the background footer prefetch already warmed the
+ * cache -- reuses the already-open handle and already-parsed footer
+ * instead of paying for either again.
+ *
+ * Without a cache (every direct call in this file's own test suite, and
+ * any other direct caller), this is exactly `openBoundaryFile` -- one
+ * fresh handle per call, `options.signal` threaded straight through.
+ *
+ * With a cache, the opening call deliberately never threads
+ * `options.signal`: a cached handle can be reused by several concurrent
+ * or later selects -- including a background-upgrade `select({
+ * resolution: 'both' })` whose own abort must never cancel a *different*
+ * select()'s read of the same file. A handle whose open fails is removed
+ * from the cache (not left as a permanently-broken cached rejection), so
+ * the next caller gets a genuinely fresh attempt.
+ * @param {string} url
+ * @param {typeof fetch} fetchImpl
+ * @param {{ signal?: AbortSignal, footerBytes?: number, handleCache?: Map<string, Promise<{url: string, file: object, metadata: object, catalogVersion: string|null}>> }} options
+ */
+function getBoundaryFileHandle(url, fetchImpl, options) {
+  const cache = options.handleCache;
+  if (!cache) return openBoundaryFile(url, fetchImpl, options.signal, options.footerBytes);
+  let handlePromise = cache.get(url);
+  if (!handlePromise) {
+    handlePromise = openBoundaryFile(url, fetchImpl, undefined, options.footerBytes).catch((err) => {
+      cache.delete(url);
+      throw err;
+    });
+    cache.set(url, handlePromise);
+  }
+  return handlePromise;
 }
 
 /**
@@ -305,14 +363,15 @@ async function fetchMatchedGeometry({ hyparquet, compressors, file, metadata, ab
  * @param {typeof fetch} fetchImpl
  * @param {'error'|'warn'|'ignore'} onVersionSkew
  * @param {(payload: { code: string, message: string, detail?: unknown }) => void} [onWarning]
- * @param {{ decodeAsync?: boolean, signal?: AbortSignal, entry?: object }} [options] `decodeAsync: true`
+ * @param {{ decodeAsync?: boolean, signal?: AbortSignal, entry?: object, footerBytes?: number, handleCache?: Map<string, Promise<object>> }} [options] `decodeAsync: true`
  *   decodes the geometry column with `wkbToGeoJsonAsync` (cooperative-yielding) instead of the
  *   synchronous decoder -- used on the 'full' / background-upgrade path, never needed on the small
  *   display-simplified path. `signal` cancels the fetch and is checked between decode chunks.
  *   `entry` is the manifest's `boundaries[]` entry for this result's level (see
  *   `resolveJoinKey`); omitted, every level behaves as it did before `index_key_column`/
  *   `country_column`/`row_group_rows` existed (join on `feature_id_column` default `"feature_id"`,
- *   narrow on `country_column` default `"country"`, no fast path).
+ *   narrow on `country_column` default `"country"`, no fast path). `footerBytes`/`handleCache`:
+ *   see `openBoundaryFile`/`getBoundaryFileHandle` above (manifest contract addition + task 2).
  * @returns {Promise<{ geometry: GeoJSON.Polygon|GeoJSON.MultiPolygon, bbox?: [number,number,number,number], boundaryUrl: string }>}
  */
 export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersion, fetchImpl, onVersionSkew, onWarning, options = {}) {
@@ -321,7 +380,7 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
   const countryColumn = entry.country_column ?? 'country';
   const { column: joinColumn, value: joinValue } = resolveJoinKey(entry, result);
 
-  const { file, metadata, catalogVersion } = await openBoundaryFile(boundaryUrl, fetchImpl, options.signal);
+  const { file, metadata, catalogVersion } = await getBoundaryFileHandle(boundaryUrl, fetchImpl, options);
 
   if (expectedCatalogVersion && catalogVersion && catalogVersion !== expectedCatalogVersion) {
     const message = `Boundary file catalog_version (${catalogVersion}) does not match the index's (${expectedCatalogVersion}).`;
@@ -344,7 +403,19 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
   const range = geometryRefRowRange(result.geometryRef, entry.row_group_rows);
   if (range) {
     options.signal?.throwIfAborted();
-    const rows = await hyparquet.parquetReadObjects({
+    // Task 4: parallelize the join-key verification read with the
+    // geometry read for the *same* row, instead of waiting for
+    // verification before even starting the geometry fetch. Safe here
+    // specifically because `geometry_ref` already names the exact row --
+    // there is nothing left to discover before the geometry read's
+    // `rowStart`/`rowEnd` are known, only whether that row turns out to be
+    // the right one. On a mismatch the speculative geometry read/decode is
+    // simply discarded (the `.catch` below keeps a failure in it from
+    // becoming an unhandled rejection); per §6.4 a mismatch here is already
+    // rare (an unrebuilt mirror or a stale ref), so paying for one wasted
+    // speculative read in that case is the right trade for shaving a full
+    // round trip off the overwhelmingly common hit.
+    const verifyPromise = hyparquet.parquetReadObjects({
       file,
       metadata,
       columns: [joinColumn, 'bbox'],
@@ -352,14 +423,41 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
       rowEnd: range.rowEnd,
       compressors,
     });
+    const speculativeGeomPromise = hyparquet
+      .parquetReadObjects({
+        file,
+        metadata,
+        columns: ['geometry'],
+        rowStart: range.rowStart,
+        rowEnd: range.rowEnd,
+        utf8: false,
+        compressors,
+      })
+      .catch(() => null);
+
+    const rows = await verifyPromise;
     const match = rows[0];
     if (match && match[joinColumn] === joinValue) {
+      const geomRows = await speculativeGeomPromise;
+      if (geomRows) {
+        options.signal?.throwIfAborted();
+        const geometry = options.decodeAsync
+          ? await wkbToGeoJsonAsync(geomRows[0].geometry, { signal: options.signal })
+          : wkbToGeoJson(geomRows[0].geometry);
+        const bbox = match.bbox ? [match.bbox.xmin, match.bbox.ymin, match.bbox.xmax, match.bbox.ymax] : undefined;
+        return { geometry, bbox, boundaryUrl };
+      }
+      // The speculative geometry read itself failed (a real network
+      // hiccup, not a mismatch) -- do the equivalent isolated read rather
+      // than silently returning nothing.
       return fetchMatchedGeometry({ hyparquet, compressors, file, metadata, absoluteRow: range.rowStart, match, boundaryUrl, options });
     }
     // Never trust the hint past this point for this call: the row it named
     // didn't carry the expected join key (a version-skewed/rebuilt
     // boundary file, or a stale cached ref), so fall through to the scan
-    // below exactly as if there had been no geometry_ref at all.
+    // below exactly as if there had been no geometry_ref at all. The
+    // speculative geometry read above is left to resolve/reject on its
+    // own; its `.catch` keeps it from surfacing as an unhandled rejection.
     onWarning?.({
       code: 'GEOMETRY_REF_MISMATCH',
       message: `geometry_ref for "${joinValue}" pointed at row ${range.rowStart}, which did not carry the expected "${joinColumn}"; falling back to a stats-pruning scan.`,

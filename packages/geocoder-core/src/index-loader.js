@@ -17,7 +17,13 @@ const REQUIRED_COLUMNS = ['name', 'name_norm', 'level', 'country', 'feature_id',
 // `Geocoder#_rankAndFilter`/`ranking.js` handle that throughout (ranking
 // sorts a missing `area_km2` last; the dropdown adapters just omit the
 // secondary-text line). See design doc §3.2's amendment, "Index columns".
-const OPTIONAL_COLUMNS = ['parent_name', 'parent_id', 'area_km2', 'country_name', 'geometry_ref'];
+// `class` and `population` are the ranking-residual follow-up's pending
+// data columns (design doc §3.2 amendment, "Known residual limitation" /
+// task 5): Overture has not populated either yet on any shipped index, so
+// every row decodes with both `undefined` and the prominence tiebreak in
+// `ranking.js` is a no-op until they land -- adding them here is
+// documentation only, same as the others; nothing enforces their presence.
+const OPTIONAL_COLUMNS = ['parent_name', 'parent_id', 'area_km2', 'country_name', 'geometry_ref', 'class', 'population'];
 
 /**
  * Fetch and validate the index manifest (design doc §6.4).

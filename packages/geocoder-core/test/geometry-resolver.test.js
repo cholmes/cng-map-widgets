@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { geometryRefRowRange, firstMatch, resolveGeometry } from '../src/index.js';
+import { geometryRefRowRange, firstMatch, resolveGeometry, openBoundaryFile } from '../src/index.js';
 import { setHyparquetModules, clearHyparquetModules } from '../src/cdn.js';
 
 // geometry-resolver.js's select()-fast-path task: the ref arithmetic
@@ -293,6 +293,118 @@ test('resolveGeometry: unmatched feature throws GEOMETRY_NOT_FOUND after exhaust
   const result = { featureId: 'NOPE', country: 'ZZZ', level: 2 };
   await assert.rejects(
     () => resolveGeometry(result, 'https://example.test/adm2.parquet', null, async () => {}, 'error', null, { entry: BASE_ENTRY }),
+    (err) => {
+      assert.equal(err.code, 'GEOMETRY_NOT_FOUND');
+      return true;
+    },
+  );
+});
+
+// --- openBoundaryFile: footer_bytes (manifest contract addition, task 1) --
+
+test('openBoundaryFile: footer_bytes is threaded through as hyparquet\'s initialFetchSize', async () => {
+  const seenOptions = [];
+  const fakeHyparquet = {
+    asyncBufferFromUrl: async () => ({ __fake: true }),
+    parquetMetadataAsync: async (file, options) => {
+      seenOptions.push(options);
+      return { row_groups: [], key_value_metadata: [] };
+    },
+  };
+  setHyparquetModules({ hyparquet: fakeHyparquet, compressors: {} });
+
+  await openBoundaryFile('https://example.test/adm2.parquet', async () => {}, undefined, 24_576);
+  assert.deepEqual(seenOptions[0], { geoparquet: false, initialFetchSize: 24_576 });
+});
+
+test('openBoundaryFile: no footer_bytes falls back to hyparquet\'s own default (an older manifest)', async () => {
+  const seenOptions = [];
+  const fakeHyparquet = {
+    asyncBufferFromUrl: async () => ({ __fake: true }),
+    parquetMetadataAsync: async (file, options) => {
+      seenOptions.push(options);
+      return { row_groups: [], key_value_metadata: [] };
+    },
+  };
+  setHyparquetModules({ hyparquet: fakeHyparquet, compressors: {} });
+
+  await openBoundaryFile('https://example.test/adm2.parquet', async () => {});
+  assert.deepEqual(seenOptions[0], { geoparquet: false }, 'no initialFetchSize override: hyparquet uses its own 512KB default');
+});
+
+// --- resolveGeometry: handle caching (task 2) ------------------------------
+
+test('resolveGeometry: with a handleCache, a second call for the same URL reuses the open handle instead of re-fetching the footer', async () => {
+  const rows = makeRows(12, { joinColumn: 'shapeID' });
+  const boundary = fakeBoundary({ rows, rowGroupRows: 4, joinColumn: 'shapeID' });
+  let footerOpens = 0;
+  const countingHyparquet = {
+    ...boundary.hyparquet,
+    asyncBufferFromUrl: async (...args) => {
+      footerOpens++;
+      return boundary.hyparquet.asyncBufferFromUrl(...args);
+    },
+  };
+  setHyparquetModules({ hyparquet: countingHyparquet, compressors: boundary.compressors });
+
+  const handleCache = new Map();
+  const url = 'https://example.test/adm2.parquet';
+  const resultA07 = { featureId: 'A07', country: 'ZZZ', level: 2, geometryRef: { file: 'x', rowGroup: 1, row: 7 } };
+  const resultA03 = { featureId: 'A03', country: 'ZZZ', level: 2, geometryRef: { file: 'x', rowGroup: 0, row: 3 } };
+
+  await resolveGeometry(resultA07, url, null, async () => {}, 'error', null, { entry: BASE_ENTRY, handleCache });
+  assert.equal(footerOpens, 1);
+
+  await resolveGeometry(resultA03, url, null, async () => {}, 'error', null, { entry: BASE_ENTRY, handleCache });
+  assert.equal(footerOpens, 1, 'a second resolveGeometry() for the same URL must reuse the cached handle, not open the file again');
+  assert.equal(handleCache.size, 1);
+});
+
+test('resolveGeometry: without a handleCache (the pre-existing direct-call path), every call opens its own handle', async () => {
+  const rows = makeRows(12, { joinColumn: 'shapeID' });
+  const boundary = fakeBoundary({ rows, rowGroupRows: 4, joinColumn: 'shapeID' });
+  let footerOpens = 0;
+  const countingHyparquet = {
+    ...boundary.hyparquet,
+    asyncBufferFromUrl: async (...args) => {
+      footerOpens++;
+      return boundary.hyparquet.asyncBufferFromUrl(...args);
+    },
+  };
+  setHyparquetModules({ hyparquet: countingHyparquet, compressors: boundary.compressors });
+
+  const url = 'https://example.test/adm2.parquet';
+  const result = { featureId: 'A07', country: 'ZZZ', level: 2, geometryRef: { file: 'x', rowGroup: 1, row: 7 } };
+  await resolveGeometry(result, url, null, async () => {}, 'error', null, { entry: BASE_ENTRY });
+  await resolveGeometry(result, url, null, async () => {}, 'error', null, { entry: BASE_ENTRY });
+  assert.equal(footerOpens, 2, 'no cache supplied: unchanged behaviour, one open per call');
+});
+
+test('resolveGeometry: a handle whose open fails is removed from the cache, so the next call gets a fresh attempt', async () => {
+  let attempt = 0;
+  const flakyHyparquet = {
+    asyncBufferFromUrl: async () => {
+      attempt++;
+      if (attempt === 1) throw new Error('network blew up');
+      return { __fake: true };
+    },
+    parquetMetadataAsync: async () => ({ row_groups: [], key_value_metadata: [] }),
+  };
+  setHyparquetModules({ hyparquet: flakyHyparquet, compressors: {} });
+
+  const handleCache = new Map();
+  const url = 'https://example.test/adm2.parquet';
+  const result = { featureId: 'X', country: 'ZZZ', level: 2 };
+
+  await assert.rejects(() => resolveGeometry(result, url, null, async () => {}, 'error', null, { entry: BASE_ENTRY, handleCache }));
+  assert.equal(handleCache.size, 0, 'a failed open must not leave a permanently-broken cached rejection');
+
+  // Second attempt succeeds (the fake only fails once) and throws
+  // GEOMETRY_NOT_FOUND instead, for an entirely different reason (no
+  // matching row) -- proving the cache gave this call a fresh handle open
+  // rather than reusing the first (failed) one.
+  await assert.rejects(
+    () => resolveGeometry(result, url, null, async () => {}, 'error', null, { entry: BASE_ENTRY, handleCache }),
     (err) => {
       assert.equal(err.code, 'GEOMETRY_NOT_FOUND');
       return true;
