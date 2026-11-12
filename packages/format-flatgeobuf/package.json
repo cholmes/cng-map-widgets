@@ -1,0 +1,34 @@
+{
+  "name": "@cnmw/format-flatgeobuf",
+  "version": "0.1.0",
+  "description": "FlatGeobuf output for @cnmw/download-core, wrapping the official flatgeobuf package's GeoJSON serializer. Measured ~10KB (min+gz) for the geojson submodule this plugin actually loads -- lighter than the design doc's original ~25KB estimate.",
+  "keywords": [
+    "flatgeobuf",
+    "fgb",
+    "download",
+    "cnmw"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@cnmw/spec": "0.1.0"
+  },
+  "devDependencies": {
+    "flatgeobuf": "4.6.1"
+  }
+}
