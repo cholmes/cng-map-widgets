@@ -7,7 +7,7 @@ import { CnmwError, CancelledError, fromAreaDocument } from '@cnmw/spec';
 import { Emitter, LatestWinsStream } from './events.js';
 import { planRequest, finalizeEstimate } from './estimate.js';
 import { createHyparquetEngine } from './engine-hyparquet.js';
-import { getFormat } from './registry.js';
+import { resolveFormat, getFormat, formatLoadState } from './registry.js';
 import { createGeoJsonFormat } from './formats/geojson.js';
 import { createGeoParquetFormat } from './formats/geoparquet.js';
 import { autoSink } from './sinks.js';
@@ -49,7 +49,6 @@ export function download(dataset, area, filter, output, options = {}) {
   }
 
   const engine = options.engine ?? createHyparquetEngine();
-  const format = getFormat(output.format) ?? builtinFormat(output.format);
 
   /** @type {'planning'|'blocked'|'running'|'paused'|'done'|'cancelled'|'failed'} */
   let state = 'planning';
@@ -84,10 +83,35 @@ export function download(dataset, area, filter, output, options = {}) {
 
   async function run() {
     try {
+      // One microtask tick before anything else: `download()` returns the
+      // handle synchronously (so it can be cancelled during planning,
+      // §3.4), and `run()` is kicked off before that return -- without
+      // this yield, a synchronous-tick emission below (e.g.
+      // 'loading-format') would fire before a caller who attaches
+      // `handle.on(...)` right after `download()` returns has had the
+      // chance to. Every event this handle ever emits is therefore safe
+      // to listen for *after* `download()` returns, which is the only
+      // sequencing a caller can actually act on.
+      await Promise.resolve();
+
+      // Design doc §3.4 amendment (lazy format loading): resolve the
+      // format *inside* run(), not synchronously before the handle is
+      // returned, so a lazy format's CDN fetch (e.g. the ~340KB sql.js
+      // wasm @cnmw/format-gpkg loads on demand) only starts once a
+      // download for that format id actually begins -- never merely
+      // because the format was registered or listed. `getFormat` first:
+      // avoids the 'loading-format' progress event and its emitter
+      // round-trip for the common case (an already-loaded/eager format).
+      let format = getFormat(output.format) ?? builtinFormat(output.format);
       if (!format) {
-        throw new CnmwError(`No format plugin registered for "${output.format}".`, 'FORMAT_UNAVAILABLE', {
-          context: { format: output.format },
-        });
+        if (formatLoadState(output.format) === 'unknown') {
+          throw new CnmwError(`No format plugin registered for "${output.format}".`, 'FORMAT_UNAVAILABLE', {
+            context: { format: output.format },
+          });
+        }
+        emitter.emit('progress', { phase: 'loading-format', format: output.format });
+        progressStream.push({ phase: 'loading-format', format: output.format });
+        format = await resolveFormat(output.format); // throws FORMAT_LOAD_FAILED on failure
       }
 
       const enginePlan = await engine.plan(dataset, area, filter, { fetch: options.fetch, signal: controller.signal });
@@ -173,8 +197,17 @@ export function download(dataset, area, filter, output, options = {}) {
       }
 
       emitter.emit('progress', { phase: 'finalizing' });
-      const { rows, bytes } = await formatWriter.close();
+      // `warnings` is an additive, optional field on `FormatWriter.close()`'s
+      // result (design doc §3.4 amendment): a format plugin's own
+      // honesty mechanism for the limits only it knows about (e.g.
+      // @cnmw/format-shapefile's 10-char field name truncation, one
+      // shape type per file, ~2GiB size ceiling -- see that package's
+      // README). Re-emitted through the same 'warning' event
+      // EstimateWarning already uses, and carried on the DownloadResult,
+      // so neither channel needs a format-specific special case.
+      const { rows, bytes, warnings: formatWarnings = [] } = await formatWriter.close();
       await sink.close();
+      for (const w of formatWarnings) emitter.emit('warning', w);
 
       const result = {
         rows,
@@ -188,6 +221,7 @@ export function download(dataset, area, filter, output, options = {}) {
         estimate: est,
         truncated: filter.limit !== undefined && rows >= filter.limit,
         attribution: plan.resolved.attribution ?? [],
+        formatWarnings,
       };
       setState('done');
       emitter.emit('done', result);

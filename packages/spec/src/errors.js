@@ -13,6 +13,7 @@
  *   'DATASET_CRS_UNSUPPORTED'|'FILTER_UNKNOWN_COLUMN'|
  *   'FILTER_UNSUPPORTED_PREDICATE'|'FILTER_REQUIRES_ENGINE'|
  *   'CEILING_EXCEEDED'|'FORMAT_UNAVAILABLE'|'FORMAT_CAPABILITY'|
+ *   'FORMAT_LOAD_FAILED'|
  *   'SINK_PERMISSION_DENIED'|'SINK_QUOTA_EXCEEDED'|'SINK_UNSUPPORTED'|
  *   'NETWORK'|'CORS'|'HTTP_STATUS'|'CANCELLED'|'INTERNAL'|
  *   'GEOCODER_NOT_LOADED'} CnmwErrorCode
@@ -24,6 +25,11 @@ const RETRYABLE_DEFAULTS = new Set([
   'DATASET_UNRESOLVED',
   'SINK_PERMISSION_DENIED',
   'NETWORK',
+  // A lazy format plugin's CDN fetch is a network request under a new
+  // name (design doc §3.4 amendment, lazy format loading): the same
+  // transient-failure shape as INDEX_FETCH_FAILED/NETWORK, so it gets the
+  // same default.
+  'FORMAT_LOAD_FAILED',
 ]);
 
 export class CnmwError extends Error {

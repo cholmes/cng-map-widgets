@@ -12,7 +12,7 @@ export { resolveDataset, descriptorFromCollection, collectionDownloadSupport } f
 export { CDN, loadHyparquet, loadHyparquetWriter, setHyparquetModules, clearHyparquetModules } from './cdn.js';
 export { estimate } from './estimate.js';
 export { download, downloadRequest } from './download.js';
-export { registerFormat, formats, registerEngine, engines } from './registry.js';
+export { registerFormat, registerLazyFormat, formats, resolveFormat, getFormat, formatLoadState, registerEngine, engines } from './registry.js';
 export { memorySink, blobSink, streamSink, fileSystemSink, autoSink } from './sinks.js';
 export { createHyparquetEngine, HYPARQUET_ENGINE_ID } from './engine-hyparquet.js';
 export { createGeoJsonFormat } from './formats/geojson.js';

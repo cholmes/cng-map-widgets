@@ -11,6 +11,7 @@ import { download } from '../src/download.js';
 import { memorySink } from '../src/sinks.js';
 import { boundedExact } from '../src/bounded.js';
 import { defaultCeiling } from '../src/ceiling.js';
+import { registerLazyFormat, formatLoadState } from '../src/registry.js';
 import { CancelledError } from '@cnmw/spec';
 
 const DATASET = { spec: 'cnmw-dataset/1.0', source: { kind: 'parquet', url: 'https://example.test/d.parquet' } };
@@ -221,6 +222,94 @@ test('an unregistered output format fails fast with FORMAT_UNAVAILABLE', async (
   });
   await assert.rejects(handle.estimate, (err) => err.code === 'FORMAT_UNAVAILABLE');
   await assert.rejects(handle.result, (err) => err.code === 'FORMAT_UNAVAILABLE');
+  assert.equal(handle.state, 'failed');
+});
+
+test('download() of a lazily-registered format loads it on first use, emitting a loading-format progress event', async () => {
+  let loadCalls = 0;
+  const lazyPlugin = {
+    id: 'lazy-test-format',
+    extension: 'lzt',
+    mediaType: 'application/x-lazy-test',
+    streaming: true,
+    capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84'] },
+    estimateBytes: (schema, rows) => ({ min: 0, max: 0, estimate: 0, exact: false }),
+    async open(ctx) {
+      let rows = 0;
+      return {
+        async writeBatch(batch) {
+          rows += batch.rows;
+        },
+        async close() {
+          return { rows, bytes: 0 };
+        },
+        async abort() {},
+      };
+    },
+  };
+  registerLazyFormat({
+    id: 'lazy-test-format',
+    extension: 'lzt',
+    mediaType: 'application/x-lazy-test',
+    streaming: true,
+    capabilities: lazyPlugin.capabilities,
+    approxBytes: { min: 500, max: 600 },
+    estimateBytes: lazyPlugin.estimateBytes,
+    load: async () => {
+      loadCalls += 1;
+      return lazyPlugin;
+    },
+  });
+
+  assert.equal(formatLoadState('lazy-test-format'), 'idle', 'registering does not load it');
+
+  const progressPhases = [];
+  const handle = download(DATASET, null, FILTER, { ...OUTPUT, format: 'lazy-test-format' }, {
+    engine: fakeEngine(),
+    sink: memorySink(),
+    estimateOverride: makeEstimate(),
+  });
+  handle.on('progress', (p) => progressPhases.push(p.phase));
+
+  const result = await handle.result;
+  assert.equal(result.rows, 0);
+  assert.equal(loadCalls, 1, 'the heavy load() ran exactly once, triggered by this download');
+  assert.ok(progressPhases.includes('loading-format'), 'UI-visible loading phase was emitted');
+  assert.equal(formatLoadState('lazy-test-format'), 'loaded');
+
+  // A second download of the same format must not load it again.
+  const handle2 = download(DATASET, null, FILTER, { ...OUTPUT, format: 'lazy-test-format' }, {
+    engine: fakeEngine(),
+    sink: memorySink(),
+    estimateOverride: makeEstimate(),
+  });
+  await handle2.result;
+  assert.equal(loadCalls, 1, 'cached after the first load');
+});
+
+test('download() of a lazy format whose load() fails rejects with FORMAT_LOAD_FAILED', async () => {
+  registerLazyFormat({
+    id: 'lazy-fail-format',
+    extension: 'lzf',
+    mediaType: 'application/x-lazy-fail',
+    streaming: true,
+    capabilities: {},
+    approxBytes: { min: 1, max: 1 },
+    estimateBytes: () => ({ min: 0, max: 0, estimate: 0, exact: false }),
+    load: async () => {
+      throw new Error('simulated CDN fetch failure');
+    },
+  });
+
+  const handle = download(DATASET, null, FILTER, { ...OUTPUT, format: 'lazy-fail-format' }, {
+    engine: fakeEngine(),
+    sink: memorySink(),
+    estimateOverride: makeEstimate(),
+  });
+  await assert.rejects(handle.result, (err) => {
+    assert.equal(err.code, 'FORMAT_LOAD_FAILED');
+    return true;
+  });
   assert.equal(handle.state, 'failed');
 });
 
