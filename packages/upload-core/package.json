@@ -1,0 +1,15 @@
+{
+  "name": "@cnmw/upload-core",
+  "version": "0.1.0-experiment",
+  "description": "Drag/drop or file-pick upload -> Area, the same interface @cnmw/geocoder-core emits (design doc's composability seam). GeoJSON reader built in; registerReader() seam for more formats later.",
+  "type": "module",
+  "sideEffects": false,
+  "private": true,
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "dependencies": {
+    "@cnmw/spec": "0.1.0-experiment"
+  }
+}
