@@ -76,14 +76,20 @@ const manifest = {
   ],
   attribution: [
     {
-      text: 'Boundaries: geoBoundaries CGAZ (provisional mirror, tge-labs)',
+      text: 'Boundaries: geoBoundaries CGAZ (local provisional build for offline demo use -- the live catalog is portolan-mirrors/geoboundaries-catalog)',
       license: 'CC-BY-4.0',
       url: 'https://www.geoboundaries.org/',
       share_alike: false,
     },
   ],
   notes:
-    'PROVISIONAL demo data. `display` boundary files are now genuinely ' +
+    'PROVISIONAL demo data, used only when this page is loaded with ?index=local. ' +
+    'The default (no query param) now points at the LIVE geoboundaries-catalog ' +
+    'manifest at https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json, ' +
+    'which has all three admin levels (0/1/2) and real checksums/sizes read ' +
+    'from the published parquet files -- see that manifest\'s own `notes` field. ' +
+    'This local build is kept only for offline iteration on build-data.sql / ' +
+    'build-manifest.mjs and has no ADM1. `display` boundary files are now genuinely ' +
     'simplified (design doc §6.4): built with DuckDB ST_SimplifyPreserveTopology, ' +
     'applied only to features above ~10K vertices (small features pass through ' +
     'untouched), then buffered outward by the simplification tolerance ' +

@@ -1,25 +1,73 @@
 // @cnmw/geocoder-core -- select()'s geometry fetch (design doc §6.4
 // "select()'s resolution order").
 //
-// The boundary mirror is sorted by (country, feature_id) (§6.4's
-// requirement on the E2 mirror). `country` is therefore the *outer* sort
-// key and is globally monotonic across row groups, which makes it safe to
-// binary-search row groups by `country` min/max statistics. Within a
-// single country's contiguous span, `feature_id` is monotonically
-// increasing, so once country narrows the candidate groups down, the
-// `feature_id` min/max statistics on those same groups correctly narrow
-// further to (usually) exactly one group. This two-level narrowing is
-// what "binary search row groups via shapeID column stats" means in
-// practice for a file that is not globally sorted by shapeID alone --
-// documented here because a literal single-column binary search on
-// `feature_id` alone would be unsound on this layout.
+// The ideal boundary mirror is sorted by (country, feature_id) (§6.4's
+// requirement on the E2 mirror): `country` as the *outer*, globally
+// monotonic sort key makes it safe to binary-search row groups by
+// `country` min/max statistics, and then `feature_id`'s min/max narrows
+// the within-country candidates further, usually to exactly one group.
+// Not every published mirror is sorted that way -- the real
+// geoboundaries-catalog boundary files are not globally sorted by
+// (shapeGroup, shapeID) at all (verified directly against the published
+// files; see geoboundaries-catalog's names/index.json notes) -- so this
+// two-level narrowing is treated as an optimization, never a correctness
+// assumption: `candidatesFor` below returns every row group whose
+// statistics *could* contain the value, which degrades to "most/all
+// groups" on an unsorted mirror but is never wrong, and the exact match
+// within each candidate group is always a linear scan, never a trust in
+// sort order.
+//
+// Which column is "feature_id" and which is "country" is manifest-driven,
+// not hardcoded: see `resolveJoinKey` below for why (CGAZ ADM0 has no
+// shapeID column at all, so that level's manifest entry joins on country
+// instead).
 
 import { CnmwError, wkbToGeoJson, wkbToGeoJsonAsync } from '@cnmw/spec';
 import { loadHyparquet } from './cdn.js';
 
 /**
- * Open a boundary file's footer and build per-row-group (country,
- * feature_id) statistics for the two-level narrowing described above.
+ * Pure decision logic for which boundary-file column, and which value off
+ * the search `result`, locates this result's row in its level's boundary
+ * file. Extracted so it's unit-testable without any network/hyparquet
+ * dependency (same reasoning as `resolveResolutionMode` in geocoder.js).
+ *
+ * Almost every level joins the names index's `feature_id` against the
+ * boundary file's stable per-row id column (`entry.feature_id_column`,
+ * e.g. `shapeID`). CGAZ's ADM0 is the documented exception (design doc §6.4
+ * "amendments", geoboundaries-catalog's names/index.json manifest): the
+ * ADM0 boundary file has no `shapeID` column at all, not merely null
+ * values, so there is nothing for `feature_id_column` to name. The
+ * manifest instead declares `index_key_column: "country"` for that level,
+ * meaning the join uses the names index's `country` column against the
+ * boundary file's `country_column` (e.g. `shapeGroup`) -- the one column
+ * every level's boundary file has, because every unit belongs to a
+ * country.
+ *
+ * @param {{ feature_id_column?: string|null, country_column?: string, index_key_column?: string }} [entry]
+ *   The manifest's `boundaries[]` entry for this result's level. Missing
+ *   fields fall back to the historical defaults (`feature_id_column:
+ *   "feature_id"`, `country_column: "country"`, joining on `feature_id`),
+ *   which keeps every pre-existing caller (and test double) working
+ *   unchanged when it has no manifest entry to pass.
+ * @param {{ featureId: string|null, country: string }} result
+ * @returns {{ column: string, value: string }} the boundary-file column to
+ *   match, and the value from `result` to match it against.
+ */
+export function resolveJoinKey(entry = {}, result) {
+  const indexKeyColumn = entry.index_key_column ?? 'feature_id';
+  if (indexKeyColumn === 'country') {
+    return { column: entry.country_column ?? 'country', value: result.country };
+  }
+  return { column: entry.feature_id_column ?? 'feature_id', value: result.featureId };
+}
+
+/**
+ * Open a boundary file's footer and build per-row-group (country, join)
+ * statistics for the two-level narrowing described above. The country
+ * column is always scanned, because it narrows at every level (it IS the
+ * join column at level 0, per `resolveJoinKey` above, and a cheap extra
+ * narrowing pass at every other level); the join column is only scanned
+ * again when it differs from the country column.
  * @param {string} url
  * @param {typeof fetch} fetchImpl
  * @param {AbortSignal} [signal] threaded into every range-fetch `requestInit`
@@ -27,8 +75,10 @@ import { loadHyparquet } from './cdn.js';
  *   in-flight read (used by the progressive `select({ resolution: 'both' })`
  *   background upgrade to cancel a superseded fetch -- design doc task
  *   "a new select() supersedes the pending background upgrade").
+ * @param {{ countryColumn: string, joinColumn: string }} columns
  */
-async function openBoundaryIndex(url, fetchImpl, signal) {
+async function openBoundaryIndex(url, fetchImpl, signal, columns) {
+  const { countryColumn, joinColumn } = columns;
   const { hyparquet } = await loadHyparquet();
   const file = await hyparquet.asyncBufferFromUrl({ url, fetch: fetchImpl, requestInit: { cache: 'no-store', signal } });
   // `geoparquet: false`: hyparquet >=1.x auto-detects GeoParquet's `geo`
@@ -46,18 +96,18 @@ async function openBoundaryIndex(url, fetchImpl, signal) {
   const groups = [];
   let rowStart = 0;
   for (const rg of metadata.row_groups) {
-    const countryCol = rg.columns.find((c) => c.meta_data?.path_in_schema.join('.') === 'country');
-    const idCol = rg.columns.find((c) => c.meta_data?.path_in_schema.join('.') === 'feature_id');
+    const countryCol = rg.columns.find((c) => c.meta_data?.path_in_schema.join('.') === countryColumn);
+    const joinCol = joinColumn === countryColumn ? countryCol : rg.columns.find((c) => c.meta_data?.path_in_schema.join('.') === joinColumn);
     const countryStats = countryCol?.meta_data?.statistics;
-    const idStats = idCol?.meta_data?.statistics;
+    const joinStats = joinCol?.meta_data?.statistics;
     const numRows = Number(rg.num_rows);
     groups.push({
       rowStart,
       rowEnd: rowStart + numRows,
       countryMin: countryStats ? String(countryStats.min_value) : '',
       countryMax: countryStats ? String(countryStats.max_value) : '￿',
-      idMin: idStats ? String(idStats.min_value) : '',
-      idMax: idStats ? String(idStats.max_value) : '￿',
+      joinMin: joinStats ? String(joinStats.min_value) : '',
+      joinMax: joinStats ? String(joinStats.max_value) : '￿',
     });
     rowStart += numRows;
   }
@@ -79,21 +129,28 @@ function candidatesFor(groups, minKey, maxKey, value) {
  * implemented in this provisional build -- see geocoder-core's README
  * note / the task handback report).
  *
- * @param {{ featureId: string, country: string, level: number }} result
+ * @param {{ featureId: string|null, country: string, level: number }} result
  * @param {string} boundaryUrl
  * @param {string|null} expectedCatalogVersion
  * @param {typeof fetch} fetchImpl
  * @param {'error'|'warn'|'ignore'} onVersionSkew
  * @param {(payload: { code: string, message: string, detail?: unknown }) => void} [onWarning]
- * @param {{ decodeAsync?: boolean, signal?: AbortSignal }} [options] `decodeAsync: true` decodes the
- *   geometry column with `wkbToGeoJsonAsync` (cooperative-yielding) instead of the synchronous
- *   decoder -- used on the 'full' / background-upgrade path, never needed on the small
+ * @param {{ decodeAsync?: boolean, signal?: AbortSignal, entry?: object }} [options] `decodeAsync: true`
+ *   decodes the geometry column with `wkbToGeoJsonAsync` (cooperative-yielding) instead of the
+ *   synchronous decoder -- used on the 'full' / background-upgrade path, never needed on the small
  *   display-simplified path. `signal` cancels the fetch and is checked between decode chunks.
+ *   `entry` is the manifest's `boundaries[]` entry for this result's level (see
+ *   `resolveJoinKey`); omitted, every level behaves as it did before `index_key_column`/
+ *   `country_column` existed (join on `feature_id_column` default `"feature_id"`, narrow on
+ *   `country_column` default `"country"`).
  * @returns {Promise<{ geometry: GeoJSON.Polygon|GeoJSON.MultiPolygon, bbox?: [number,number,number,number], boundaryUrl: string }>}
  */
 export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersion, fetchImpl, onVersionSkew, onWarning, options = {}) {
   const { hyparquet, compressors } = await loadHyparquet();
-  const handle = await openBoundaryIndex(boundaryUrl, fetchImpl, options.signal);
+  const entry = options.entry ?? {};
+  const countryColumn = entry.country_column ?? 'country';
+  const { column: joinColumn, value: joinValue } = resolveJoinKey(entry, result);
+  const handle = await openBoundaryIndex(boundaryUrl, fetchImpl, options.signal, { countryColumn, joinColumn });
 
   if (expectedCatalogVersion && handle.catalogVersion && handle.catalogVersion !== expectedCatalogVersion) {
     const message = `Boundary file catalog_version (${handle.catalogVersion}) does not match the index's (${expectedCatalogVersion}).`;
@@ -109,26 +166,26 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
 
   const byCountry = candidatesFor(handle.groups, 'countryMin', 'countryMax', result.country);
   const pool = byCountry.length > 0 ? byCountry : handle.groups.map((_, i) => i);
-  const byId = pool.filter((i) => {
+  const byJoin = pool.filter((i) => {
     const g = handle.groups[i];
-    return g.idMin <= result.featureId && result.featureId <= g.idMax;
+    return g.joinMin <= joinValue && joinValue <= g.joinMax;
   });
-  const candidateGroupIndices = byId.length > 0 ? byId : pool;
+  const candidateGroupIndices = byJoin.length > 0 ? byJoin : pool;
 
   for (const gi of candidateGroupIndices) {
     const g = handle.groups[gi];
     // Pass 1: locate the exact row within this group using the
-    // *string* columns only (feature_id, bbox) -- hyparquet's default
-    // `utf8: true` conversion is correct and cheap for these.
+    // *string* columns only (the join column, bbox) -- hyparquet's
+    // default `utf8: true` conversion is correct and cheap for these.
     const rows = await hyparquet.parquetReadObjects({
       file: handle.file,
       metadata: handle.metadata,
-      columns: ['feature_id', 'bbox'],
+      columns: [joinColumn, 'bbox'],
       rowStart: g.rowStart,
       rowEnd: g.rowEnd,
       compressors,
     });
-    const localIndex = rows.findIndex((r) => r.feature_id === result.featureId);
+    const localIndex = rows.findIndex((r) => r[joinColumn] === joinValue);
     if (localIndex !== -1) {
       const absoluteRow = g.rowStart + localIndex;
       // Pass 2: fetch just the `geometry` column for that single row,
@@ -157,7 +214,7 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
     }
   }
 
-  throw new CnmwError(`Feature "${result.featureId}" not found in boundary file.`, 'GEOMETRY_NOT_FOUND', {
-    context: { featureId: result.featureId, boundaryUrl },
+  throw new CnmwError(`Feature "${joinValue}" not found in boundary file (joined on "${joinColumn}").`, 'GEOMETRY_NOT_FOUND', {
+    context: { featureId: result.featureId, joinColumn, joinValue, boundaryUrl },
   });
 }

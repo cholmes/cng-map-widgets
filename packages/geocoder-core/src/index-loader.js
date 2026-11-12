@@ -56,8 +56,51 @@ export function resolveManifestUrl(manifestUrl, relativeUrl) {
   return new URL(relativeUrl, toAbsoluteUrl(manifestUrl)).toString();
 }
 
-function assertSchema(firstRow) {
+/**
+ * Project one decoded index row onto the canonical schema (design doc
+ * §6.2) that `ranking.js`/`geocoder.js` read from -- `row.feature_id`,
+ * `row.source`, etc. Not every published index literally has those column
+ * names: geoboundaries-catalog's names index calls its stable id column
+ * `shape_id` (matching its boundary files' `shapeID`), declared in the
+ * manifest as `index.feature_id_column`, and carries no `source` column
+ * at all, because it has exactly one source and repeats nothing on every
+ * row. `defaultSource` (the manifest's own top-level `source` field)
+ * fills that in.
+ * @param {Record<string, unknown>} row
+ * @param {{ featureIdColumn: string, defaultSource?: string }} opts
+ */
+function projectRow(row, { featureIdColumn, defaultSource }) {
+  let out = row;
+  if (featureIdColumn !== 'feature_id') {
+    const { [featureIdColumn]: featureId, ...rest } = row;
+    out = { ...rest, feature_id: featureId };
+  }
+  if (out.source === undefined && defaultSource !== undefined) {
+    out = { ...out, source: defaultSource };
+  }
+  return out;
+}
+
+function assertSchema(firstRow, { featureIdColumn, defaultSource } = {}) {
+  const idColumn = featureIdColumn ?? 'feature_id';
+  const sourceColumnPresent = 'source' in firstRow;
   for (const col of REQUIRED_COLUMNS) {
+    if (col === 'feature_id') {
+      if (!(idColumn in firstRow)) {
+        throw new CnmwError(`Index parquet is missing required column "${idColumn}" (declared as the feature-id column).`, 'INDEX_SCHEMA_MISMATCH', {
+          context: { column: idColumn },
+        });
+      }
+      continue;
+    }
+    if (col === 'source' && !sourceColumnPresent) {
+      if (defaultSource === undefined) {
+        throw new CnmwError('Index parquet has no "source" column, and the manifest has no top-level "source" to default it from.', 'INDEX_SCHEMA_MISMATCH', {
+          context: { column: 'source' },
+        });
+      }
+      continue; // synthesized from the manifest's `source` field instead
+    }
     if (!(col in firstRow)) {
       throw new CnmwError(`Index parquet is missing required column "${col}".`, 'INDEX_SCHEMA_MISMATCH', {
         context: { column: col },
@@ -71,8 +114,11 @@ function assertSchema(firstRow) {
  * return an in-memory structure ready for binary-search prefix queries.
  * @param {string} parquetUrl
  * @param {typeof fetch} fetchImpl
+ * @param {{ featureIdColumn?: string, defaultSource?: string }} [options] see `projectRow`.
  */
-export async function loadFullIndex(parquetUrl, fetchImpl) {
+export async function loadFullIndex(parquetUrl, fetchImpl, options = {}) {
+  const featureIdColumn = options.featureIdColumn ?? 'feature_id';
+  const { defaultSource } = options;
   const { hyparquet, compressors } = await loadHyparquet();
   const t0 = performance.now();
   const res = await fetchImpl(parquetUrl);
@@ -88,7 +134,10 @@ export async function loadFullIndex(parquetUrl, fetchImpl) {
   } catch (cause) {
     throw new CnmwError('Failed to decode index parquet.', 'INDEX_SCHEMA_MISMATCH', { cause });
   }
-  if (rows.length > 0) assertSchema(rows[0]);
+  if (rows.length > 0) {
+    assertSchema(rows[0], { featureIdColumn, defaultSource });
+    rows = rows.map((r) => projectRow(r, { featureIdColumn, defaultSource }));
+  }
   const nameNorms = rows.map((r) => r.name_norm);
   // Builder guarantee check (design doc §6.3 item 1): ascending, byte-wise.
   for (let i = 1; i < nameNorms.length; i++) {
@@ -128,8 +177,11 @@ export function prefixRange(arr, prefix) {
  * @param {string} parquetUrl
  * @param {typeof fetch} fetchImpl
  * @param {number} initialFetchSize
+ * @param {{ featureIdColumn?: string, defaultSource?: string }} [options] see `projectRow` in the
+ *   full-load path above; carried on the returned handle so `searchRangeIndex` can project its
+ *   rows onto the same canonical schema.
  */
-export async function openRangeIndex(parquetUrl, fetchImpl, initialFetchSize = 65_536) {
+export async function openRangeIndex(parquetUrl, fetchImpl, initialFetchSize = 65_536, options = {}) {
   const { hyparquet } = await loadHyparquet();
   const t0 = performance.now();
   const file = await hyparquet.asyncBufferFromUrl({ url: parquetUrl, fetch: fetchImpl, requestInit: { cache: 'no-store' } });
@@ -161,7 +213,17 @@ export async function openRangeIndex(parquetUrl, fetchImpl, initialFetchSize = 6
     throw new CnmwError('Index parquet has no row groups.', 'INDEX_SCHEMA_MISMATCH');
   }
   const loadMs = performance.now() - t0;
-  return { strategy: 'range', url: parquetUrl, file, metadata, groups, rows: rowStart, loadMs };
+  return {
+    strategy: 'range',
+    url: parquetUrl,
+    file,
+    metadata,
+    groups,
+    rows: rowStart,
+    loadMs,
+    featureIdColumn: options.featureIdColumn ?? 'feature_id',
+    defaultSource: options.defaultSource,
+  };
 }
 
 /** Which row-group indices could contain `prefix`, via a binary search over group [min,max]. */
@@ -203,5 +265,9 @@ export async function searchRangeIndex(handle, prefix) {
     });
     allRows = allRows.concat(rows);
   }
-  return allRows.filter((r) => r.name_norm && r.name_norm.startsWith(prefix));
+  const matched = allRows.filter((r) => r.name_norm && r.name_norm.startsWith(prefix));
+  const { featureIdColumn, defaultSource } = handle;
+  return featureIdColumn === 'feature_id' && defaultSource === undefined
+    ? matched
+    : matched.map((r) => projectRow(r, { featureIdColumn, defaultSource }));
 }

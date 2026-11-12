@@ -134,11 +134,20 @@ export class Geocoder {
     if (strategy === 'auto') strategy = declaredBytes <= this._fullLoadMaxBytes ? 'full' : 'range';
 
     const parquetUrl = resolveManifestUrl(this._manifestUrl, manifest.index.url);
+    // Not every published index literally has a column named `feature_id`
+    // (geoboundaries-catalog's names index calls it `shape_id`) or a
+    // `source` column at all (single-source catalogs have no reason to
+    // repeat their one source on every row) -- see index-loader.js's
+    // `projectRow`/`assertSchema`.
+    const indexProjection = {
+      featureIdColumn: manifest.index?.feature_id_column ?? 'feature_id',
+      defaultSource: manifest.source,
+    };
 
     if (strategy === 'full') {
-      this._full = await this._deps.loadFullIndex(parquetUrl, this._fetch);
+      this._full = await this._deps.loadFullIndex(parquetUrl, this._fetch, indexProjection);
     } else {
-      this._range = await this._deps.openRangeIndex(parquetUrl, this._fetch);
+      this._range = await this._deps.openRangeIndex(parquetUrl, this._fetch, undefined, indexProjection);
     }
 
     const loadMs = performance.now() - t0;
@@ -344,6 +353,7 @@ export class Geocoder {
       const { geometry, bbox } = await this._deps.resolveGeometry(result, boundaryUrl, manifest.catalog_version, this._fetch, onVersionSkew, onWarning, {
         decodeAsync: true,
         signal: options.signal,
+        entry,
       });
       const area = buildSelectedArea(geometry, bbox, 'full', boundaryUrl, false);
       const elapsedMs = performance.now() - t0;
@@ -353,7 +363,7 @@ export class Geocoder {
 
     if (resolution === 'display') {
       const boundaryUrl = resolveManifestUrl(this._manifestUrl, entry.display.url);
-      const { geometry, bbox } = await this._deps.resolveGeometry(result, boundaryUrl, manifest.catalog_version, this._fetch, onVersionSkew, onWarning);
+      const { geometry, bbox } = await this._deps.resolveGeometry(result, boundaryUrl, manifest.catalog_version, this._fetch, onVersionSkew, onWarning, { entry });
       const area = buildSelectedArea(geometry, bbox, 'display', boundaryUrl, false);
       const elapsedMs = performance.now() - t0;
       this._emitter.emit('select', { result, area, elapsedMs });
@@ -370,6 +380,7 @@ export class Geocoder {
       this._fetch,
       onVersionSkew,
       onWarning,
+      { entry },
     );
     const area = buildSelectedArea(displayGeometry, displayBbox, 'display', displayUrl, true);
     const elapsedMs = performance.now() - t0;
@@ -418,7 +429,7 @@ export class Geocoder {
       this._fetch,
       opts.onVersionSkew,
       opts.onWarning,
-      { decodeAsync: true, signal: abortSignal },
+      { decodeAsync: true, signal: abortSignal, entry },
     );
     opts.userSignal?.throwIfAborted();
     if (!this._selectGuard.isCurrent(generation)) return; // superseded while fetching
