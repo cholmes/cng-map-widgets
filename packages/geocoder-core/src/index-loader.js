@@ -23,7 +23,14 @@ const REQUIRED_COLUMNS = ['name', 'name_norm', 'level', 'country', 'feature_id',
 // every row decodes with both `undefined` and the prominence tiebreak in
 // `ranking.js` is a no-op until they land -- adding them here is
 // documentation only, same as the others; nothing enforces their presence.
-const OPTIONAL_COLUMNS = ['parent_name', 'parent_id', 'area_km2', 'country_name', 'geometry_ref', 'class', 'population'];
+// `alt_of` (an alt-name row's primary `feature_id`, E8/ranking-residual
+// follow-up) belongs on this list too -- it is read directly off the
+// decoded row (`row.alt_of`) in both ranking.js and geocoder.js's
+// `primaryName` resolution, exactly like every other optional column
+// here, and was simply missing from the list until the "primaryName on
+// alt matches" follow-up (task 1) noticed. Documentation only, as above:
+// nothing enforces its presence.
+const OPTIONAL_COLUMNS = ['parent_name', 'parent_id', 'area_km2', 'country_name', 'geometry_ref', 'class', 'population', 'alt_of'];
 
 /**
  * Fetch and validate the index manifest (design doc §6.4).
@@ -257,30 +264,113 @@ export function findCandidateGroups(groups, prefix) {
   return candidates;
 }
 
+/** Bounded concurrency for `searchRangeIndex`'s row-group fetches
+ *  (follow-up task 4, "range-mode query latency"), default `~4-6` per the
+ *  task. See that function's doc comment for the measured before/after. */
+export const DEFAULT_RANGE_GROUP_CONCURRENCY = 5;
+
+/** How many candidate row groups `searchRangeIndex` will actually fetch
+ *  for one query before giving up and reporting `truncated` (follow-up
+ *  task 4). A prefix this unselective -- "a", "e", a single CJK
+ *  character -- is not a case this function tries to answer completely;
+ *  see that function's doc comment for the honest semantics. */
+export const DEFAULT_RANGE_MAX_CANDIDATE_GROUPS = 24;
+
 /**
  * Fetch only the row group(s) that can contain `prefix` and filter to an
  * exact prefix match.
+ *
+ * **Follow-up task 4, "range-mode query latency".** Measured live against
+ * the published 5.6M-row Overture index (876 row groups, 6400 rows each):
+ * the pre-follow-up version of this function fetched its candidate row
+ * groups **sequentially**, one `await` at a time. Per-group latency there
+ * is dominated by the HTTP round trip (~1.1-1.7s observed, essentially
+ * flat regardless of row count per group -- decode time is not the
+ * bottleneck), so a low-selectivity prefix spanning many candidate groups
+ * paid that cost once *per group*: "san" (10 candidate groups) took
+ * ~11.7s; "a" (37 candidate groups) took ~43.9s. Single-group queries
+ * ("zur", "san jo") were already fast (<2s) and are essentially unchanged
+ * below.
+ *
+ * Two changes fix this:
+ *  1. **Bounded-concurrency fetches** (`options.concurrency`, default
+ *     `DEFAULT_RANGE_GROUP_CONCURRENCY`): candidate groups are fetched
+ *     `concurrency`-at-a-time instead of one at a time, via the same
+ *     worker-pool pattern as `geometry-resolver.js`'s `firstMatch`
+ *     (minus its "stop on first hit" early exit -- every candidate group
+ *     here can hold real matches, so every one of them, up to the cap
+ *     below, has to be read).
+ *  2. **A documented cap** (`options.maxGroups`, default
+ *     `DEFAULT_RANGE_MAX_CANDIDATE_GROUPS`): a prefix whose candidate
+ *     groups exceed the cap only has its first `maxGroups` (by row-group
+ *     order, which is ascending `name_norm` order -- the builder's own
+ *     sort guarantee, design doc §6.3 -- so "first by sort order" is a
+ *     real, meaningful subset, not an arbitrary one) actually fetched;
+ *     the rest are never requested at all. The returned array's own
+ *     `truncated` property (an own, non-enumerable `true`; absent
+ *     otherwise) tells the caller this happened, honestly, instead of
+ *     silently returning an incomplete answer that looks complete.
+ *
+ * `options.onBatch(rowsSoFar, info)`, when given, fires once after every
+ * individual candidate group finishes (not once per `concurrency`-sized
+ * wave -- a caller that only cares about "the first wave of
+ * `concurrency` groups is in" or "every group is in" filters `info.
+ * completed` itself). `rowsSoFar` is the *cumulative* matched-and-
+ * projected rows across every group that has completed so far (a fresh
+ * array each call, safe to retain); `info` is `{ completed, total,
+ * truncated }` -- `total` is the number of groups actually being fetched
+ * (post-cap), `completed` counts up to it, `truncated` is this query's
+ * cap status, known up front and identical on every call. This is what
+ * lets `Geocoder#search()`'s range-mode path resolve early with a
+ * partial answer and stream in the rest -- see `geocoder.js`'s
+ * `_searchRangeRowsFirstWave`/`_scheduleRangeCompletionWave`.
+ *
  * @param {ReturnType<typeof openRangeIndex> extends Promise<infer T> ? T : never} handle
  * @param {string} prefix
+ * @param {{ concurrency?: number, maxGroups?: number, onBatch?: (rowsSoFar: object[], info: { completed: number, total: number, truncated: boolean }) => void }} [options]
  */
-export async function searchRangeIndex(handle, prefix) {
+export async function searchRangeIndex(handle, prefix, options = {}) {
   const { hyparquet, compressors } = await loadHyparquet();
-  const candidateIdx = findCandidateGroups(handle.groups, prefix);
-  let allRows = [];
-  for (const gi of candidateIdx) {
-    const g = handle.groups[gi];
-    const rows = await hyparquet.parquetReadObjects({
-      file: handle.file,
-      metadata: handle.metadata,
-      rowStart: g.rowStart,
-      rowEnd: g.rowEnd,
-      compressors,
-    });
-    allRows = allRows.concat(rows);
-  }
-  const matched = allRows.filter((r) => r.name_norm && r.name_norm.startsWith(prefix));
+  const concurrency = options.concurrency ?? DEFAULT_RANGE_GROUP_CONCURRENCY;
+  const maxGroups = options.maxGroups ?? DEFAULT_RANGE_MAX_CANDIDATE_GROUPS;
+
+  const allCandidates = findCandidateGroups(handle.groups, prefix);
+  const truncated = allCandidates.length > maxGroups;
+  const candidateIdx = truncated ? allCandidates.slice(0, maxGroups) : allCandidates;
+
   const { featureIdColumn, defaultSource } = handle;
-  return featureIdColumn === 'feature_id' && defaultSource === undefined
-    ? matched
-    : matched.map((r) => projectRow(r, { featureIdColumn, defaultSource }));
+  const needsProjection = featureIdColumn !== 'feature_id' || defaultSource !== undefined;
+  const project = (r) => (needsProjection ? projectRow(r, { featureIdColumn, defaultSource }) : r);
+
+  let allRows = [];
+  let completed = 0;
+  let cursor = 0;
+
+  async function worker() {
+    for (;;) {
+      const i = cursor++;
+      if (i >= candidateIdx.length) return;
+      const g = handle.groups[candidateIdx[i]];
+      const rows = await hyparquet.parquetReadObjects({
+        file: handle.file,
+        metadata: handle.metadata,
+        rowStart: g.rowStart,
+        rowEnd: g.rowEnd,
+        compressors,
+      });
+      const matched = rows.filter((r) => r.name_norm && r.name_norm.startsWith(prefix)).map(project);
+      // Single-threaded JS: this read-then-write of `allRows`/`completed`
+      // never straddles an `await`, so two workers can never interleave
+      // in the middle of it -- no lock needed.
+      allRows = allRows.concat(matched);
+      completed += 1;
+      options.onBatch?.(allRows.slice(), { completed, total: candidateIdx.length, truncated });
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(concurrency, candidateIdx.length));
+  await Promise.all(Array.from({ length: workerCount }, worker));
+
+  if (truncated) Object.defineProperty(allRows, 'truncated', { value: true, enumerable: false, configurable: true });
+  return allRows;
 }
