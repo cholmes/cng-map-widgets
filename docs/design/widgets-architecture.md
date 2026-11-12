@@ -782,9 +782,11 @@ Format options, normative per format:
 |---|---|---|
 | `geojson` | `{ precision?: number (7), newlineDelimited?: boolean (false), featureIdColumn?: string }` | Streaming; `newlineDelimited` emits GeoJSONSeq, which streams without holding the array. |
 | `geoparquet` | `{ compression?: 'zstd'\|'snappy'\|'none' ('zstd'), compressionLevel?: number (9), rowGroupSize?: number (50000), version?: '1.0'\|'1.1' ('1.1'), writeCovering?: boolean (true), spatialSort?: boolean (false) }` | `writeCovering` emits the `bbox` struct + GeoParquet 1.1 `covering`, so the output is itself prunable. |
-| `gpkg` | `{ layerName?: string, spatialIndex?: boolean (true) }` | Plugin. Non-streaming in the sql.js path. |
-| `flatgeobuf` | `{ spatialIndex?: boolean (true) }` | Plugin. |
-| `csv` | `{ geometry?: 'wkt'\|'drop' ('wkt'), delimiter?: string (',') }` | Plugin. |
+| `gpkg` | `{ layerName?: string }` | Plugin (`@cnmw/format-gpkg`, **shipped E10**). Non-streaming, sql.js path, lazy-loadable (~339 KB measured). No R-tree (`spatialIndex` option dropped — sql.js's published wasm build has no `rtree` module; see §4.5 and the package README). |
+| `shapefile` | `{ layerName?: string }` | Plugin (`@cnmw/format-shapefile`, **shipped E10**). Zero deps, non-streaming, eager-registrable. Writes a `.shp.zip` (five sibling files bundled, since `Sink` is one file). Limits surfaced as `FormatWriter.close()`'s `warnings` (10-char field names, one shape type per file, ~2GiB ceiling — see package README). |
+| `flatgeobuf` | — | Plugin (`@cnmw/format-flatgeobuf`, **shipped E10**, ~10 KB measured, lazy-loadable). Non-streaming (the wrapped `flatgeobuf` package's JS binding has no incremental encoder). |
+| `csv` | `{ geometry?: 'wkt'\|'drop' ('wkt'), delimiter?: string (',') }` | Plugin (`@cnmw/format-extras`, **shipped E10**, zero deps, streaming, eager-registrable). |
+| `esrijson` | — | Plugin (`@cnmw/format-extras`, **shipped E10**, zero deps, non-streaming — a FeatureSet is one JSON document). Esri REST `FeatureSet` shape; one `geometryType` per file (mixed types refused, same restriction as Shapefile). |
 
 ### 2.4 Resolution: collection JSON → descriptor
 
@@ -1101,8 +1103,11 @@ Availability of the scope is unverified — [open item O1](#7-open-items), with
 | `@cnmw/download-core` | dataset resolution, pruning cascade, estimate, streaming download, sinks, format registry, `geojson` + `geoparquet` writers. | `@cnmw/spec`, `hyparquet`, `hyparquet-compressors`, `hyparquet-writer` |
 | `@cnmw/maplibre` | `GeocoderControl`, `AreaLayer`, `DrawTool` (thin), viewport provider. | `@cnmw/spec`; **peer**: `maplibre-gl` |
 | `@cnmw/openlayers` | the same three, OpenLayers flavour. | `@cnmw/spec`; **peer**: `ol` |
-| `@cnmw/format-gpkg` | GeoPackage writer plugin. Opt-in, heavy. | `@cnmw/spec` |
-| `@cnmw/format-flatgeobuf` | FlatGeobuf writer plugin. Opt-in, light. | `@cnmw/spec` |
+| `@cnmw/format-gpkg` | GeoPackage writer plugin (sql.js path, ~339 KB min+gz — **shipped and measured, E10**). Opt-in, lazy-loadable. | `@cnmw/spec` |
+| `@cnmw/format-shapefile` | Shapefile writer plugin (zero deps, ~5 KB — **shipped, E10**). Opt-in, eager-registrable. | `@cnmw/spec` |
+| `@cnmw/format-flatgeobuf` | FlatGeobuf writer plugin (~10 KB min+gz — **shipped and measured, E10**). Opt-in, lazy-loadable. | `@cnmw/spec` |
+| `@cnmw/format-extras` | CSV + Esri JSON writer plugins (zero deps — **shipped, E10**). Opt-in, eager-registrable. | `@cnmw/spec` |
+| `@cnmw/format-gdal` | Future work (E10): a gdal3.js-backed plugin for drivers neither sql.js nor Shapefile's flat-file format reach (File Geodatabase, chiefly). Measured 9.07 MB gzip — not implemented. | `@cnmw/spec`; **peer**: `gdal3.js` |
 | `@cnmw/engine-duckdb` | DuckDB-WASM engine plugin + benchmark harness. Opt-in, heavy. Design call #2: never in core. | `@cnmw/spec`; **peer**: `@duckdb/duckdb-wasm` |
 | `@cnmw/stac` | `stacToDescriptor(stacObject)` — the §2.4 derivation as a standalone function over a plain STAC JSON. Extracted so `portolan-browser` and a future `stac-browser` widget share it. | `@cnmw/spec` |
 
@@ -2256,7 +2261,11 @@ export interface FormatContext {
 
 export interface FormatWriter {
   writeBatch(batch: FeatureBatch): Promise<void>;
-  close(): Promise<{ rows: number; bytes: number }>;
+  /** `warnings`, added by the amendment below, is additive and optional:
+   *  a format's own honesty mechanism for limits only it knows about
+   *  (Shapefile's 10-char field names, one-shape-type-per-file, ~2GiB
+   *  size ceiling — see `@cnmw/format-shapefile`'s README). */
+  close(): Promise<{ rows: number; bytes: number; warnings?: readonly { code: string, message: string, context?: Record<string, unknown> }[] }>;
   abort(reason?: string): Promise<void>;
 }
 
@@ -2272,6 +2281,86 @@ export interface FeatureBatch {
 export declare function registerFormat(plugin: FormatPlugin): void;
 export declare function formats(): readonly FormatPlugin[];
 ```
+
+### Amendment, 2026-11-12 — reason: lazy format loading (O5's heavy-format
+survey, E10)
+
+Chris's requirement, stated directly during E10: a heavy format should
+load "on the fly ... just when people select that format," with its
+weight shown *before* that fetch happens, not after. `registerFormat`
+above is unchanged (an eager, ready `FormatPlugin`); this amendment adds
+a second, lazy registration shape alongside it:
+
+```ts
+export interface LazyFormatDescriptor {
+  readonly id: string;
+  readonly label?: string;                 // for a format picker, e.g. "GeoPackage"
+  readonly extension: string;
+  readonly mediaType: string;
+  readonly streaming: boolean;
+  readonly capabilities: FormatPlugin['capabilities'];
+  /** min+gz weight of what `load()` will fetch, known up front -- lets a
+   *  format picker show "GeoPackage (+~340KB)" *before* the fetch. */
+  readonly approxBytes?: { min: number; max: number; estimate?: number };
+  /** Same signature as `FormatPlugin.estimateBytes` -- pure JS, must not
+   *  require `load()` to have run. */
+  estimateBytes(schema: readonly ColumnDescriptor[], rows: Bounded): Bounded;
+  /** Resolves to the real `FormatPlugin`, an ESM module whose `default`
+   *  is the plugin or a factory for it, or a bare factory. Every real
+   *  implementation of this (`@cnmw/format-gpkg`, `@cnmw/format-flatgeobuf`)
+   *  documents its `load()` as `() => import(<exact pinned absolute CDN
+   *  URL>)` — never a bare specifier (§4.4 rule 2 still holds; see below
+   *  for why this isn't a relaxation of it). */
+  load(): Promise<FormatPlugin | { default: FormatPlugin | (() => FormatPlugin) } | (() => FormatPlugin)>;
+}
+
+export declare function registerLazyFormat(descriptor: LazyFormatDescriptor): void;
+/** Lists both eager and lazy formats; a lazy entry carries `approxBytes`
+ *  and `loadState` instead of a live plugin. Never calls `load()`. */
+export declare function formats(): readonly (
+  | (Pick<FormatPlugin, 'id' | 'extension' | 'mediaType' | 'streaming' | 'capabilities'> & { lazy: false; loadState: 'loaded' })
+  | (LazyFormatDescriptor & { lazy: true; loadState: 'idle' | 'loading' | 'loaded' | 'failed' })
+)[];
+/** Loads a lazy format on first call (concurrent calls for the same id
+ *  share one in-flight `load()` and one cached result), or returns an
+ *  already-loaded/eager format immediately. The only function that ever
+ *  calls a `LazyFormatDescriptor.load()`. */
+export declare function resolveFormat(id: string): Promise<FormatPlugin | undefined>;
+export declare function formatLoadState(id: string): 'idle' | 'loading' | 'loaded' | 'failed' | 'unknown';
+```
+
+`download()` now resolves the requested format with `resolveFormat`
+*inside* its internal `run()` (after the handle has already been
+returned, design doc §3.4's synchronous-return requirement is unaffected)
+rather than synchronously before planning starts. If the format is lazy
+and not yet loaded, it emits a `{ phase: 'loading-format', format: string
+}` `Progress` event first, so a UI can show "fetching GeoPackage writer,
+~340KB..." A `load()` that throws is wrapped in a new error code,
+**`FORMAT_LOAD_FAILED`** (§3.5's `CnmwErrorCode` union; retryable by
+default, same as `NETWORK`/`INDEX_FETCH_FAILED` — a CDN fetch failing is
+the same transient-failure shape under a format-specific name).
+
+**Why this does not relax §4.4 rule 2** ("never a bare specifier"): the
+rule's intent was that a bare-specifier `import` only resolves through a
+bundler or an import map the host must maintain, which breaks the
+zero-build promise. `load()` is documented, by every real implementation
+of this descriptor, to call `import()` on an exact, pinned, absolute CDN
+URL — exactly the mechanism `cdn.js`'s hyparquet-writer loader already
+uses, just deferred until the format is actually selected instead of run
+at module-load time. The format is still fully "registered" the moment
+`registerLazyFormat` runs — its id, label, and weight are known and
+listable immediately — only the *load* is deferred.
+
+Implemented: `packages/download-core/src/registry.js`,
+`packages/download-core/src/download.js`; new `FORMAT_LOAD_FAILED` code in
+`packages/spec/src/errors.js`. Every new format plugin from E10
+(`@cnmw/format-gpkg`, `@cnmw/format-flatgeobuf`) exports a ready-made
+`*FormatDescriptor` using this shape; the zero-dependency ones
+(`@cnmw/format-shapefile`, `@cnmw/format-extras`) export one too, whose
+`load()` resolves immediately — the registry treats "lazy but free" and
+"lazy and heavy" the same way. Tests:
+`packages/download-core/test/registry-lazy.test.js` and the lazy-format
+cases appended to `packages/download-core/test/download-handle.test.js`.
 
 Engine plugin seam (so DuckDB stays strictly opt-in):
 
@@ -2355,7 +2444,8 @@ export declare function isCnmwError(e: unknown): e is CnmwError;
 | `FILTER_REQUIRES_ENGINE` | download | no | "This filter needs the DuckDB engine plugin." Name the requirement. |
 | `CEILING_EXCEEDED` | download | no | **The refusal path.** Show the estimate, the limit, and a "download anyway" that calls `acceptCeiling()`. |
 | `FORMAT_UNAVAILABLE` | download | no | "GeoPackage output needs the @cnmw/format-gpkg plugin." |
-| `FORMAT_CAPABILITY` | download | no | e.g. nested columns into GeoPackage. Offer GeoParquet. |
+| `FORMAT_CAPABILITY` | download | no | e.g. nested columns into GeoPackage, or a non-4326 CRS into any E10 plugin, or mixed geometry types into one Shapefile/Esri JSON file. Offer GeoParquet/GeoJSON. |
+| `FORMAT_LOAD_FAILED` | download | **yes** | **Added by the lazy-format-loading amendment (E10).** A lazy format's CDN `load()` threw (network, usually). "Couldn't load the GeoPackage writer — check your connection and try again." Retryable: the registry's `resolveFormat` does not cache a rejection, so a retry re-attempts `load()`. |
 | `SINK_PERMISSION_DENIED` | download | yes | User dismissed the save picker. Not an error worth a dialog. |
 | `SINK_QUOTA_EXCEEDED` | download | no | "Too large to buffer in memory; use a browser that supports direct-to-disk saving." |
 | `SINK_UNSUPPORTED` | download | no | Used internally to fall back from FS to Blob; surfaced only if both fail. |
@@ -2566,13 +2656,17 @@ is therefore about "one more map library" at worst, and about a third of that
 if the host already loads hyparquet (as both `portolan-browser` and the
 sentinel-2 explorer do).
 
-**Optional plugins — all estimates, all to be replaced by E5 measurements:**
+**Optional plugins:**
 
-| plugin | wasm | js | min+gz total | basis for the estimate |
+| plugin | wasm | js | min+gz total | basis |
 |---|---|---|---|---|
-| `@cnmw/format-flatgeobuf` | — | ~25 KB | **~25 KB** *(est.)* | `flatgeobuf` npm package is small, pure JS |
-| `@cnmw/format-gpkg` — sql.js path | ~450 KB wasm (gz) | ~30 KB | **~480 KB** *(est.)* | sql.js is a SQLite build; GeoPackage is SQLite + a few tables we write ourselves. Non-streaming: buffers the DB in memory |
-| `@cnmw/format-gpkg` — gdal3.js path | **~2–8 MB wasm** | ~60 KB | **~2–8 MB** *(est., wide)* | a GDAL wasm build with the drivers we'd need; the wide range is exactly why E5 must measure before this is offered as a default |
+| `@cnmw/format-flatgeobuf` | — | 10,074 B | **~10 KB — measured** (E10) | jsdelivr `+esm` bundle of `flatgeobuf@4.6.1`'s `geojson` submodule, `gzip -9`. Lighter than estimated: loading only the GeoJSON-specific submodule (not the full package, which also pulls in Arrow-IO-adjacent machinery this plugin never touches) tree-shakes well. |
+| `@cnmw/format-shapefile` | — | ~5 KB | **~5 KB — measured** (E10) | zero dependencies: hand-written `.shp`/`.shx`/`.dbf` + a STORED-only ZIP, no wasm |
+| `@cnmw/format-extras` (CSV + Esri JSON) | — | ~2 KB | **~2 KB — measured** (E10) | zero dependencies |
+| `@cnmw/format-gpkg` — sql.js path (**shipped, E10**) | 321,893 B | 17,352 B | **~339 KB — measured** (E10) | `sql.js@1.13.0`'s published `sql-wasm.wasm` + `sql-wasm.js`, `gzip -9`, plus this plugin's own ~3KB. Lighter than estimated (sql.js got smaller between the versions compared). Validated: `ogrinfo -al -so` + DuckDB's `ST_Read` read every table this plugin writes cleanly; a live FTW-Liechtenstein download round-trips end to end (`packages/format-gpkg/test/gpkg-integration.test.js`). R-tree: measured absent from sql.js's published wasm build (`CREATE VIRTUAL TABLE ... USING rtree` throws `no such module: rtree`); documented as a known gap, not required for the base GeoPackage profile. |
+| `@cnmw/format-gpkg` — gdal3.js path | 9,074,360 B | — | **9.07 MB — measured** (E10) | `gdal3.js@2.8.1`'s `gdal3WebAssembly.wasm`, `gzip -9`. Heavier than the original estimate's upper bound; confirms the sql.js path above as the right default. Not implemented — stays `@cnmw/format-gdal` future work for drivers neither sql.js nor Shapefile's flat-file format can reach (File Geodatabase via `OpenFileGDB`, chiefly). |
+| `terrio-js` (full) | 10,623,358 B | — | **10.6 MB — measured** (E10) | `terrio-js@0.8.0`'s published `terrio_bg.wasm`, `gzip -9`. **Works** — writes correct GeoPackage and Shapefile, validated with `ogrinfo`/DuckDB — but the heaviest candidate measured, disqualifying it from the "light path" mandate. See `experiments/e10-heavy-formats/RESULTS.md` §1. |
+| `terrio-js/core` (GeoTIFF/COG, GeoJSON, FlatGeobuf, GeoPackage, Shapefile, PMTiles/MBTiles, CRS) | 6,059,247 B | — | **6.1 MB — measured** (E10) | same source, the smallest module terrio-js offers; still 18x the sql.js path above |
 | `@cnmw/engine-duckdb` — mvp bundle | ~2.5 MB wasm (gz) | ~250 KB | **~2.8 MB** *(est.)* | DuckDB-WASM's own published bundle sizes |
 | `@cnmw/engine-duckdb` — eh + spatial | **~6–9 MB wasm** | ~250 KB | **~6–9 MB** *(est.)* | the spatial extension is the bulk; needed for `ST_Intersects`/`ST_Intersection` |
 
@@ -3126,7 +3220,7 @@ implementation.
 | **O2** | `filterVertexCeiling = 10,000`. | E5 measuring per-row point-in-polygon cost at 1k/10k/50k vertices against a real FTW/FIRMS download | **10,000.** Raise it if E5 shows the cost is negligible; the mechanism (auto-simplify + reported `areaDeltaRatio`) does not change either way. |
 | **O3** | ~~`loadStrategy: 'auto'` threshold, 5 MB.~~ **Resolved by E1.** | — | **5 MB, confirmed.** E1: the 2.50 MB index full-loads in 203 ms (8 ms fetch + 196 ms decode, localhost) and answers warm keystrokes in 0.0–0.1 ms; the range path adds round trips for no benefit at this size. Extrapolated, a 300K-row index is ~16 MB and would full-load in ~1.2 s, already past the cold budget — so 5 MB sits correctly between the two. **Residual unknown:** E1's cold number is localhost; the 1 s budget is "on broadband", so the real cold-focus fetch of 2.5 MB over the public path is still unmeasured. Default stands; re-check in E6 against source.coop. |
 | **O4** | ~~Whether `searchSync` is worth its API surface.~~ **Resolved by E1.** | — | **Ship it.** E1 measured warm full-load search at **0.0 ms p50, 0.1 ms p95** — a binary search over an in-memory array. At that cost the promise is not an optimization detail, it *is* the per-keystroke cost, and an `await` per keystroke also forces the caller's render into a later microtask. Keep the `state`-guarded throw. |
-| **O5** | GeoPackage: sql.js vs gdal3.js. The weight gap is ~0.5 MB vs ~2–8 MB. | E5 measuring both wasm payloads and whether a hand-written sql.js GeoPackage writer passes `ogrinfo`/QGIS validation | **sql.js**, writing the GeoPackage tables ourselves. GeoPackage is a documented SQLite schema; we only need the vector-features profile. gdal3.js becomes a second plugin (`@cnmw/format-gdal`) for anyone who wants its other drivers and will pay for them. |
+| **O5** | ~~GeoPackage: sql.js vs gdal3.js.~~ **Resolved by E10.** | — | **sql.js, shipped as `@cnmw/format-gpkg`.** Measured 339 KB min+gz (lighter than the ~480 KB estimate), validated with `ogrinfo -al -so` and DuckDB's `ST_Read` — a live FTW-Liechtenstein download round-trips end to end. gdal3.js measured 9.07 MB gzip (heavier than the estimate's ~2–8 MB upper bound), confirming sql.js as the right default; stays `@cnmw/format-gdal` future work. **New candidate found and rejected on weight, not function:** `terrio-js` (opengeos/terrio), a pure-Rust GDAL-adjacent I/O library with wasm bindings — it genuinely works (writes correct, `ogrinfo`/DuckDB-validated GeoPackage *and* Shapefile) but its smallest module (`terrio-js/core`) measures 6.1 MB gzip, 18x the sql.js path; not shipped. Shapefile also shipped (`@cnmw/format-shapefile`, zero deps, ~5 KB), FlatGeobuf shipped (`@cnmw/format-flatgeobuf`, ~10 KB, lighter than its own ~25 KB estimate), and CSV + Esri JSON shipped (`@cnmw/format-extras`, zero deps). See `experiments/e10-heavy-formats/RESULTS.md` for every measurement and the terrio verdict in full. |
 | **O6** | Non-4326 datasets. Design call #4 makes `Area` 4326-only, but a dataset in 3857 or a UTM zone is common. | whether E6/E7 hit one in practice | **Refuse with `DATASET_CRS_UNSUPPORTED`**, naming the CRS and the `ogr2ogr` command that fixes it. Reprojecting *features* needs proj in core; reprojecting the *area* to the dataset's CRS needs proj too and silently changes what "intersects" means near the edges. Revisit as `@cnmw/reproject` (a thin `proj4` wrapper — `portolan-browser` already depends on `proj4`). |
 | **O7** | Exact clip implementation. `intersects` needs only point-in-polygon; `clip` needs real polygon intersection. | E5 choosing between a ~15 KB `polygon-clipping` dependency in `download-core` vs. requiring `@cnmw/engine-duckdb` | **Ship `clip` as a small opt-in plugin** (`@cnmw/clip`, registering a clipper), so core stays at its 30 KB budget and `clip` does not imply a 3–9 MB DuckDB. Already the shape of §1.4's `dissolver` and §3.4's registration seam. |
 | **O8** | Default `ceiling` numbers (5M rows / 2 GiB output / 500 files). | E5/E6 observing what a plausible FIRMS-month or S2-year request actually produces | **As tabled.** They are deliberately generous: the ceiling's job is to stop the accident, not to second-guess the user, and `acceptCeiling()` is one call away. |
