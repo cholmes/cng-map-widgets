@@ -1,0 +1,32 @@
+{
+  "name": "@cnmw/format-extras",
+  "version": "0.1.0",
+  "description": "The 'nearly free' download-core output formats: CSV (attributes + WKT geometry) and Esri JSON (FeatureSet), both zero-dependency, zero-wasm writers.",
+  "keywords": [
+    "csv",
+    "esri-json",
+    "featureset",
+    "download",
+    "cnmw"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@cnmw/spec": "0.1.0"
+  }
+}
