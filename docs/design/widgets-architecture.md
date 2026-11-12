@@ -2126,6 +2126,22 @@ The contract between `@cnmw/geocoder-core` and the sidecar the
 builder; this section is the interface it must satisfy. Two artifacts: a
 **names index parquet** and a small **JSON manifest** beside it.
 
+> **Amendments (2026-11-12, from the two shipped index builds).** Measured
+> results from `portolan-mirrors/geoboundaries-catalog` (52K rows) and
+> `portolan-mirrors/cn-geocoder-overture` (5.6M rows) revise three points:
+> (1) **Row-group size scales with total rows**: the footer carries one record
+> per column per row group and a range client reads the whole footer first, so
+> the 100–150 KiB target only holds for small indexes — at 5.6M rows,
+> ~477 KiB groups cut footer+first-group cost from 8.3 MB to 2.5 MB. The rule
+> is now: *minimize (footer + page index + one row group)*, and restrict
+> column statistics to prunable columns. (2) **`bbox` may be float32** with
+> directed outward rounding (both catalogs do this; verified never-narrower).
+> (3) **GeoParquet with a point geometry column is permitted** (Overture index
+> carries ST_PointOnSurface so the collection renders); clients must read with
+> `geoparquet: false` + `utf8: false` on binary columns regardless (see the
+> hyparquet findings in PLAN.md). Alt-name rows may carry null
+> geometry/geometry_ref; consumers resolve via the primary row (`alt_of`).
+
 ### 6.1 Format
 
 **Plain Parquet, not GeoParquet.** The index carries no geometry column, so

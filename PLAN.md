@@ -215,8 +215,18 @@ at same feature), plus unicode normalization/transliteration in `name_norm`.
   files outward-buffered) · E9 ADM3/4 survey · geoboundaries-catalog built,
   fixed (38 names, 1,275 geometries), display products, changes-from-upstream
   doc, pushed — bucket publish blocked only on source-coop login.
-- **RUNNING:** cn-geocoder-overture catalog build (EXPERIMENTAL, ODbL,
-  cities + multilingual index).
+- **DONE (late add):** cn-geocoder-overture catalog — built and pushed. 6
+  subtypes (272 countries+deps → 556K locality polygons; 2.95M point-only
+  localities carried in the index), names index 5.6M rows / 408MB (full
+  multilingual, no language cap; median 1 row group per prefix, footer
+  2.05MB), display files outward-buffered with 0 features below 99%
+  containment at every level, 24 measured styles, ODbL attribution carried
+  verbatim + share_alike flags. §6 contract amended from its measurements
+  (row-group size scales with row count; float32 bbox OK; point-geometry
+  GeoParquet OK). Publish pending: unlisted source.coop repo + login +
+  4.7GB upload. Notable data finding: Overture name_lang keys include 47
+  non-BCP-47 OSM annotations ('genitive' outranks French). gpq nil-pointer
+  bug on null-geometry GeoParquet — repro written, not filed.
 - **DECIDED (Chris):** pure geoBoundaries CC-BY primary; Overture ODbL
   opt-in sibling catalog; widget configurable to either; tge-labs mirror to
   be deleted after cutover; simplified geometries buffered outward.
