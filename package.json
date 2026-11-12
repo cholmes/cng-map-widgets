@@ -1,0 +1,16 @@
+{
+  "name": "cn-geocoding",
+  "private": true,
+  "type": "module",
+  "description": "Cloud-native map widgets (E3 implementation). Workspaces for @cnmw/* packages and examples.",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "test": "node --test packages/spec/test/*.test.js packages/geocoder-core/test/*.test.js"
+  },
+  "devDependencies": {
+    "playwright": "1.65.0"
+  }
+}

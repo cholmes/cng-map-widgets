@@ -1,0 +1,13 @@
+{
+  "name": "@cnmw/spec",
+  "version": "0.1.0-experiment",
+  "description": "Area/DatasetDescriptor/FilterSpec contracts, error taxonomy, and pure geo helpers (bbox/antimeridian, Visvalingam simplify, WKB decode, name normalization) for cloud-native map widgets.",
+  "type": "module",
+  "sideEffects": false,
+  "private": true,
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "dependencies": {}
+}

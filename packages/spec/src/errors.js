@@ -1,0 +1,66 @@
+// @cnmw/spec -- error taxonomy (design doc §3.5).
+//
+// One base class, a stable string `code`, and a `retryable` flag. The
+// `code` is the API: messages are for humans and may be reworded, codes
+// may not.
+
+/**
+ * @typedef {'AREA_INVALID_CRS'|'AREA_UNSUPPORTED_GEOMETRY'|'AREA_EMPTY'|
+ *   'AREA_VERTEX_CEILING'|'AREA_ANTIMERIDIAN_CLIP'|'UPLOAD_TOO_LARGE'|
+ *   'INDEX_FETCH_FAILED'|'INDEX_SCHEMA_MISMATCH'|'INDEX_VERSION_MISMATCH'|
+ *   'INDEX_TOO_LARGE'|'RANGE_NOT_SUPPORTED'|'GEOMETRY_NOT_FOUND'|
+ *   'DATASET_UNRESOLVED'|'DATASET_UNSUPPORTED'|'DATASET_NO_GEOMETRY_COLUMN'|
+ *   'DATASET_CRS_UNSUPPORTED'|'FILTER_UNKNOWN_COLUMN'|
+ *   'FILTER_UNSUPPORTED_PREDICATE'|'FILTER_REQUIRES_ENGINE'|
+ *   'CEILING_EXCEEDED'|'FORMAT_UNAVAILABLE'|'FORMAT_CAPABILITY'|
+ *   'SINK_PERMISSION_DENIED'|'SINK_QUOTA_EXCEEDED'|'SINK_UNSUPPORTED'|
+ *   'NETWORK'|'CORS'|'HTTP_STATUS'|'CANCELLED'|'INTERNAL'|
+ *   'GEOCODER_NOT_LOADED'} CnmwErrorCode
+ */
+
+/** Codes that are retryable by default (a consumer may override per-throw). */
+const RETRYABLE_DEFAULTS = new Set([
+  'INDEX_FETCH_FAILED',
+  'DATASET_UNRESOLVED',
+  'SINK_PERMISSION_DENIED',
+  'NETWORK',
+]);
+
+export class CnmwError extends Error {
+  /**
+   * @param {string} message
+   * @param {CnmwErrorCode} code
+   * @param {{ retryable?: boolean, context?: Record<string, unknown>, cause?: unknown }} [opts]
+   */
+  constructor(message, code, opts = {}) {
+    super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
+    this.name = 'CnmwError';
+    /** @type {string} */
+    this.code = code;
+    /** @type {boolean} */
+    this.retryable = opts.retryable ?? RETRYABLE_DEFAULTS.has(code);
+    /** @type {Record<string, unknown>|undefined} */
+    this.context = opts.context;
+  }
+}
+
+export class CancelledError extends CnmwError {
+  /** @param {string} [message] @param {{context?: Record<string, unknown>}} [opts] */
+  constructor(message = 'Operation cancelled', opts = {}) {
+    super(message, 'CANCELLED', { retryable: false, ...opts });
+    this.name = 'CancelledError';
+  }
+}
+
+export class CeilingExceededError extends CnmwError {
+  /** @param {string} [message] @param {{context?: Record<string, unknown>}} [opts] */
+  constructor(message = 'Ceiling exceeded', opts = {}) {
+    super(message, 'CEILING_EXCEEDED', { retryable: false, ...opts });
+    this.name = 'CeilingExceededError';
+  }
+}
+
+/** @param {unknown} e @returns {e is CnmwError} */
+export function isCnmwError(e) {
+  return e instanceof CnmwError;
+}
