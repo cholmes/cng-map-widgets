@@ -37,7 +37,7 @@ const engineRegistry = new Map();
  * @property {boolean} streaming
  * @property {{ nestedColumns: boolean, mixedGeometryTypes: boolean, maxFeatures?: number, crs: readonly string[] }} capabilities
  * @property {{ min: number, max: number, estimate?: number }} [approxBytes] - min+gz wire weight of what `load()` will fetch, known up front so a UI can show "+~480KB" *before* the fetch happens.
- * @property {(schema: readonly unknown[], rows: unknown) => unknown} estimateBytes - Same signature as `FormatPlugin.estimateBytes`; must not require `load()` to have run (it's pure JS, no wasm needed to model output bytes-per-row).
+ * @property {(schema: readonly unknown[], rows: unknown, ctx?: { avgGeometryBytes: number|null, geometryColumn: string }) => unknown} estimateBytes - Same signature as `FormatPlugin.estimateBytes`, third argument included. `ctx` is additive and optional (a descriptor written before it, or one that simply ignores it, keeps working): `avgGeometryBytes` is the dataset's own average geometry bytes per row, derived from parquet footer statistics by `prune.js`'s `avgColumnBytesPerRow`, or null when the dataset has no geometry column chunks to read. Must not require `load()` to have run (it's pure JS, no wasm needed to model output bytes-per-row).
  * @property {() => Promise<import('./types.js').FormatPlugin | { default: import('./types.js').FormatPlugin | (() => import('./types.js').FormatPlugin) }>} load
  */
 
@@ -50,9 +50,69 @@ const lazyLoadPromises = new Map();
 /** @type {Map<string, 'idle'|'loading'|'loaded'|'failed'>} */
 const lazyLoadState = new Map();
 
+// --- load-state observability (added 2026-11-12) ----------------------
+//
+// `formats()` and `formatLoadState(id)` are both *pull*-only, and a lazy
+// format's state changes asynchronously underneath a UI that has already
+// rendered: `registerLazyFormat` → `'idle'`, the first `download()` for
+// that id → `'loading'`, then `'loaded'`/`'failed'` whenever a CDN fetch
+// of a few hundred KB finishes. With no push channel, a format picker has
+// no way to learn that and must poll. The portolan-browser integration
+// did exactly that -- bumping a reactivity counter on a timer to force a
+// re-read of `formats()` -- which is a workaround for a missing
+// subscription, not a design.
+//
+// This is deliberately a plain handler set rather than the `Emitter` from
+// events.js: the registries here are module-level singletons (there is one
+// format registry per page, not one per `download()`), so there is no
+// instance to hang an `on(event, …)` off, and a single-purpose
+// `onFormatState` is a smaller surface than a general event bus nobody
+// else would subscribe to. It matches the rest of this codebase's event
+// convention in the one way that matters: it returns its own
+// unsubscribe (design doc §3.5, "One mechanism everywhere: `on(event,
+// handler) => unsubscribe`").
+
+/** @typedef {{ id: string, state: 'idle'|'loading'|'loaded'|'failed' }} FormatStateChange */
+
+/** @type {Set<(change: FormatStateChange) => void>} */
+const formatStateHandlers = new Set();
+
+/**
+ * Subscribe to format registration and load-state changes. The handler is
+ * called with `{ id, state }` whenever a format is registered (eager:
+ * `'loaded'`; lazy: `'idle'`) or a lazy format's `load()` starts
+ * (`'loading'`) and settles (`'loaded'` / `'failed'`). Call `formats()`
+ * inside the handler for the full, current list.
+ *
+ * Handlers run synchronously, in registration order; one that throws is
+ * swallowed so it cannot break a `load()` or starve the other handlers
+ * (the same rule §3.5 states for `DownloadHandle` events, minus the
+ * `error`-event re-report, since there is no per-handle emitter to report
+ * onto here).
+ * @param {(change: FormatStateChange) => void} handler
+ * @returns {() => void} unsubscribe
+ */
+export function onFormatState(handler) {
+  formatStateHandlers.add(handler);
+  return () => formatStateHandlers.delete(handler);
+}
+
+/** @param {string} id @param {'idle'|'loading'|'loaded'|'failed'} state */
+function emitFormatState(id, state) {
+  for (const handler of formatStateHandlers) {
+    try {
+      handler({ id, state });
+    } catch {
+      // A broken subscriber must not fail the registration or load that
+      // triggered it, nor stop the other subscribers.
+    }
+  }
+}
+
 /** @param {import('./types.js').FormatPlugin} plugin */
 export function registerFormat(plugin) {
   formatRegistry.set(plugin.id, plugin);
+  emitFormatState(plugin.id, 'loaded');
 }
 
 /**
@@ -65,6 +125,7 @@ export function registerFormat(plugin) {
 export function registerLazyFormat(descriptor) {
   lazyFormatRegistry.set(descriptor.id, descriptor);
   if (!lazyLoadState.has(descriptor.id)) lazyLoadState.set(descriptor.id, 'idle');
+  emitFormatState(descriptor.id, formatLoadState(descriptor.id));
 }
 
 /**
@@ -123,6 +184,7 @@ export async function resolveFormat(id) {
   if (inFlight) return inFlight;
 
   lazyLoadState.set(id, 'loading');
+  emitFormatState(id, 'loading');
   const promise = (async () => {
     let plugin;
     try {
@@ -131,6 +193,7 @@ export async function resolveFormat(id) {
     } catch (err) {
       lazyLoadState.set(id, 'failed');
       lazyLoadPromises.delete(id);
+      emitFormatState(id, 'failed');
       const { CnmwError } = await import('@cnmw/spec');
       throw new CnmwError(
         `Failed to load the "${id}" format plugin: ${err?.message ?? err}`,
@@ -140,6 +203,7 @@ export async function resolveFormat(id) {
     }
     resolvedLazyFormats.set(id, plugin);
     lazyLoadState.set(id, 'loaded');
+    emitFormatState(id, 'loaded');
     return plugin;
   })();
   lazyLoadPromises.set(id, promise);

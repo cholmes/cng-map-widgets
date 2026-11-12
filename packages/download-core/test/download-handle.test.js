@@ -12,7 +12,7 @@ import { memorySink } from '../src/sinks.js';
 import { boundedExact } from '../src/bounded.js';
 import { defaultCeiling } from '../src/ceiling.js';
 import { registerLazyFormat, formatLoadState } from '../src/registry.js';
-import { CancelledError } from '@cnmw/spec';
+import { CancelledError, CeilingExceededError } from '@cnmw/spec';
 
 const DATASET = { spec: 'cnmw-dataset/1.0', source: { kind: 'parquet', url: 'https://example.test/d.parquet' } };
 const FILTER = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } };
@@ -100,10 +100,66 @@ test('blocked -> acceptCeiling() -> running -> done', async () => {
   assert.equal(handle.state, 'blocked');
   assert.equal(sawCeilingEvent, true);
 
-  handle.acceptCeiling();
+  const continued = handle.acceptCeiling();
   const result = await handle.result;
   assert.equal(handle.state, 'done');
   assert.equal(result.rows, 0);
+  // `acceptCeiling()` hands back the continued run's promise -- the same
+  // one `handle.result` now returns.
+  assert.equal(await continued, result);
+});
+
+test("a blocked handle's result REJECTS with CeilingExceededError rather than waiting forever", async () => {
+  const handle = download(DATASET, null, FILTER, OUTPUT, {
+    engine: fakeEngine(),
+    sink: memorySink(),
+    estimateOverride: makeEstimate({ ceiling: { exceeded: true, limits: defaultCeiling(), breaches: ['rows', 'outputBytes'] } }),
+  });
+
+  // The whole point of the fix: an `await handle.result` with no prior
+  // `handle.estimate` inspection used to hang forever. It now settles.
+  const err = await handle.result.then(
+    () => null,
+    (e) => e,
+  );
+  assert.ok(err instanceof CeilingExceededError, `expected CeilingExceededError, got ${err}`);
+  assert.equal(err.code, 'CEILING_EXCEEDED');
+  assert.equal(err.retryable, false);
+  assert.deepEqual(err.context.breaches, ['rows', 'outputBytes']);
+  assert.equal(err.context.estimate.ceiling.exceeded, true);
+  // By the time a rejection handler runs (a microtask), the synchronous
+  // state transition has already happened.
+  assert.equal(handle.state, 'blocked');
+
+  // ...and the run is still there to be continued.
+  const result = await handle.acceptCeiling();
+  assert.equal(handle.state, 'done');
+  assert.equal(result.rows, 0);
+});
+
+test('acceptCeiling() from a synchronous ceiling handler works, and the rejected promise is the blocked one', async () => {
+  const handle = download(DATASET, null, FILTER, OUTPUT, {
+    engine: fakeEngine(),
+    sink: memorySink(),
+    estimateOverride: makeEstimate({ ceiling: { exceeded: true, limits: defaultCeiling(), breaches: ['rows'] } }),
+  });
+  const blocked = handle.result; // captured BEFORE the breach settles it
+  handle.on('ceiling', () => handle.acceptCeiling());
+
+  await assert.rejects(blocked, (e) => e.code === 'CEILING_EXCEEDED');
+  const result = await handle.result; // the fresh promise acceptCeiling() installed
+  assert.equal(result.rows, 0);
+  assert.equal(handle.state, 'done');
+});
+
+test('acceptCeiling() on a handle that never blocked is a no-op returning the live result', async () => {
+  const handle = download(DATASET, null, FILTER, OUTPUT, {
+    engine: fakeEngine(),
+    sink: memorySink(),
+    estimateOverride: makeEstimate(),
+  });
+  assert.equal(await handle.acceptCeiling(), await handle.result);
+  assert.equal(handle.state, 'done');
 });
 
 test('acceptCeiling: true at call time skips the blocked state entirely', async () => {
@@ -121,7 +177,7 @@ test('acceptCeiling: true at call time skips the blocked state entirely', async 
   assert.equal(handle.state, 'done');
 });
 
-test('cancel while blocked: result rejects with CancelledError, state -> cancelled', async () => {
+test('cancel while blocked: state -> cancelled, and the promise keeps the CEILING_EXCEEDED it was already given', async () => {
   const sink = memorySink();
   const handle = download(DATASET, null, FILTER, OUTPUT, {
     engine: fakeEngine(),
@@ -134,7 +190,50 @@ test('cancel while blocked: result rejects with CancelledError, state -> cancell
 
   await handle.cancel('user declined the ceiling');
   assert.equal(handle.state, 'cancelled');
-  await assert.rejects(handle.result, (err) => err instanceof CancelledError || err.code === 'CANCELLED');
+  // The ceiling breach already settled this promise; declining afterwards
+  // does not re-settle it with a different code underneath a caller who
+  // is already holding it. `state` is the thing that says "cancelled".
+  await assert.rejects(handle.result, (err) => err.code === 'CEILING_EXCEEDED');
+});
+
+test('cancel during planning: the handle can be cancelled before planning finishes', async () => {
+  // A fake engine cannot honestly exercise the *reporting* half of this
+  // (that a cancelled planning read says `CANCELLED` rather than
+  // `NETWORK`/`DATASET_UNRESOLVED`), because the misreporting happened in
+  // `parquet-io.js`'s wrapping of a real aborted fetch -- see
+  // cancellation.test.js, which drives it through the real engine against
+  // a local fixture. What this covers is the state machine: `cancel()`
+  // during `'planning'` is possible at all, which is the entire reason
+  // `download()` returns synchronously (design doc §3.4).
+  let planStarted;
+  const planRunning = new Promise((resolve) => {
+    planStarted = resolve;
+  });
+  const handle = download(DATASET, null, FILTER, OUTPUT, {
+    engine: {
+      id: 'slow',
+      capabilities: ['bbox', 'intersects'],
+      async plan(dataset, area, filter, ctx) {
+        planStarted();
+        // Stand in for an in-flight footer fetch that rejects on abort.
+        await new Promise((resolve, reject) => {
+          if (ctx.signal?.aborted) reject(new CancelledError());
+          ctx.signal?.addEventListener('abort', () => reject(new CancelledError()));
+          setTimeout(resolve, 30_000).unref?.();
+        });
+        return { dataset, area, filter, plan: MINIMAL_PLAN };
+      },
+      async run() {
+        return { rows: 0, readBytes: 0, requests: 0 };
+      },
+    },
+    sink: memorySink(),
+  });
+  assert.equal(handle.state, 'planning');
+  await planRunning; // cancel *while* planning is in flight, not before it starts
+  await handle.cancel('changed my mind');
+  assert.equal(handle.state, 'cancelled');
+  await assert.rejects(handle.result, (err) => err instanceof CancelledError && err.code === 'CANCELLED');
 });
 
 test('cancel while running: cooperative cancellation aborts mid-flight, state -> cancelled', async () => {

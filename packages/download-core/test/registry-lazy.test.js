@@ -14,6 +14,7 @@ import {
   getFormat,
   resolveFormat,
   formatLoadState,
+  onFormatState,
 } from '../src/registry.js';
 import { isCnmwError } from '@cnmw/spec';
 
@@ -166,4 +167,102 @@ test('registerFormat (eager) for an id also registered lazily wins over the lazy
   assert.equal(await resolveFormat(id), eagerPlugin);
   assert.equal(lazyLoadCalls, 0, 'the eager registration short-circuits resolveFormat entirely');
   assert.equal(formats().filter((f) => f.id === id).length, 1, 'formats() lists the id once, as the eager entry');
+});
+
+// --- onFormatState: the load-state subscription ------------------------
+//
+// Before this existed, `formats()`/`formatLoadState()` were pull-only, so
+// a format picker had no way to learn that a lazy format had finished
+// loading; the portolan-browser integration polled by bumping a
+// reactivity counter. These lock in the push channel that replaces that.
+
+test('onFormatState: reports idle on lazy registration, then loading -> loaded across a resolveFormat', async () => {
+  const id = uniqueId('observed');
+  const seen = [];
+  const unsubscribe = onFormatState((change) => {
+    if (change.id === id) seen.push(change.state);
+  });
+
+  const plugin = { id, extension: 'o', mediaType: 'o/o', streaming: true, capabilities: {}, estimateBytes: () => ({}), open: async () => ({}) };
+  registerLazyFormat({
+    id,
+    extension: 'o',
+    mediaType: 'o/o',
+    streaming: true,
+    capabilities: {},
+    estimateBytes: () => ({}),
+    load: async () => {
+      // Assert mid-flight: 'loading' must be observable *while* the load
+      // is in flight, which is the whole point for a UI spinner.
+      assert.deepEqual(seen, ['idle', 'loading']);
+      return plugin;
+    },
+  });
+  assert.deepEqual(seen, ['idle']);
+
+  await resolveFormat(id);
+  assert.deepEqual(seen, ['idle', 'loading', 'loaded']);
+
+  // A second resolve is served from cache and emits nothing further.
+  await resolveFormat(id);
+  assert.deepEqual(seen, ['idle', 'loading', 'loaded']);
+
+  unsubscribe();
+  registerFormat(plugin);
+  assert.deepEqual(seen, ['idle', 'loading', 'loaded'], 'unsubscribe() stops delivery');
+});
+
+test('onFormatState: a failing load() reports failed, and the state matches formatLoadState()', async () => {
+  const id = uniqueId('observed-fail');
+  const seen = [];
+  const unsubscribe = onFormatState((change) => {
+    if (change.id === id) seen.push(change.state);
+  });
+
+  registerLazyFormat({
+    id,
+    extension: 'x',
+    mediaType: 'x/x',
+    streaming: false,
+    capabilities: {},
+    estimateBytes: () => ({}),
+    load: async () => {
+      throw new Error('offline');
+    },
+  });
+  await assert.rejects(resolveFormat(id), { code: 'FORMAT_LOAD_FAILED' });
+
+  assert.deepEqual(seen, ['idle', 'loading', 'failed']);
+  assert.equal(formatLoadState(id), 'failed');
+  unsubscribe();
+});
+
+test('onFormatState: an eager registerFormat reports loaded', () => {
+  const id = uniqueId('observed-eager');
+  const seen = [];
+  const unsubscribe = onFormatState((change) => {
+    if (change.id === id) seen.push(change.state);
+  });
+  registerFormat({ id, extension: 'g', mediaType: 'g/g', streaming: true, capabilities: {}, estimateBytes: () => ({}), open: async () => ({}) });
+  assert.deepEqual(seen, ['loaded']);
+  unsubscribe();
+});
+
+test('onFormatState: a handler that throws neither fails the registration nor starves the others', async () => {
+  const id = uniqueId('observed-throw');
+  const seen = [];
+  const un1 = onFormatState(() => {
+    throw new Error('broken subscriber');
+  });
+  const un2 = onFormatState((change) => {
+    if (change.id === id) seen.push(change.state);
+  });
+
+  assert.doesNotThrow(() =>
+    registerFormat({ id, extension: 't', mediaType: 't/t', streaming: true, capabilities: {}, estimateBytes: () => ({}), open: async () => ({}) }),
+  );
+  assert.deepEqual(seen, ['loaded']);
+  assert.equal(formatLoadState(id), 'loaded');
+  un1();
+  un2();
 });

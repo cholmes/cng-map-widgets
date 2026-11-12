@@ -3,7 +3,7 @@
 // could not be cancelled during planning, which is exactly when a user
 // changes their mind."
 
-import { CnmwError, CancelledError, fromAreaDocument } from '@cnmw/spec';
+import { CnmwError, CancelledError, CeilingExceededError, fromAreaDocument } from '@cnmw/spec';
 import { Emitter, LatestWinsStream } from './events.js';
 import { planRequest, finalizeEstimate } from './estimate.js';
 import { createHyparquetEngine } from './engine-hyparquet.js';
@@ -70,15 +70,22 @@ export function download(dataset, area, filter, output, options = {}) {
     resolveEstimate = res;
     rejectEstimate = rej;
   });
-  let resolveResult, rejectResult;
-  const resultPromise = new Promise((res, rej) => {
-    resolveResult = res;
-    rejectResult = rej;
+  // `result` is a *slot*, not a single promise (design doc §3.4, amended
+  // 2026-11-12 "blocked handles reject"). The run that is currently in
+  // flight owns one deferred; a ceiling breach settles it (rejected with
+  // `CeilingExceededError`) and `acceptCeiling()` installs a fresh one for
+  // the continued run. `handle.result` is therefore a getter that always
+  // hands back the promise for whatever run is live now.
+  let current = newResultDeferred();
+  // Always resolves, never rejects, once `run()` has fully finished (its
+  // `finally` has run: sink closed/aborted, progress stream ended). What
+  // `cancel()` awaits -- it must not await `current.promise`, which may
+  // already be the settled ceiling rejection while the run is still
+  // tearing down.
+  let markRunSettled;
+  const runSettled = new Promise((resolve) => {
+    markRunSettled = resolve;
   });
-  // A rejected `result` with no listener yet is expected whenever a
-  // download is `blocked` or fails; don't let Node/the browser log it as
-  // unhandled before a consumer has a chance to attach a handler.
-  resultPromise.catch(() => {});
   estimatePromise.catch(() => {});
 
   async function run() {
@@ -123,7 +130,13 @@ export function download(dataset, area, filter, output, options = {}) {
       // a real parquet file -- the pruning/estimate *math* has its own
       // dedicated unit tests (prune.test.js, bounded.test.js).
       const schema = schemaFor(plan);
-      const est = options.estimateOverride ?? (await finalizeEstimate(plan, area, filter, { ...options, outputBytesOverride: format.estimateBytes(schema, plan.rows) }));
+      // `estimateBytes`'s third argument (design doc §3.4, item-7
+      // amendment) is additive: a plugin that ignores it keeps working,
+      // and this is the number that flows into `est.outputBytes` and from
+      // there into both the `outputBytes` ceiling check inside
+      // `finalizeEstimate` and the `blobBytes` check just below.
+      const estimateCtx = { avgGeometryBytes: plan.avgGeometryBytes ?? null, geometryColumn: plan.geometryColumn };
+      const est = options.estimateOverride ?? (await finalizeEstimate(plan, area, filter, { ...options, outputBytesOverride: format.estimateBytes(schema, plan.rows, estimateCtx) }));
 
       if (!format.streaming && est.outputBytes.max > (options.ceiling?.blobBytes ?? 256 * 1024 ** 2)) {
         est.ceiling.breaches = [...new Set([...est.ceiling.breaches, 'blobBytes'])];
@@ -136,13 +149,33 @@ export function download(dataset, area, filter, output, options = {}) {
       for (const w of est.warnings) emitter.emit('warning', w);
 
       if (est.ceiling.exceeded && !options.acceptCeiling) {
-        setState('blocked');
-        // The gate is armed *before* emitting 'ceiling' so a handler that
+        // Reject the *current* `result` promise FIRST, before any event
+        // fires (design doc §3.4: "Rejects with `CeilingExceededError` if
+        // the handle is `blocked` and neither `acceptCeiling()` nor
+        // `acceptCeiling: true` was given"). Order matters twice over:
+        //
+        //  - Events are synchronous (§3.5), so a `state`/`ceiling` handler
+        //    may call `acceptCeiling()` *during* the emit -- which installs
+        //    a fresh deferred. Rejecting after that would reject the
+        //    continued run's promise instead of the blocked one.
+        //  - A rejection handler only runs as a microtask, so by the time
+        //    any `.catch()` observes this error, the synchronous
+        //    `setState('blocked')` below has already happened and
+        //    `handle.state` reads `'blocked'`, as a caller expects.
+        current.reject(
+          new CeilingExceededError(
+            `Estimated ${est.rows.estimate.toLocaleString()} rows / ${est.outputBytes.estimate.toLocaleString()} output bytes exceeds the ceiling (${est.ceiling.breaches.join(', ')}). Call acceptCeiling() for the continued run, or cancel().`,
+            { context: { breaches: est.ceiling.breaches, limits: est.ceiling.limits, estimate: est } },
+          ),
+        );
+        // The gate is armed *before* `setState`/`emit` so a handler that
         // calls `acceptCeiling()` synchronously (events run synchronously,
-        // design doc §3.5) resolves a gate that already exists.
+        // design doc §3.5) resolves a gate that already exists -- for the
+        // 'state' event too, not just 'ceiling'.
         const gate = new Promise((resolve) => {
           resumeFromBlocked = resolve;
         });
+        setState('blocked');
         emitter.emit('ceiling', { estimate: est });
         const proceed = await gate;
         if (!proceed || cancelRequested) {
@@ -182,6 +215,13 @@ export function download(dataset, area, filter, output, options = {}) {
             fetch: options.fetch,
             signal: controller.signal,
             limit: filter.limit,
+            // design doc §3.4's `DownloadCoreOptions.maxConcurrentRequests`,
+            // handed to the engine rather than read by it off the options
+            // object, because an alternative engine (`@cnmw/engine-duckdb`)
+            // gets the same budget through the same `run()` ctx. Left
+            // `undefined` when the caller said nothing, so the engine's own
+            // default (12, see engine-hyparquet.js) applies.
+            maxConcurrentRequests: options.maxConcurrentRequests,
             async onProgress(p) {
               emitter.emit('progress', p);
               progressStream.push(p);
@@ -225,7 +265,7 @@ export function download(dataset, area, filter, output, options = {}) {
       };
       setState('done');
       emitter.emit('done', result);
-      resolveResult(result);
+      current.resolve(result);
     } catch (err) {
       const cnmwErr = err instanceof CnmwError ? err : new CnmwError(err?.message ?? String(err), 'INTERNAL', { cause: err });
       if (cnmwErr.code === 'CANCELLED') {
@@ -238,9 +278,15 @@ export function download(dataset, area, filter, output, options = {}) {
         estimateSettled = true;
         rejectEstimate(cnmwErr);
       }
-      rejectResult(cnmwErr);
+      // A no-op when the ceiling gate already rejected this deferred and
+      // the caller then cancelled instead of accepting: the handle's
+      // `state` becomes `'cancelled'`, but the promise a caller is holding
+      // stays rejected with the `CEILING_EXCEEDED` it was first given
+      // rather than switching error codes underneath them.
+      current.reject(cnmwErr);
     } finally {
       progressStream.end();
+      markRunSettled();
     }
   }
 
@@ -253,17 +299,38 @@ export function download(dataset, area, filter, output, options = {}) {
       return state;
     },
     estimate: estimatePromise,
-    result: resultPromise,
+    /**
+     * The live run's completion promise. Rejects with
+     * `CeilingExceededError` the moment the handle goes `blocked` -- it
+     * never just waits (design doc §3.4). `acceptCeiling()` installs, and
+     * returns, a *fresh* promise for the continued run, which is what this
+     * getter hands back from then on; a promise captured before the breach
+     * stays rejected, as promises must.
+     */
+    get result() {
+      return current.promise;
+    },
     progress: progressStream,
     on(event, fn) {
       return emitter.on(event, fn);
     },
+    /**
+     * The refusal override (design call #3): an explicit, auditable act.
+     * Returns the continued run's `Promise<DownloadResult>` -- the same
+     * promise `handle.result` returns from here on -- because the one the
+     * caller was holding has already rejected with `CeilingExceededError`.
+     * Idempotent: called when the handle is not `blocked` it changes
+     * nothing and simply returns the current `result`.
+     * @returns {Promise<import('./types.js').DownloadResult>}
+     */
     acceptCeiling() {
       if (state === 'blocked' && resumeFromBlocked) {
+        current = newResultDeferred();
         const resolve = resumeFromBlocked;
         resumeFromBlocked = null;
         resolve(true);
       }
+      return current.promise;
     },
     pause() {
       if (state !== 'running') return;
@@ -294,10 +361,30 @@ export function download(dataset, area, filter, output, options = {}) {
         resumeFromPause = null;
         resolve();
       }
-      await resultPromise.catch(() => {});
+      // `runSettled`, not `current.promise`: while `blocked`, `current` is
+      // already the settled ceiling rejection, so awaiting it would return
+      // before the run had actually torn down.
+      await runSettled;
     },
   };
   return handle;
+}
+
+/**
+ * One run's `result` deferred. Pre-attaching a no-op `catch` is load-bearing:
+ * a rejected `result` with no listener yet is the *normal* path whenever a
+ * download is blocked on the ceiling or fails during planning, and Node (or
+ * the browser console) would otherwise report it as an unhandled rejection
+ * before a consumer has had a chance to attach a handler.
+ */
+function newResultDeferred() {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  promise.catch(() => {});
+  return { promise, resolve, reject };
 }
 
 function sinkResultOf(sink) {

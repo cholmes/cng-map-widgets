@@ -4,8 +4,41 @@
 // row group looks like" without each reaching into raw hyparquet metadata
 // shapes.
 
-import { CnmwError } from '@cnmw/spec';
+import { CnmwError, CancelledError } from '@cnmw/spec';
 import { loadHyparquet } from './cdn.js';
+
+/**
+ * Map a thrown error to `CancelledError` when the operation's own signal is
+ * already aborted.
+ *
+ * Every failure mode in this module is a `fetch` away, and an aborted
+ * `fetch` rejects with a bare `AbortError` `DOMException` (or, through a
+ * caller-supplied `fetch`, with whatever that implementation throws) --
+ * indistinguishable, at the catch site, from a genuine network failure or a
+ * truncated/unreadable footer. Wrapping it as `NETWORK` /
+ * `DATASET_UNRESOLVED` is what made a cancelled download report a *data*
+ * problem: the live-verification audit saw `DATASET_UNRESOLVED` for a
+ * cancel mid-row-group read and `NETWORK` (with `state: 'failed'`) for a
+ * cancel during planning, where design doc §3.5 rule 1 is explicit --
+ * "an abort rejects with `CancelledError` (`code: 'CANCELLED'`), never a
+ * bare `DOMException`, so a consumer has one thing to match".
+ *
+ * Checking `signal.aborted` rather than sniffing the error's name/type is
+ * deliberate: it is the only test that stays correct for a custom `fetch`
+ * (the `options.fetch` seam every entry point here takes) whose abort
+ * rejection is some other error shape entirely.
+ *
+ * @param {unknown} cause
+ * @param {AbortSignal|undefined} signal
+ * @param {string} what - what was being read, for the message
+ * @returns {CancelledError|null} the error to throw instead, or null to keep the original mapping
+ */
+function cancellationOf(cause, signal, what) {
+  if (!signal?.aborted) return null;
+  return new CancelledError(`Cancelled while ${what}.`, {
+    context: { reason: typeof signal.reason === 'string' ? signal.reason : undefined },
+  });
+}
 
 /**
  * @typedef {{
@@ -34,7 +67,7 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
       requestInit: { cache: 'no-store', signal: opts.signal },
     });
   } catch (cause) {
-    throw new CnmwError(`Couldn't fetch parquet file: ${url}`, 'NETWORK', { cause, context: { url } });
+    throw cancellationOf(cause, opts.signal, `fetching ${url}`) ?? new CnmwError(`Couldn't fetch parquet file: ${url}`, 'NETWORK', { cause, context: { url } });
   }
   let metadata;
   try {
@@ -64,10 +97,16 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
       geoparquet: false,
     });
   } catch (cause) {
-    throw new CnmwError(`Couldn't read parquet metadata: ${url}`, 'DATASET_UNRESOLVED', { cause, context: { url } });
+    throw (
+      cancellationOf(cause, opts.signal, `reading the parquet footer of ${url}`) ??
+      new CnmwError(`Couldn't read parquet metadata: ${url}`, 'DATASET_UNRESOLVED', { cause, context: { url } })
+    );
   }
   const rowGroups = decodeRowGroups(metadata);
-  return { url, file, metadata, rowGroups, byteLength: file.byteLength };
+  // `signal` is carried on the handle so `readRows` -- which takes no
+  // `fetch`/`signal` of its own, because the AsyncBuffer on `file` already
+  // has both bound in -- can still tell a cancelled read from a failed one.
+  return { url, file, metadata, rowGroups, byteLength: file.byteLength, signal: opts.signal };
 }
 
 /** @param {any} metadata @returns {RowGroupInfo[]} */
@@ -109,7 +148,7 @@ export function rowGroupBytesForColumns(rg, columnNames) {
  * [rowStart, rowEnd) range), optionally projected to `columns`. The AsyncBuffer
  * on `handle.file` already carries its own fetch/signal (bound at
  * `openParquetFile` time), so no `fetch` argument is needed here.
- * @param {{ file: any, metadata: any }} handle
+ * @param {{ file: any, metadata: any, signal?: AbortSignal }} handle
  * @param {{ rowStart: number, rowEnd: number, columns?: string[] }} range
  */
 export async function readRows(handle, range) {
@@ -139,6 +178,9 @@ export async function readRows(handle, range) {
       utf8: false,
     });
   } catch (cause) {
-    throw new CnmwError('Failed to read parquet row data.', 'DATASET_UNRESOLVED', { cause });
+    throw (
+      cancellationOf(cause, handle.signal, 'reading parquet row data') ??
+      new CnmwError('Failed to read parquet row data.', 'DATASET_UNRESOLVED', { cause })
+    );
   }
 }

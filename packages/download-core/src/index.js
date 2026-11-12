@@ -12,9 +12,9 @@ export { resolveDataset, descriptorFromCollection, collectionDownloadSupport } f
 export { CDN, loadHyparquet, loadHyparquetWriter, setHyparquetModules, clearHyparquetModules } from './cdn.js';
 export { estimate } from './estimate.js';
 export { download, downloadRequest } from './download.js';
-export { registerFormat, registerLazyFormat, formats, resolveFormat, getFormat, formatLoadState, registerEngine, engines } from './registry.js';
+export { registerFormat, registerLazyFormat, formats, resolveFormat, getFormat, formatLoadState, onFormatState, registerEngine, engines } from './registry.js';
 export { memorySink, blobSink, streamSink, fileSystemSink, autoSink } from './sinks.js';
-export { createHyparquetEngine, HYPARQUET_ENGINE_ID } from './engine-hyparquet.js';
+export { createHyparquetEngine, HYPARQUET_ENGINE_ID, DEFAULT_MAX_CONCURRENT_REQUESTS } from './engine-hyparquet.js';
 export { createGeoJsonFormat } from './formats/geojson.js';
 export { createGeoParquetFormat } from './formats/geoparquet.js';
 export { defaultCeiling, requirementsOf } from './ceiling.js';
@@ -23,7 +23,7 @@ export { rowMatchesArea, bboxIntersectsAny, pointInGeometry, geometriesIntersect
 export { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 export { boundedExact, boundedRange, addBounded, sumBounded, scaleBounded, capBounded, isEstimateWide } from './bounded.js';
 export { enumeratePartitions, partitionPruneCascade } from './partitions.js';
-export { pruneRowGroupsByBBox, pruneRowGroupsByTime } from './prune.js';
+export { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, predicateExcludesRowGroup, avgColumnBytesPerRow, STATS_PRUNABLE_OPS } from './prune.js';
 export { CnmwError, CancelledError, CeilingExceededError, isCnmwError } from '@cnmw/spec';
 
 import { registerFormat, registerEngine, getFormat, getEngine } from './registry.js';
