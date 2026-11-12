@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cloud-native map widgets — examples</title>
+<style>
+  :root {
+    --bg: #fbfbfa;
+    --card: #ffffff;
+    --ink: #1a1a1a;
+    --muted: #666;
+    --line: #e2e2df;
+    --accent: #1a56b8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 40px 20px 72px; }
+  h1 { font-size: 27px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .tagline { color: var(--muted); margin: 0 0 24px; font-size: 16px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+       margin: 36px 0 14px; font-weight: 600; }
+  a { color: var(--accent); }
+  code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+  .note {
+    background: #fff8e6; border: 1px solid #f0dca8; border-radius: 6px;
+    padding: 12px 14px; font-size: 13.5px; margin: 0 0 24px;
+  }
+  .note code { background: rgba(0,0,0,0.05); padding: 1px 4px; border-radius: 3px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; display: flex; flex-direction: column;
+  }
+  .card.featured { grid-column: 1 / -1; flex-direction: row; }
+  .card.featured .shot { width: 46%; flex: none; border-right: 1px solid var(--line); border-bottom: none; }
+  .card.featured .body { flex: 1; }
+  .shot {
+    display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top left;
+    background: #eee; border-bottom: 1px solid var(--line);
+  }
+  .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .body h3 { margin: 0; font-size: 16px; }
+  .body h3 a { text-decoration: none; }
+  .body h3 a:hover { text-decoration: underline; }
+  .body p { margin: 0; font-size: 13.5px; color: #333; }
+  .pkgs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 6px; }
+  .pkg {
+    font: 11px/1 ui-monospace, Menlo, monospace; background: #f1f3f7; color: #41506b;
+    border: 1px solid #dde2ec; border-radius: 10px; padding: 4px 7px;
+  }
+  .links { display: flex; gap: 14px; align-items: center; font-size: 13px; padding-top: 4px; }
+  .srcbtn {
+    background: none; border: none; padding: 0; font: inherit; color: var(--accent);
+    cursor: pointer; text-decoration: underline;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  dialog {
+    width: min(1000px, 94vw); max-height: 88vh; border: 1px solid var(--line);
+    border-radius: 8px; padding: 0; background: var(--card);
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.45); }
+  .dlg-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--card);
+  }
+  .dlg-head strong { font: 13px/1 ui-monospace, Menlo, monospace; }
+  .dlg-head .actions { display: flex; gap: 10px; }
+  .dlg-head button, .dlg-head a {
+    font-size: 13px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 5px;
+    background: #f6f6f5; color: var(--ink); cursor: pointer; text-decoration: none;
+  }
+  pre.src {
+    margin: 0; padding: 16px; overflow: auto; max-height: calc(88vh - 54px);
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; tab-size: 2;
+  }
+  footer { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Cloud-native map widgets — examples</h1>
+<p class="tagline">
+  Six zero-build demos of <code>@cnmw/*</code>: place-name search over a published
+  cloud-native gazetteer, your own uploaded area, and dataset download — all static
+  files against object storage, no API and no server anywhere.
+</p>
+
+<div class="note">
+  <strong>Serving these:</strong> from the repo root run <code>python3 serve.py</code> and open
+  <code>http://localhost:8000/examples/</code>. A plain <code>python3 -m http.server</code> will
+  <em>not</em> do — it answers HTTP <code>Range</code> requests with the whole file, which quietly
+  turns every range read into a full download. Every demo below fetches live data from
+  <code>data.source.coop</code>, so it needs network access. Add <code>?index=local</code> to any
+  demo to use the provisional offline index in <code>geocoder-demo/data/</code> (gitignored; see
+  that directory's <code>build-data.sql</code>), or <code>?index=overture</code> on
+  <code>geocoder-demo</code> for the 5.6M-name Overture gazetteer.
+</div>
+
+<h2>Start here</h2>
+<div class="grid">
+
+  <div class="card featured">
+    <img class="shot" src="quickstart/screenshot.png" alt="A world map with a search box; Contra Costa County outlined in blue." loading="lazy" />
+    <div class="body">
+      <h3><a href="quickstart/index.html">quickstart</a></h3>
+      <p>
+        The whole library in one 90-line file: an import map, one <code>Geocoder</code> pointed at the
+        live geoBoundaries gazetteer, one <code>GeocoderControl</code> on a MapLibre map. Type
+        “contra costa”, get an outline. This is the snippet the root README's quickstart reproduces
+        verbatim; <code>verify.mjs</code> drives it against live data on every check.
+      </p>
+      <div class="links">
+        <a href="quickstart/index.html">Open demo →</a>
+        <button class="srcbtn" data-src="quickstart/index.html">View source</button>
+      </div>
+      <div class="pkgs">
+        <span class="pkg">@cnmw/geocoder-core</span>
+        <span class="pkg">@cnmw/maplibre</span>
+        <span class="pkg">@cnmw/spec</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<h2>The widgets</h2>
+<div class="grid">
+
+  <div class="card">
+    <img class="shot" src="geocoder-demo/screenshot-live.png" alt="MapLibre map with the search dropdown open over the United Kingdom outline." loading="lazy" />
+    <div class="body">
+      <h3><a href="geocoder-demo/index.html">geocoder-demo</a></h3>
+      <p>
+        The geocoder at full depth: all three admin levels of the live catalog, progressive
+        <code>select({ resolution: 'both' })</code> (small outline now, full-resolution filter
+        geometry upgraded in the background), and an index switch — <code>?index=overture</code>
+        swaps in the 5.6M-name multilingual Overture gazetteer.
+      </p>
+      <div class="links">
+        <a href="geocoder-demo/index.html">Open demo →</a>
+        <button class="srcbtn" data-src="geocoder-demo/index.html">View source</button>
+      </div>
+      <div class="pkgs">
+        <span class="pkg">@cnmw/geocoder-core</span>
+        <span class="pkg">@cnmw/maplibre</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <img class="shot" src="upload-demo/screenshot.png" alt="OpenLayers map showing Fiji's two antimeridian halves plus an uploaded orange polygon." loading="lazy" />
+    <div class="body">
+      <h3><a href="upload-demo/index.html">upload-demo</a></h3>
+      <p>
+        The composability seam, on OpenLayers: a searched area and a dropped GeoJSON file produce
+        the <em>same</em> <code>Area</code> object. Drop
+        <code>upload-demo/fixtures/needs-repair.geojson</code> to see the repair report (unclosed
+        ring, wrong winding, a stray Z, a Point dropped), and search “fiji” to watch the
+        antimeridian split and the 4326 ⇄ 3857 projection bridge.
+      </p>
+      <div class="links">
+        <a href="upload-demo/index.html">Open demo →</a>
+        <button class="srcbtn" data-src="upload-demo/index.html">View source</button>
+      </div>
+      <div class="pkgs">
+        <span class="pkg">@cnmw/upload-core</span>
+        <span class="pkg">@cnmw/openlayers</span>
+        <span class="pkg">@cnmw/geocoder-core</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <img class="shot" src="download-demo/screenshot.png" alt="Map of Liechtenstein with a download panel showing an estimate and a finished download." loading="lazy" />
+    <div class="body">
+      <h3><a href="download-demo/index.html">download-demo</a></h3>
+      <p>
+        Search an area, estimate, download. Three real remote datasets (Fields of The World
+        Liechtenstein and Netherlands, geoBoundaries CGAZ ADM2), both bundled writers, the ceiling
+        refusal path, cancel, and a progress bar. The estimate reads parquet footers only — the
+        Liechtenstein one costs 2 HTTP requests.
+      </p>
+      <div class="links">
+        <a href="download-demo/index.html">Open demo →</a>
+        <button class="srcbtn" data-src="download-demo/index.html">View source</button>
+      </div>
+      <div class="pkgs">
+        <span class="pkg">@cnmw/download-core</span>
+        <span class="pkg">@cnmw/geocoder-core</span>
+        <span class="pkg">@cnmw/maplibre</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<h2>Real datasets, end to end</h2>
+<div class="grid">
+
+  <div class="card">
+    <img class="shot" src="firms-explorer/screenshot.png" alt="Map of California with fire detection points and a prune-narration panel." loading="lazy" />
+    <div class="body">
+      <h3><a href="firms-explorer/index.html">firms-explorer</a></h3>
+      <p>
+        NASA FIRMS active fire detections: 632 million rows across 27 <code>year=</code> partitions,
+        resolved straight from the collection JSON. Shows the full pruning cascade narrated stage by
+        stage — 27 files to 1 on the time filter alone — on a point dataset with no bbox covering
+        column, which the estimate says out loud.
+      </p>
+      <div class="links">
+        <a href="firms-explorer/index.html">Open demo →</a>
+        <button class="srcbtn" data-src="firms-explorer/index.html">View source</button>
+      </div>
+      <div class="pkgs">
+        <span class="pkg">@cnmw/download-core</span>
+        <span class="pkg">@cnmw/geocoder-core</span>
+        <span class="pkg">@cnmw/maplibre</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <img class="shot" src="s2-footprints/screenshot.png" alt="Map of Kenya covered in Sentinel-2 footprint rectangles." loading="lazy" />
+    <div class="body">
+      <h3><a href="s2-footprints/index.html">s2-footprints</a></h3>
+      <p>
+        “Type a country, download every Sentinel-2 scene footprint over it.” 30.4M STAC-GeoParquet
+        item rows; a whole country with no time window trips the ceiling and waits for an explicit
+        <code>acceptCeiling()</code>, and the fat <code>assets</code> column is excluded by default
+        so a footprint download does not pay for it.
+      </p>
+      <div class="links">
+        <a href="s2-footprints/index.html">Open demo →</a>
+        <button class="srcbtn" data-src="s2-footprints/index.html">View source</button>
+      </div>
+      <div class="pkgs">
+        <span class="pkg">@cnmw/download-core</span>
+        <span class="pkg">@cnmw/geocoder-core</span>
+        <span class="pkg">@cnmw/maplibre</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<h2>Verifying them yourself</h2>
+<p style="font-size:13.5px;color:#333;margin:0 0 12px;">
+  Each demo ships a Playwright script that drives it against live data and regenerates the
+  screenshot above. Start <code>serve.py</code> first, then pass it the port:
+</p>
+<table>
+  <thead><tr><th>Command</th><th>What it proves</th></tr></thead>
+  <tbody>
+    <tr><td><code>node examples/quickstart/verify.mjs 8000</code></td><td>The README quickstart loads the live index, searches, selects, and renders attribution.</td></tr>
+    <tr><td><code>node examples/geocoder-demo/verify-live.mjs 8000</code></td><td>ADM0, ADM1 and ADM2 all resolve against the published catalog, with real network timings.</td></tr>
+    <tr><td><code>node examples/geocoder-demo/verify-progressive.mjs 8000</code></td><td><code>resolution: 'both'</code> returns early and upgrades <code>filterGeometry</code> in the background.</td></tr>
+    <tr><td><code>node examples/upload-demo/verify.mjs 8000</code></td><td>Antimeridian search + a repaired GeoJSON upload, both drawn through the OpenLayers adapter.</td></tr>
+    <tr><td><code>node examples/download-demo/verify.mjs 8000</code></td><td>estimate() then a real GeoJSON <em>and</em> GeoParquet download of FTW Liechtenstein.</td></tr>
+    <tr><td><code>node examples/firms-explorer/verify.mjs 8000</code></td><td>Collection-JSON resolution, partition pruning, and a real download from a 632M-row table.</td></tr>
+    <tr><td><code>node examples/s2-footprints/verify.mjs 8000</code></td><td>The ceiling refusal, <code>acceptCeiling()</code>, and the default column projection.</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  <a href="../README.md">Project README</a> ·
+  <a href="../AGENTS.md">AGENTS.md</a> (recipes for AI agents) ·
+  <a href="../docs/design/widgets-architecture.md">Architecture &amp; API design</a> ·
+  <a href="../PLAN.md">PLAN.md</a><br />
+  Code MIT. Data licensing is per catalog: geoBoundaries CGAZ is CC-BY-4.0, the Overture
+  gazetteer is ODbL-1.0 (share-alike) — each manifest carries the attribution its widgets must show.
+</footer>
+
+</div>
+
+<dialog id="srcDialog">
+  <div class="dlg-head">
+    <strong id="srcPath"></strong>
+    <span class="actions">
+      <a id="srcRaw" href="#" target="_blank" rel="noopener">Open raw</a>
+      <button id="srcCopy" type="button">Copy</button>
+      <button id="srcClose" type="button">Close</button>
+    </span>
+  </div>
+  <pre class="src" id="srcBody">Loading…</pre>
+</dialog>
+
+<script type="module">
+// "View source" without view-source: (browsers block navigating to it from
+// a link). These pages are plain static files on the same origin, so a
+// fetch + <pre> is both simpler and copy-pasteable.
+const dialog = document.getElementById('srcDialog');
+const pathEl = document.getElementById('srcPath');
+const bodyEl = document.getElementById('srcBody');
+const rawEl = document.getElementById('srcRaw');
+
+for (const button of document.querySelectorAll('.srcbtn')) {
+  button.addEventListener('click', async () => {
+    const src = button.dataset.src;
+    pathEl.textContent = `examples/${src}`;
+    rawEl.href = src;
+    bodyEl.textContent = 'Loading…';
+    dialog.showModal();
+    try {
+      const res = await fetch(src);
+      bodyEl.textContent = res.ok ? await res.text() : `HTTP ${res.status} fetching ${src}`;
+    } catch (err) {
+      bodyEl.textContent = `Could not read ${src}: ${err.message}\n\nOpen the file directly instead.`;
+    }
+  });
+}
+
+document.getElementById('srcClose').addEventListener('click', () => dialog.close());
+document.getElementById('srcCopy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(bodyEl.textContent);
+    const btn = document.getElementById('srcCopy');
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+  } catch {
+    /* clipboard blocked (insecure origin / no permission) -- the text is selectable anyway */
+  }
+});
+</script>
+</body>
+</html>
