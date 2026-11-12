@@ -1,0 +1,37 @@
+{
+  "name": "@cnmw/raster-core",
+  "version": "0.1.0",
+  "description": "In-browser raster clip-and-download: windowed reads from remote COGs (geotiff.js over HTTP ranges), band subsetting from STAC band metadata, an exact pre-download size estimate with a memory ceiling, and a dependency-free GeoTIFF writer that preserves dtype and georeferencing.",
+  "keywords": [
+    "cog",
+    "geotiff",
+    "raster",
+    "clip",
+    "stac",
+    "portolan",
+    "range-requests",
+    "cloud-native",
+    "cnmw"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "private": true,
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@cnmw/spec": "0.1.0"
+  },
+  "devDependencies": {
+    "geotiff": "2.1.3",
+    "zstddec": "0.1.0"
+  }
+}
