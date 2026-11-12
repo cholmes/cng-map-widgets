@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cnmw quickstart — geocoder on a map, no build, no server</title>
+
+<!-- A map library. Any MapLibre 4 or 5 build works; this one is pinned. -->
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+<!--
+  The @cnmw packages are plain ESM with no build step, so an import map is
+  all the wiring there is. Nothing is on npm yet, so these point at this
+  repo's own packages/ directory. When the packages publish, this block is
+  the ONLY thing that changes -- swap each line for
+  https://cdn.jsdelivr.net/npm/@cnmw/<name>@0.1.0/src/index.js
+  and the module code below is untouched.
+
+  hyparquet is NOT in this map: @cnmw/geocoder-core imports it itself from
+  a pinned, exact CDN URL (packages/geocoder-core/src/cdn.js).
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cnmw/spec": "../../packages/spec/src/index.js",
+    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cnmw/maplibre": "../../packages/maplibre/src/index.js"
+  }
+}
+</script>
+
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #status {
+    position: absolute; bottom: 12px; left: 12px; z-index: 5;
+    background: rgba(255, 255, 255, 0.92); padding: 6px 10px;
+    border-radius: 4px; font-size: 12px; max-width: 460px;
+  }
+  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="status">Loading…</div>
+
+<script type="module">
+import { Geocoder } from '@cnmw/geocoder-core';
+import { GeocoderControl } from '@cnmw/maplibre';
+
+const status = document.getElementById('status');
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: [10, 25],
+  zoom: 2,
+});
+
+// The live, published geoBoundaries gazetteer: 52,398 named admin units
+// across ADM0/1/2, CC-BY-4.0. Static files on object storage -- there is
+// no API and no server anywhere in this page.
+const geocoder = new Geocoder({
+  indexUrl: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json',
+  limit: 8,
+  // Show the small pre-simplified outline immediately, then upgrade the
+  // filter geometry from the full-resolution file in the background.
+  geometry: { resolution: 'both' },
+});
+
+geocoder.on('load', (info) => {
+  status.textContent = `Index ready: ${info.rows.toLocaleString()} places, levels ${info.levels.join('/')}, ${info.strategy}-load in ${info.loadMs.toFixed(0)} ms. Try "contra costa".`;
+});
+geocoder.on('select', ({ result, area }) => {
+  status.textContent = `${result.name} (${result.country}, ADM${result.level}) — bbox [${area.bbox.map((n) => n.toFixed(2)).join(', ')}], ${area.vertexCount.display} vertices. area.filterGeometry is ready for @cnmw/download-core.`;
+});
+geocoder.on('error', (err) => { status.textContent = `${err.code}: ${err.message}`; });
+
+// The control owns the combobox, the outline layer, fitBounds and the
+// attribution line. The index is fetched lazily on first focus.
+const control = new GeocoderControl({ geocoder, placeholder: 'Search for a place…' });
+
+map.on('load', () => {
+  map.addControl(control, 'top-left');
+  status.textContent = 'Click the search box to load the place index (lazy, on focus).';
+});
+
+// Handy for the console / for automated checks.
+window.__cnmwQuickstart = { map, geocoder, control };
+</script>
+</body>
+</html>

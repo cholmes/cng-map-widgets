@@ -157,8 +157,18 @@ async function loadDataset() {
 }
 
 // --- Area (search reuses @cnmw/geocoder-core + @cnmw/maplibre, pointed at
-// the provisional geocoder-demo index via a relative path, same convention
-// as examples/download-demo) ----------------------------------------------
+// the LIVE published geoBoundaries gazetteer, same convention as
+// examples/download-demo) -------------------------------------------------
+//
+// Default: the published portolan-mirrors/geoboundaries-catalog manifest
+// (52,398 names, ADM0/1/2, CC-BY-4.0) -- so this page works from a fresh
+// clone, and so an ADM1 query like "california" resolves at all (the
+// provisional local build has no level-1 data). `?index=local` falls back
+// to examples/geocoder-demo/data/index.json, which is gitignored.
+const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+const indexUrl = new URLSearchParams(location.search).get('index') === 'local'
+  ? '../geocoder-demo/data/index.json'
+  : LIVE_INDEX_URL;
 
 let area = null; // null = "no area" (whole world, within the time window)
 const map = new maplibregl.Map({

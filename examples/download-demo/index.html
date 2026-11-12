@@ -191,7 +191,17 @@ function currentEntry() {
 }
 
 // --- Area (search reuses @cnmw/geocoder-core + @cnmw/maplibre, pointed at
-// the provisional geocoder-demo index via a relative path) -------------
+// the LIVE published geoBoundaries gazetteer) --------------------------
+//
+// Default: the published portolan-mirrors/geoboundaries-catalog manifest
+// (52,398 names, ADM0/1/2, CC-BY-4.0) -- so this page works from a fresh
+// clone with nothing built locally. `?index=local` falls back to
+// examples/geocoder-demo/data/index.json, the provisional offline build,
+// which is gitignored (see that directory's build-data.sql to rebuild it).
+const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+const indexUrl = new URLSearchParams(location.search).get('index') === 'local'
+  ? '../geocoder-demo/data/index.json'
+  : LIVE_INDEX_URL;
 
 let area = null; // null = "no area" (whole dataset)
 const map = new maplibregl.Map({
@@ -201,7 +211,7 @@ const map = new maplibregl.Map({
   zoom: 10,
 });
 
-const geocoder = new Geocoder({ indexUrl: '../geocoder-demo/data/index.json', limit: 8 });
+const geocoder = new Geocoder({ indexUrl, limit: 8 });
 geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
 geocoder.on('select', ({ result, area: selectedArea }) => {
   area = selectedArea;

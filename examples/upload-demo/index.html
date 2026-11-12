@@ -112,13 +112,21 @@ const map = new Map({
   view: new View({ center: fromLonLat([-121.9, 37.9]), zoom: 7 }),
 });
 
-// -- Geocoder (search) half: reuses examples/geocoder-demo's provisional
-// index/manifest via a relative path -- see examples/geocoder-demo/
-// build-data.sql for how to rebuild it. Proves @cnmw/openlayers'
-// GeocoderControl + projection bridge against the same data
-// geocoder-demo's MapLibre version uses.
+// -- Geocoder (search) half: proves @cnmw/openlayers' GeocoderControl +
+// projection bridge against the same gazetteer geocoder-demo's MapLibre
+// version uses.
+//
+// Default: the LIVE published geoBoundaries gazetteer manifest (52,398
+// names, ADM0/1/2, CC-BY-4.0) -- so this page works from a fresh clone.
+// `?index=local` falls back to examples/geocoder-demo/data/index.json,
+// the provisional offline build, which is gitignored.
+const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+const indexUrl = new URLSearchParams(location.search).get('index') === 'local'
+  ? '../geocoder-demo/data/index.json'
+  : LIVE_INDEX_URL;
+
 const geocoder = new Geocoder({
-  indexUrl: '../geocoder-demo/data/index.json',
+  indexUrl,
   limit: 8,
 });
 geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
