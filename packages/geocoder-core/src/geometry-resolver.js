@@ -21,9 +21,36 @@
 // not hardcoded: see `resolveJoinKey` below for why (CGAZ ADM0 has no
 // shapeID column at all, so that level's manifest entry joins on country
 // instead).
+//
+// STEP 1 -- the geometry_ref fast path (design doc §6.2/§6.4 amendments).
+// Measured live against the published geoboundaries-catalog, the stats-
+// pruning scan above is genuinely slow: the catalog's boundary files are
+// Hilbert-sorted for compactness, not sorted by (country, feature_id), so
+// row-group statistics prune weakly (e.g. 34 of 55 candidate groups survive
+// pruning for Canada's ADM0 row) and `select()` -> outline took 5.6-28.2s
+// live. `geometry_ref` -- a `{file, row_group, row}` pointer a names-index
+// row carries straight to its physical offset in the boundary file -- turns
+// that into one exactly-sized range read. It is advisory, never
+// authoritative (this is the whole point: the boundary files are not
+// globally sorted, so nothing guarantees the pointer still lines up if the
+// boundary file is rebuilt independently of the index), so
+// `geometryRefRowRange` below never trusts it blindly -- it recomputes the
+// row group from `row` and the manifest's own `row_group_rows` and refuses
+// the ref outright if the two disagree -- and `resolveGeometry` always
+// verifies the fetched row's join key against `result` before returning its
+// geometry, falling back to the stats-pruning scan (now with bounded
+// concurrency, see `firstMatch`) on any mismatch.
 
 import { CnmwError, wkbToGeoJson, wkbToGeoJsonAsync } from '@cnmw/spec';
 import { loadHyparquet } from './cdn.js';
+
+/** How many candidate row groups the stats-pruning fallback reads at once
+ * (task: "bounded concurrency (~4-6)"). This path is now a rare safety net
+ * -- the common case resolves through the geometry_ref fast path above and
+ * never reaches it -- so the number only matters when a mirror has no
+ * geometry_ref, a stale one, or an unsorted boundary file wide open after a
+ * version skew. */
+const FALLBACK_CONCURRENCY = 5;
 
 /**
  * Pure decision logic for which boundary-file column, and which value off
@@ -62,12 +89,113 @@ export function resolveJoinKey(entry = {}, result) {
 }
 
 /**
- * Open a boundary file's footer and build per-row-group (country, join)
- * statistics for the two-level narrowing described above. The country
- * column is always scanned, because it narrows at every level (it IS the
- * join column at level 0, per `resolveJoinKey` above, and a cheap extra
- * narrowing pass at every other level); the join column is only scanned
- * again when it differs from the country column.
+ * Coerce a value that should be a non-negative row/row-group index to a
+ * plain `number`, or `null` if it isn't safely one. `geometry_ref.row` is
+ * parquet `INT64`, and hyparquet decodes `INT64` as `BigInt` (not `number`)
+ * -- confirmed directly against the live geoboundaries-catalog index, e.g.
+ * `{ row: 10992n }` -- so treating it as already a `number` (as a naive
+ * `Number.isInteger(geometryRef.row)` check would) silently fails on every
+ * real row and the fast path never fires at all, which is exactly the
+ * measured-slow behaviour this whole task exists to fix. `row_group`
+ * (`INT32`) decodes as an ordinary `number` today, but is accepted as
+ * `BigInt` too for the same reason, defensively.
+ * @param {unknown} value
+ * @returns {number | null}
+ */
+function toSafeInt(value) {
+  if (typeof value === 'number') return Number.isInteger(value) && value >= 0 ? value : null;
+  if (typeof value === 'bigint') return value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+  return null;
+}
+
+/**
+ * Validate a `geometry_ref`'s row-group arithmetic against the manifest's
+ * declared `row_group_rows` for this level, and return the single-row
+ * `[rowStart, rowEnd)` range to range-read. Pure and synchronous -- no
+ * network, no hyparquet -- so the arithmetic is unit-testable on its own.
+ *
+ * Returns `null` (never trust the ref, skip straight to the fallback scan)
+ * when: there is no ref; `row` is missing, not an integer, negative, or too
+ * large to convert from `BigInt` without losing precision (see
+ * `toSafeInt`); `rowGroupRows` is not a positive integer (an older manifest
+ * with no `boundaries[].row_group_rows` declared); or the ref's own
+ * `row_group` disagrees with `floor(row / rowGroupRows)` -- a corrupt or
+ * incompatibly-rebuilt pointer is exactly the case this check exists to
+ * catch *before* spending a network round trip on it.
+ *
+ * @param {{ row?: number|bigint, rowGroup?: number|bigint } | undefined | null} geometryRef
+ * @param {number} rowGroupRows
+ * @returns {{ rowStart: number, rowEnd: number, rowGroup: number } | null}
+ */
+export function geometryRefRowRange(geometryRef, rowGroupRows) {
+  if (!geometryRef) return null;
+  const row = toSafeInt(geometryRef.row);
+  if (row === null) return null;
+  if (!Number.isInteger(rowGroupRows) || rowGroupRows <= 0) return null;
+  const computedRowGroup = Math.floor(row / rowGroupRows);
+  const refRowGroup = toSafeInt(geometryRef.rowGroup);
+  if (refRowGroup !== null && refRowGroup !== computedRowGroup) {
+    return null; // the ref's own bookkeeping is inconsistent -- do not trust it at all
+  }
+  return { rowStart: row, rowEnd: row + 1, rowGroup: computedRowGroup };
+}
+
+/**
+ * Run `task(item)` over `items` with at most `concurrency` in flight at
+ * once, stop dispatching further items the moment one returns a non-null
+ * result, and resolve to that first match (or `null` if every item was
+ * tried with no match). Pure control flow -- `task` is the only
+ * side-effecting part -- so it's unit-testable with a fake `task` and no
+ * network at all.
+ *
+ * Honest limit, not papered over: this stops *starting new work* and
+ * ignores late results from tasks already in flight, which is what
+ * actually saves bytes/requests in the common case (a match is usually
+ * found within the first `concurrency` candidates, so the remaining
+ * candidates -- up to all 55 of them for a weakly-pruned ADM0 query -- are
+ * never even requested). It does not reach into an in-flight `task` call
+ * and cancel its own network request; `task` is responsible for threading
+ * any cooperative-cancellation signal it wants through to its own fetch.
+ * A `task` that throws for a reason other than "no match" (a real network
+ * failure) fails the whole call, matching the pre-existing sequential
+ * scan's behaviour of not swallowing a read error on any one candidate.
+ *
+ * @template T, R
+ * @param {readonly T[]} items
+ * @param {number} concurrency
+ * @param {(item: T) => Promise<R | null>} task
+ * @returns {Promise<R | null>}
+ */
+export async function firstMatch(items, concurrency, task) {
+  let cursor = 0;
+  let winner = null;
+  let settled = false;
+
+  async function worker() {
+    for (;;) {
+      if (settled) return;
+      const i = cursor++;
+      if (i >= items.length) return;
+      const result = await task(items[i]);
+      if (result != null && !settled) {
+        settled = true;
+        winner = result;
+      }
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return winner;
+}
+
+/**
+ * Open a boundary file's footer -- just the file handle and parsed
+ * metadata, no per-row-group statistics. Both the fast path and the
+ * fallback need this (the version-skew check reads footer key-value
+ * metadata regardless of which path resolves the geometry); building the
+ * candidate-group statistics (`buildGroups`) is deferred to the fallback
+ * alone, since the fast path's common case never needs them.
  * @param {string} url
  * @param {typeof fetch} fetchImpl
  * @param {AbortSignal} [signal] threaded into every range-fetch `requestInit`
@@ -75,10 +203,8 @@ export function resolveJoinKey(entry = {}, result) {
  *   in-flight read (used by the progressive `select({ resolution: 'both' })`
  *   background upgrade to cancel a superseded fetch -- design doc task
  *   "a new select() supersedes the pending background upgrade").
- * @param {{ countryColumn: string, joinColumn: string }} columns
  */
-async function openBoundaryIndex(url, fetchImpl, signal, columns) {
-  const { countryColumn, joinColumn } = columns;
+async function openBoundaryFile(url, fetchImpl, signal) {
   const { hyparquet } = await loadHyparquet();
   const file = await hyparquet.asyncBufferFromUrl({ url, fetch: fetchImpl, requestInit: { cache: 'no-store', signal } });
   // `geoparquet: false`: hyparquet >=1.x auto-detects GeoParquet's `geo`
@@ -93,6 +219,19 @@ async function openBoundaryIndex(url, fetchImpl, signal, columns) {
   // it that way instead of two independent decoders fighting over one
   // column.
   const metadata = await hyparquet.parquetMetadataAsync(file, { geoparquet: false });
+  const catalogVersion = metadata.key_value_metadata?.find((kv) => kv.key === 'cnmw:catalog_version')?.value ?? null;
+  return { url, file, metadata, catalogVersion };
+}
+
+/**
+ * Build per-row-group (country, join) statistics from an already-fetched
+ * footer, for the two-level narrowing described at the top of this file.
+ * Pure and synchronous: no network, because `metadata` is already in hand
+ * by the time this is called (the fallback path only).
+ * @param {object} metadata parsed parquet metadata (hyparquet's shape).
+ * @param {{ countryColumn: string, joinColumn: string }} columns
+ */
+function buildGroups(metadata, { countryColumn, joinColumn }) {
   const groups = [];
   let rowStart = 0;
   for (const rg of metadata.row_groups) {
@@ -111,8 +250,7 @@ async function openBoundaryIndex(url, fetchImpl, signal, columns) {
     });
     rowStart += numRows;
   }
-  const catalogVersion = metadata.key_value_metadata?.find((kv) => kv.key === 'cnmw:catalog_version')?.value ?? null;
-  return { url, file, metadata, groups, catalogVersion };
+  return groups;
 }
 
 /** Candidate groups whose [min,max] range could contain `value`. */
@@ -124,12 +262,44 @@ function candidatesFor(groups, minKey, maxKey, value) {
 }
 
 /**
+ * Fetch the `geometry` column for exactly one absolute row and decode it,
+ * reusing the already-open file handle and already-fetched join-column
+ * match (for the `bbox`). Shared by both the fast path and the fallback,
+ * since once either has located the row, finishing the read is identical.
+ */
+async function fetchMatchedGeometry({ hyparquet, compressors, file, metadata, absoluteRow, match, boundaryUrl, options }) {
+  options.signal?.throwIfAborted();
+  // Pass 2: fetch just the `geometry` column for that single row, with
+  // `utf8: false` -- geometry is WKB, not text, and hyparquet's default
+  // BYTE_ARRAY->string conversion would otherwise mangle it into a JS
+  // string (one UTF-16 code unit per raw byte), corrupting the WKB. This is
+  // the one column this read needs raw bytes for, so it is isolated into
+  // its own narrow read rather than disabling utf8 conversion file-wide
+  // (which would also break the join column).
+  const geomRows = await hyparquet.parquetReadObjects({
+    file,
+    metadata,
+    columns: ['geometry'],
+    rowStart: absoluteRow,
+    rowEnd: absoluteRow + 1,
+    utf8: false,
+    compressors,
+  });
+  const geometry = options.decodeAsync
+    ? await wkbToGeoJsonAsync(geomRows[0].geometry, { signal: options.signal })
+    : wkbToGeoJson(geomRows[0].geometry);
+  const bbox = match.bbox ? [match.bbox.xmin, match.bbox.ymin, match.bbox.xmax, match.bbox.ymax] : undefined;
+  return { geometry, bbox, boundaryUrl };
+}
+
+/**
  * Fetch and verify the geometry for one search result, per §6.4's
- * resolution order (steps 2-3; step 1's `geometry_ref` fast path is not
- * implemented in this provisional build -- see geocoder-core's README
- * note / the task handback report).
+ * resolution order: step 1 tries the `geometry_ref` fast path (verified
+ * before being trusted); steps 2-3 are the stats-pruning fallback,
+ * scanned with bounded concurrency, used when there is no usable ref or
+ * the fetched row's join key doesn't match.
  *
- * @param {{ featureId: string|null, country: string, level: number }} result
+ * @param {{ featureId: string|null, country: string, level: number, geometryRef?: { file: string, rowGroup: number, row: number } }} result
  * @param {string} boundaryUrl
  * @param {string|null} expectedCatalogVersion
  * @param {typeof fetch} fetchImpl
@@ -141,8 +311,8 @@ function candidatesFor(groups, minKey, maxKey, value) {
  *   display-simplified path. `signal` cancels the fetch and is checked between decode chunks.
  *   `entry` is the manifest's `boundaries[]` entry for this result's level (see
  *   `resolveJoinKey`); omitted, every level behaves as it did before `index_key_column`/
- *   `country_column` existed (join on `feature_id_column` default `"feature_id"`, narrow on
- *   `country_column` default `"country"`).
+ *   `country_column`/`row_group_rows` existed (join on `feature_id_column` default `"feature_id"`,
+ *   narrow on `country_column` default `"country"`, no fast path).
  * @returns {Promise<{ geometry: GeoJSON.Polygon|GeoJSON.MultiPolygon, bbox?: [number,number,number,number], boundaryUrl: string }>}
  */
 export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersion, fetchImpl, onVersionSkew, onWarning, options = {}) {
@@ -150,68 +320,82 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
   const entry = options.entry ?? {};
   const countryColumn = entry.country_column ?? 'country';
   const { column: joinColumn, value: joinValue } = resolveJoinKey(entry, result);
-  const handle = await openBoundaryIndex(boundaryUrl, fetchImpl, options.signal, { countryColumn, joinColumn });
 
-  if (expectedCatalogVersion && handle.catalogVersion && handle.catalogVersion !== expectedCatalogVersion) {
-    const message = `Boundary file catalog_version (${handle.catalogVersion}) does not match the index's (${expectedCatalogVersion}).`;
+  const { file, metadata, catalogVersion } = await openBoundaryFile(boundaryUrl, fetchImpl, options.signal);
+
+  if (expectedCatalogVersion && catalogVersion && catalogVersion !== expectedCatalogVersion) {
+    const message = `Boundary file catalog_version (${catalogVersion}) does not match the index's (${expectedCatalogVersion}).`;
     if (onVersionSkew === 'error') {
       throw new CnmwError(message, 'INDEX_VERSION_MISMATCH', {
-        context: { indexCatalogVersion: expectedCatalogVersion, boundaryCatalogVersion: handle.catalogVersion },
+        context: { indexCatalogVersion: expectedCatalogVersion, boundaryCatalogVersion: catalogVersion },
       });
     }
     if (onVersionSkew === 'warn') {
-      onWarning?.({ code: 'INDEX_VERSION_MISMATCH', message, detail: { indexCatalogVersion: expectedCatalogVersion, boundaryCatalogVersion: handle.catalogVersion } });
+      onWarning?.({ code: 'INDEX_VERSION_MISMATCH', message, detail: { indexCatalogVersion: expectedCatalogVersion, boundaryCatalogVersion: catalogVersion } });
     }
   }
 
-  const byCountry = candidatesFor(handle.groups, 'countryMin', 'countryMax', result.country);
-  const pool = byCountry.length > 0 ? byCountry : handle.groups.map((_, i) => i);
-  const byJoin = pool.filter((i) => {
-    const g = handle.groups[i];
-    return g.joinMin <= joinValue && joinValue <= g.joinMax;
-  });
+  // STEP 1: the geometry_ref fast path. `entry.row_group_rows` only exists
+  // on a manifest that declares it (geoboundaries-catalog's does, per
+  // level); its absence -- an older or differently-shaped manifest --
+  // means `range` comes back null and this block is a no-op, falling
+  // straight through to the pre-existing stats-pruning scan with no
+  // behaviour change.
+  const range = geometryRefRowRange(result.geometryRef, entry.row_group_rows);
+  if (range) {
+    options.signal?.throwIfAborted();
+    const rows = await hyparquet.parquetReadObjects({
+      file,
+      metadata,
+      columns: [joinColumn, 'bbox'],
+      rowStart: range.rowStart,
+      rowEnd: range.rowEnd,
+      compressors,
+    });
+    const match = rows[0];
+    if (match && match[joinColumn] === joinValue) {
+      return fetchMatchedGeometry({ hyparquet, compressors, file, metadata, absoluteRow: range.rowStart, match, boundaryUrl, options });
+    }
+    // Never trust the hint past this point for this call: the row it named
+    // didn't carry the expected join key (a version-skewed/rebuilt
+    // boundary file, or a stale cached ref), so fall through to the scan
+    // below exactly as if there had been no geometry_ref at all.
+    onWarning?.({
+      code: 'GEOMETRY_REF_MISMATCH',
+      message: `geometry_ref for "${joinValue}" pointed at row ${range.rowStart}, which did not carry the expected "${joinColumn}"; falling back to a stats-pruning scan.`,
+      detail: { featureId: result.featureId, joinColumn, joinValue, geometryRef: result.geometryRef, boundaryUrl },
+    });
+  }
+
+  // STEPS 2-3: stats-pruning fallback, scanned with bounded concurrency
+  // instead of sequentially (task: "~4-6 concurrent, stop on first match").
+  const groups = buildGroups(metadata, { countryColumn, joinColumn });
+  const byCountry = candidatesFor(groups, 'countryMin', 'countryMax', result.country);
+  const pool = byCountry.length > 0 ? byCountry : groups.map((_, i) => i);
+  const byJoin = pool.filter((i) => groups[i].joinMin <= joinValue && joinValue <= groups[i].joinMax);
   const candidateGroupIndices = byJoin.length > 0 ? byJoin : pool;
 
-  for (const gi of candidateGroupIndices) {
-    const g = handle.groups[gi];
-    // Pass 1: locate the exact row within this group using the
-    // *string* columns only (the join column, bbox) -- hyparquet's
-    // default `utf8: true` conversion is correct and cheap for these.
-    const rows = await hyparquet.parquetReadObjects({
-      file: handle.file,
-      metadata: handle.metadata,
+  const winner = await firstMatch(candidateGroupIndices, FALLBACK_CONCURRENCY, async (gi) => {
+    options.signal?.throwIfAborted();
+    const g = groups[gi];
+    // Pass 1: locate the exact row within this group using the *string*
+    // columns only (the join column, bbox) -- hyparquet's default
+    // `utf8: true` conversion is correct and cheap for these.
+    const rowsInGroup = await hyparquet.parquetReadObjects({
+      file,
+      metadata,
       columns: [joinColumn, 'bbox'],
       rowStart: g.rowStart,
       rowEnd: g.rowEnd,
       compressors,
     });
-    const localIndex = rows.findIndex((r) => r[joinColumn] === joinValue);
-    if (localIndex !== -1) {
-      const absoluteRow = g.rowStart + localIndex;
-      // Pass 2: fetch just the `geometry` column for that single row,
-      // with `utf8: false` -- geometry is WKB, not text, and hyparquet's
-      // default BYTE_ARRAY->string conversion would otherwise mangle it
-      // into a JS string (one UTF-16 code unit per raw byte), corrupting
-      // the WKB. This is the one column this read needs raw bytes for,
-      // so it is isolated into its own narrow read rather than disabling
-      // utf8 conversion file-wide (which would also break feature_id).
-      options.signal?.throwIfAborted();
-      const geomRows = await hyparquet.parquetReadObjects({
-        file: handle.file,
-        metadata: handle.metadata,
-        columns: ['geometry'],
-        rowStart: absoluteRow,
-        rowEnd: absoluteRow + 1,
-        utf8: false,
-        compressors,
-      });
-      const geometry = options.decodeAsync
-        ? await wkbToGeoJsonAsync(geomRows[0].geometry, { signal: options.signal })
-        : wkbToGeoJson(geomRows[0].geometry);
-      const match = rows[localIndex];
-      const bbox = match.bbox ? [match.bbox.xmin, match.bbox.ymin, match.bbox.xmax, match.bbox.ymax] : undefined;
-      return { geometry, bbox, boundaryUrl };
-    }
+    const localIndex = rowsInGroup.findIndex((r) => r[joinColumn] === joinValue);
+    if (localIndex === -1) return null;
+    return { absoluteRow: g.rowStart + localIndex, match: rowsInGroup[localIndex] };
+  });
+
+  if (winner) {
+    return fetchMatchedGeometry({ hyparquet, compressors, file, metadata, absoluteRow: winner.absoluteRow, match: winner.match, boundaryUrl, options });
   }
 
   throw new CnmwError(`Feature "${joinValue}" not found in boundary file (joined on "${joinColumn}").`, 'GEOMETRY_NOT_FOUND', {

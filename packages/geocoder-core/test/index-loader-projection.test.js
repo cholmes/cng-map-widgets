@@ -55,6 +55,25 @@ test('loadFullIndex: geoboundaries-catalog shape -- shape_id aliased to feature_
   assert.equal('shape_id' in result.rows[0], false);
 });
 
+test('loadFullIndex: geometry_ref (the select() fast-path pointer) survives column projection untouched', async () => {
+  // design doc §6.2/§6.4: geometry_ref is a new optional column, projected
+  // through unchanged by both load paths -- this is loadFullIndex's half
+  // of that contract (searchRangeIndex shares the same projectRow()).
+  const rows = [
+    {
+      name: 'Kisumu', name_norm: 'kisumu', level: 2, country: 'KEN',
+      shape_id: '19177384B123', bbox: { xmin: 0, ymin: 0, xmax: 1, ymax: 1 },
+      geometry_ref: { file: 'cgaz_adm2.parquet', row_group: 12, row: 6177 },
+    },
+  ];
+  setHyparquetModules(fakeHyparquet(rows));
+  const result = await loadFullIndex('https://example.test/index.parquet', fakeFetch(), {
+    featureIdColumn: 'shape_id',
+    defaultSource: 'geoboundaries-cgaz',
+  });
+  assert.deepEqual(result.rows[0].geometry_ref, { file: 'cgaz_adm2.parquet', row_group: 12, row: 6177 });
+});
+
 test('loadFullIndex: a row that already has its own "source" column is never overwritten by defaultSource', async () => {
   const rows = [{ name: 'X', name_norm: 'x', level: 0, country: 'ZZZ', shape_id: 'id1', source: 'row-level-source', bbox: { xmin: 0, ymin: 0, xmax: 1, ymax: 1 } }];
   setHyparquetModules(fakeHyparquet(rows));
