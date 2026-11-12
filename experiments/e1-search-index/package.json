@@ -1,0 +1,15 @@
+{
+  "name": "e1-search-index",
+  "private": true,
+  "type": "module",
+  "description": "E1 static autocomplete index benchmark harness. These devDependencies are only for local API/README inspection -- the actual browser pages (public/, bench/) import hyparquet, hyparquet-compressors and @duckdb/duckdb-wasm from jsdelivr at pinned versions (see public/lib/common.js CDN map), no build step.",
+  "scripts": {
+    "bench": "node bench/run-bench.mjs"
+  },
+  "devDependencies": {
+    "@duckdb/duckdb-wasm": "1.29.0",
+    "hyparquet": "1.33.0",
+    "hyparquet-compressors": "1.1.3",
+    "playwright": "1.65.0"
+  }
+}

@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>E1 autocomplete index — interactive demo</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #151823;
+    --border: #262b3a;
+    --text: #e7e9ee;
+    --muted: #8b92a5;
+    --accent: #5fb3ff;
+    --good: #5fd98a;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    padding: 24px 16px 64px;
+  }
+  main { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .config {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  input[type=text], select {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .search-box {
+    font-size: 18px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+  }
+  .panels {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .panel h2 {
+    font-size: 14px;
+    margin: 0 0 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .timing {
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .timing.good { color: var(--good); }
+  .timing.bad { color: var(--bad); }
+  .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .results { margin-top: 10px; max-height: 240px; overflow-y: auto; }
+  .result-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .result-row .lvl {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .status { font-size: 12px; color: var(--muted); margin-top: 4px; min-height: 16px; }
+  .badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background: #22283a;
+    color: var(--muted);
+  }
+  .err { color: var(--bad); font-size: 12px; }
+  footer { color: var(--muted); font-size: 11px; margin-top: 30px; }
+  code { background: #1c2030; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>E1 — static autocomplete index: live demo</h1>
+  <p class="sub">
+    Compares three approaches to name search over the provisional
+    geoBoundaries CGAZ index (ADM0 + ADM2, ~49.5K rows) in real time.
+    Type below to drive all three at once. See <code>../RESULTS.md</code>
+    for the scripted benchmark numbers.
+  </p>
+
+  <div class="config">
+    <div>
+      <label for="indexUrl">Index URL (full-load / range-request)</label>
+      <select id="indexUrl">
+        <option value="../data/index-provisional-rg8192.parquet" selected>local: rg8192 (recommended)</option>
+        <option value="../data/index-provisional-rg2048.parquet">local: rg2048</option>
+        <option value="../data/index-provisional-single.parquet">local: single row group</option>
+      </select>
+    </div>
+    <div>
+      <label for="duckdbUrl">DuckDB-WASM baseline source (remote)</label>
+      <select id="duckdbUrl">
+        <option value="https://data.source.coop/tge-labs/admin-boundaries/geoBoundaries/geoBoundariesCGAZ_ADM2.parquet" selected>remote tge-labs ADM2 (97MB, single row group)</option>
+      </select>
+    </div>
+  </div>
+
+  <input id="search" class="search-box" type="text" placeholder="Type a place name… (e.g. san f, contra costa, ber)" autocomplete="off" />
+  <div class="status" id="globalStatus">Loading full index for approach (a) and (b)…</div>
+
+  <div class="panels">
+    <section class="panel">
+      <h2>(a) full-load <span class="badge" id="fullBadge">—</span></h2>
+      <div class="timing" id="fullTiming">—</div>
+      <div class="meta" id="fullMeta"></div>
+      <div class="results" id="fullResults"></div>
+    </section>
+
+    <section class="panel">
+      <h2>(b) range-request <span class="badge" id="rangeBadge">—</span></h2>
+      <div class="timing" id="rangeTiming">—</div>
+      <div class="meta" id="rangeMeta"></div>
+      <div class="results" id="rangeResults"></div>
+    </section>
+
+    <section class="panel">
+      <h2>(c) duckdb-wasm baseline <span class="badge" id="duckdbBadge">—</span></h2>
+      <div class="timing" id="duckdbTiming">—</div>
+      <div class="meta" id="duckdbMeta"></div>
+      <div class="results" id="duckdbResults"></div>
+    </section>
+  </div>
+
+  <footer>
+    Budgets from PLAN.md design call 9: warm per-keystroke &lt; 150ms (green),
+    cold-to-first-suggestions &lt; 1s. Index files served from
+    <code>serve.py</code> (Range-request capable) or opened directly; the
+    duckdb-wasm panel always hits the real tge-labs mirror over the network.
+  </footer>
+</main>
+
+<script type="module">
+import { loadFullIndex, searchFull } from './lib/approach-full-load.js'
+import { openRangeIndex, searchRange } from './lib/approach-range-request.js'
+import { startDuckdb, searchDuckdb } from './lib/approach-duckdb-wasm.js'
+
+const $ = (id) => document.getElementById(id)
+const statusEl = $('globalStatus')
+const searchEl = $('search')
+const indexUrlEl = $('indexUrl')
+const duckdbUrlEl = $('duckdbUrl')
+
+let fullIndex = null
+let rangeIndex = null
+let duckdbConn = null
+
+function paintTiming(prefix, ms, cls) {
+  const el = $(prefix + 'Timing')
+  el.textContent = ms == null ? '—' : `${ms.toFixed(1)} ms`
+  el.className = 'timing' + (cls ? ' ' + cls : '')
+}
+
+function classify(ms) {
+  if (ms == null) return ''
+  return ms < 150 ? 'good' : ms < 500 ? '' : 'bad'
+}
+
+function paintResults(prefix, rows) {
+  const el = $(prefix + 'Results')
+  el.innerHTML = rows
+    .slice(0, 20)
+    .map((r) => `<div class="result-row"><span>${escapeHtml(r.name)}</span><span class="lvl">L${r.level ?? ''} ${escapeHtml(r.country ?? '')}</span></div>`)
+    .join('')
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+}
+
+async function initFullAndRange() {
+  const url = indexUrlEl.value
+  statusEl.textContent = 'Loading full index…'
+  const t0 = performance.now()
+  fullIndex = await loadFullIndex(url)
+  $('fullBadge').textContent = `${(fullIndex.bytes / 1024).toFixed(0)} KB · ${fullIndex.fetchMs.toFixed(0)}+${fullIndex.decodeMs.toFixed(0)}ms`
+
+  statusEl.textContent = 'Opening range-request index (footer only)…'
+  rangeIndex = await openRangeIndex(url)
+  $('rangeBadge').textContent = `footer ${rangeIndex.footerBytes}B · ${rangeIndex.groups.length} groups`
+
+  statusEl.textContent = `Ready. Full index cold-load took ${(performance.now() - t0).toFixed(0)}ms total.`
+}
+
+async function initDuckdb() {
+  $('duckdbBadge').textContent = 'starting…'
+  try {
+    const start = await startDuckdb()
+    duckdbConn = start.conn
+    $('duckdbBadge').textContent = `cold start ${(start.instantiateMs + start.firstQueryMs).toFixed(0)}ms`
+  } catch (e) {
+    $('duckdbBadge').textContent = 'failed'
+    $('duckdbResults').innerHTML = `<div class="err">${escapeHtml(e.message)}</div>`
+  }
+}
+
+async function runSearch() {
+  const q = searchEl.value
+  if (!q) {
+    paintTiming('full', null)
+    paintTiming('range', null)
+    paintTiming('duckdb', null)
+    return
+  }
+
+  if (fullIndex) {
+    const r = searchFull(fullIndex, q)
+    paintTiming('full', r.ms, classify(r.ms))
+    $('fullMeta').textContent = `${r.count} matches`
+    paintResults('full', r.results)
+  }
+
+  if (rangeIndex) {
+    const r = await searchRange(rangeIndex, q)
+    paintTiming('range', r.ms, classify(r.ms))
+    $('rangeMeta').textContent = `${r.count} matches · ${r.groupsFetched}/${r.totalGroups} row groups · ${(r.bytes / 1024).toFixed(1)} KB`
+    paintResults('range', r.results)
+  }
+
+  if (duckdbConn) {
+    try {
+      const r = await searchDuckdb(duckdbConn, duckdbUrlEl.value, q)
+      paintTiming('duckdb', r.ms, classify(r.ms))
+      $('duckdbMeta').textContent = `${r.count} matches · ${(r.bytes / 1024 / 1024).toFixed(2)} MB`
+    } catch (e) {
+      $('duckdbMeta').textContent = 'error/timeout: ' + e.message
+    }
+  }
+}
+
+let debounceTimer = null
+searchEl.addEventListener('input', () => {
+  clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(runSearch, 10)
+})
+
+indexUrlEl.addEventListener('change', initFullAndRange)
+
+initFullAndRange()
+initDuckdb()
+</script>
+</body>
+</html>

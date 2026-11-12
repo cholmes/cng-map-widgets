@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>E1 bench runner (automated)</title>
+</head>
+<body>
+<pre id="log"></pre>
+<script type="module">
+import { loadFullIndex, searchFull } from '../public/lib/approach-full-load.js'
+import { openRangeIndex, searchRange } from '../public/lib/approach-range-request.js'
+import { startDuckdb, searchDuckdb } from '../public/lib/approach-duckdb-wasm.js'
+import { SCRIPTED_QUERIES, percentile } from '../public/lib/common.js'
+
+const params = new URLSearchParams(location.search)
+const config = {
+  indexUrl: params.get('indexUrl') || '../data/index-provisional-rg8192.parquet',
+  duckdbUrl: params.get('duckdbUrl') || 'https://data.source.coop/tge-labs/admin-boundaries/geoBoundaries/geoBoundariesCGAZ_ADM2.parquet',
+  label: params.get('label') || 'unlabeled',
+  warmRepeats: parseInt(params.get('warmRepeats') || '15', 10),
+  duckdbRepeats: parseInt(params.get('duckdbRepeats') || '5', 10),
+  approaches: (params.get('approaches') || 'a,b,c').split(','),
+}
+
+const logEl = document.getElementById('log')
+function log(msg) {
+  logEl.textContent += msg + '\n'
+  console.log(msg)
+}
+
+async function benchFull() {
+  const cold = await loadFullIndex(config.indexUrl)
+  const perQuery = {}
+  for (const q of SCRIPTED_QUERIES) {
+    const samples = []
+    let count = 0
+    for (let i = 0; i < config.warmRepeats; i++) {
+      const r = searchFull(cold, q)
+      samples.push(r.ms)
+      count = r.count
+    }
+    perQuery[q] = { p50: percentile(samples, 50), p95: percentile(samples, 95), min: Math.min(...samples), samples, count }
+  }
+  return {
+    coldFetchMs: cold.fetchMs,
+    coldDecodeMs: cold.decodeMs,
+    coldTotalMs: cold.fetchMs + cold.decodeMs,
+    bytes: cold.bytes,
+    requests: cold.requests,
+    rows: cold.rows.length,
+    perQuery,
+  }
+}
+
+async function benchRange() {
+  const idx = await openRangeIndex(config.indexUrl)
+  const perQuery = {}
+  for (const q of SCRIPTED_QUERIES) {
+    const samples = []
+    let firstMeta = null
+    let lastMeta = null
+    for (let i = 0; i < config.warmRepeats; i++) {
+      const r = await searchRange(idx, q)
+      samples.push(r.ms)
+      if (i === 0) firstMeta = r
+      lastMeta = r
+    }
+    perQuery[q] = {
+      p50: percentile(samples, 50),
+      p95: percentile(samples, 95),
+      min: Math.min(...samples),
+      samples,
+      count: lastMeta.count,
+      groupsFetched: firstMeta.groupsFetched,
+      totalGroups: firstMeta.totalGroups,
+      // bytes on the FIRST hit for this prefix (worst case / uncached).
+      // Repeats after the first often land in the browser's HTTP cache if
+      // an earlier, shorter prefix already pulled in the same row group(s)
+      // -- e.g. "s" warms the group "sa"/"san"/"san f" also need.
+      bytesFirstRun: firstMeta.bytes,
+      bytesLastRun: lastMeta.bytes,
+    }
+  }
+  return {
+    footerMs: idx.footerMs,
+    footerBytes: idx.footerBytes,
+    footerRequests: idx.footerRequests,
+    totalGroups: idx.groups.length,
+    perQuery,
+  }
+}
+
+async function benchDuckdb() {
+  const start = await startDuckdb()
+  const perQuery = {}
+  for (const q of SCRIPTED_QUERIES) {
+    const samples = []
+    let lastMeta = null
+    for (let i = 0; i < config.duckdbRepeats; i++) {
+      try {
+        const r = await searchDuckdb(start.conn, config.duckdbUrl, q)
+        samples.push(r.ms)
+        lastMeta = r
+      } catch (e) {
+        lastMeta = { error: e.message }
+      }
+    }
+    const valid = samples.filter((x) => typeof x === 'number')
+    perQuery[q] = {
+      p50: valid.length ? percentile(valid, 50) : null,
+      p95: valid.length ? percentile(valid, 95) : null,
+      min: valid.length ? Math.min(...valid) : null,
+      samples,
+      runsAttempted: config.duckdbRepeats,
+      runsOk: valid.length,
+      lastMeta,
+    }
+  }
+  return {
+    instantiateMs: start.instantiateMs,
+    firstQueryMs: start.firstQueryMs,
+    coldTotalMs: start.instantiateMs + start.firstQueryMs,
+    coldBytes: start.bytes,
+    coldRequests: start.requests,
+    perQuery,
+  }
+}
+
+async function main() {
+  const results = {
+    label: config.label,
+    indexUrl: config.indexUrl,
+    duckdbUrl: config.duckdbUrl,
+    warmRepeats: config.warmRepeats,
+    duckdbRepeats: config.duckdbRepeats,
+    userAgent: navigator.userAgent,
+    timestamp: new Date().toISOString(),
+  }
+
+  if (config.approaches.includes('a')) {
+    log('running (a) full-load...')
+    try {
+      results.fullLoad = await benchFull()
+      log('done (a)')
+    } catch (e) {
+      results.fullLoadError = String(e && e.stack || e)
+      log('(a) ERROR: ' + e.message)
+    }
+  }
+
+  if (config.approaches.includes('b')) {
+    log('running (b) range-request...')
+    try {
+      results.rangeRequest = await benchRange()
+      log('done (b)')
+    } catch (e) {
+      results.rangeRequestError = String(e && e.stack || e)
+      log('(b) ERROR: ' + e.message)
+    }
+  }
+
+  if (config.approaches.includes('c')) {
+    log('running (c) duckdb-wasm...')
+    try {
+      results.duckdbWasm = await benchDuckdb()
+      log('done (c)')
+    } catch (e) {
+      results.duckdbWasmError = String(e && e.stack || e)
+      log('(c) ERROR: ' + e.message)
+    }
+  }
+
+  window.__RESULTS__ = results
+  window.__DONE__ = true
+  log('ALL DONE')
+}
+
+main().catch((e) => {
+  window.__RESULTS__ = { error: String(e && e.stack || e) }
+  window.__DONE__ = true
+  log('FATAL: ' + e.message)
+})
+</script>
+</body>
+</html>
