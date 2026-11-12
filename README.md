@@ -7,9 +7,11 @@ Composable browser widgets for finding an area and acting on it:
   parquet plus a small JSON manifest, sitting on object storage.
 - **Or bring your own area** — drag in a GeoJSON file and get the identical
   object, repairs reported.
-- **Then download a dataset clipped to it** — any GeoParquet table, STAC
-  item collection or hive-partitioned catalog, filtered in the browser, with a
-  real pre-download estimate and a ceiling you have to explicitly override.
+- **Then download a dataset filtered to it** — any GeoParquet table, STAC
+  item collection or hive-partitioned catalog, with the spatial test run in
+  the browser, a real pre-download estimate, and a ceiling you have to
+  explicitly override. (Rows that *intersect* the area, not clipped at its
+  edge: clipping mutates features, so it is opt-in and not yet built.)
 
 **Pure static. No API, no server, no build step.** Everything runs in the
 browser against object storage over HTTP range requests. The packages are plain
@@ -277,7 +279,7 @@ silent wrong answers. Every snippet in it is executed by
 | [`docs/design/widgets-architecture.md`](docs/design/widgets-architecture.md) | **The normative API design**, ~3,000 lines, with dated amendments. If a README and this disagree, the README describes what the code does and the design doc describes what it should do. |
 | [`PLAN.md`](PLAN.md) | The experiment plan, data-source decisions, and current status. |
 | [`experiments/*/RESULTS.md`](experiments/) | The measurements behind the design calls: data recon, the search-index benchmark, the ADM3/4 licensing survey. |
-| each package's `README.md` | API reference generated from the actual exports, with per-package gotchas. |
+| each package's `README.md` | API reference read off the actual exports and checked against them, with per-package gotchas. |
 
 ## Development
 
