@@ -62,8 +62,10 @@ const LOCAL_INDEX_URL = './data/index.json';
 // slash> -> that manifest URL verbatim (e.g. a locally served experimental
 // catalog, like the not-yet-published cn-geocoder-overture staging tree);
 // no param -> the live published geoboundaries-catalog.
+const OVERTURE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.json';
 const indexParam = new URLSearchParams(location.search).get('index');
 const indexUrl = indexParam === 'local' ? LOCAL_INDEX_URL
+  : indexParam === 'overture' ? OVERTURE_INDEX_URL
   : indexParam && indexParam.includes('/') ? indexParam
   : LIVE_INDEX_URL;
 
