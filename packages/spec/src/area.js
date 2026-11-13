@@ -43,7 +43,7 @@ export function generateAreaId() {
  * @param {{
  *   name: string,
  *   geometry: AreaGeometry,
- *   source: 'geocoder'|'upload'|'draw',
+ *   source: 'geocoder'|'upload'|'draw'|'edited',
  *   features: Array<Record<string, unknown>>,
  *   combine?: 'single'|'collect'|'dissolve',
  *   geometryVariant?: 'full'|'display-simplified'|'unknown',

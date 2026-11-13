@@ -22,6 +22,9 @@
   #panel button { margin-top: 6px; cursor: pointer; border: 1px solid #888; border-radius: 4px; background: #f4f4f4; }
   #panel button:disabled { opacity: 0.5; cursor: default; }
   #panel button.primary { background: #2563eb; color: white; border-color: #1d4ed8; }
+  #panel button.active { background: #0f766e; color: white; border-color: #0d5f59; }
+  .cnmw-draw-ctrl button { font: 12px/1 system-ui, sans-serif; padding: 0 8px; cursor: pointer; }
+  .cnmw-draw-ctrl button.armed { background: #1a73e8; color: #fff; }
   #areaInfo, #estimateInfo, #downloadInfo { font-size: 12px; background: #f7f7f7; border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
   #ceilingBox { display: none; background: #fff3cd; border: 1px solid #c99; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 12px; }
   .row { display: flex; gap: 6px; }
@@ -76,10 +79,11 @@
   <div id="datasetNote"></div>
 
   <label>Area</label>
-  <div id="areaInfo">Search for a place on the map (top-left control) to pick an area, or use the whole dataset (no area).</div>
+  <div id="areaInfo">Search for a place on the map (top-left control) to pick an area, draw a box ("Draw box", top-left), or use the whole dataset (no area).</div>
+  <button id="editBtn" disabled>Edit shape</button>
 
   <div class="row">
-    <button id="estimateBtn" class="primary">Estimate</button>
+    <button id="estimateBtn">Estimate (optional preview)</button>
   </div>
   <div id="estimateInfo" style="display:none;"></div>
   <div id="ceilingBox">
@@ -90,7 +94,7 @@
   <label>Download format</label>
   <div id="formatPicker"></div>
   <div class="row">
-    <button id="downloadBtn" class="primary" disabled>Download</button>
+    <button id="downloadBtn" class="primary">Download</button>
   </div>
   <button id="cancelBtn" disabled>Cancel</button>
   <progress id="progressBar" value="0" max="1" style="display:none;"></progress>
@@ -101,7 +105,7 @@
 
 <script type="module">
 import { Geocoder, DEFAULT_INDEX_URL } from '@cnmw/geocoder-core';
-import { GeocoderControl } from '@cnmw/maplibre';
+import { GeocoderControl, createDrawTool, createEditTool } from '@cnmw/maplibre';
 import {
   estimate,
   download,
@@ -259,19 +263,123 @@ const map = new maplibregl.Map({
   zoom: 10,
 });
 
+/** One line describing the current area, naming its source (search /
+ *  drawn / edited) so the three ways of getting an area stay visually
+ *  distinguishable in the panel. */
+function describeArea(a, label) {
+  const tag = { draw: ' [drawn]', edited: ' [edited]' }[a.provenance.source] ?? '';
+  return `${label ?? a.name}${tag} — bbox [${a.bbox.map((n) => n.toFixed(3)).join(', ')}], ${a.vertexCount.filter} filter vertices`;
+}
+
+function updateEditButtonState() {
+  document.getElementById('editBtn').disabled = !area || !!editTool;
+}
+
+/** Common path for every way `area` changes (search, draw, edit): updates
+ *  the outline/fit/attribution through the control (design doc §5.2's
+ *  `setArea`, the one public way an adapter is told about a new Area), the
+ *  panel text, and resets download state since a new area invalidates any
+ *  prior estimate. */
+function setCurrentArea(newArea, label) {
+  area = newArea;
+  control.setArea(newArea);
+  document.getElementById('areaInfo').textContent = describeArea(newArea, label);
+  updateEditButtonState();
+  resetDownloadUi();
+}
+
 const geocoder = new Geocoder({ indexUrl, limit: 8 });
 geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
 geocoder.on('select', ({ result, area: selectedArea }) => {
+  // The control already called setArea() on itself as part of picking this
+  // result (geocoder-control.js's _onPick), so the outline/fit are already
+  // right -- only the panel-local state (area variable, text, edit button,
+  // download reset) needs doing here.
   area = selectedArea;
-  document.getElementById('areaInfo').textContent =
-    `${result.name} (${result.country}, ADM${result.level}) — bbox [${area.bbox.map((n) => n.toFixed(3)).join(', ')}], ${area.vertexCount.filter} filter vertices`;
+  document.getElementById('areaInfo').textContent = describeArea(selectedArea, `${result.name} (${result.country}, ADM${result.level})`);
+  updateEditButtonState();
   resetDownloadUi();
 });
 
-const control = new GeocoderControl({ geocoder, placeholder: 'Search for an area (e.g. "liechtenstein")…' });
+// Asymmetric padding: the floating #panel (top:10, right:10, width:380) sits
+// on top of the map's right ~400px, so a plain `fitBounds`'s default 40px
+// uniform padding leaves an area's eastern edge -- and any vertex on it --
+// physically under the panel, unclickable by the vertex editor (feature 3).
+// Discovered via the edit-flow Playwright check (verify.mjs): a small drawn
+// box's east vertex, after the default fit, projected to a screen x that
+// fell inside the panel's own bounding box.
+const control = new GeocoderControl({
+  geocoder,
+  placeholder: 'Search for an area (e.g. "liechtenstein")…',
+  fitBounds: { padding: { top: 40, right: 410, bottom: 40, left: 40 } },
+});
+
+// --- Draw box (design doc §5.2's createDrawTool, feature 2) --------------
+const drawTool = createDrawTool(map, { tools: ['rectangle', 'viewport'] });
+const drawBoxBtn = document.createElement('button');
+drawBoxBtn.type = 'button';
+drawBoxBtn.id = 'drawBoxBtn';
+drawBoxBtn.textContent = 'Draw box';
+drawBoxBtn.title = 'Click, then drag a rectangle on the map. Esc cancels.';
+drawBoxBtn.addEventListener('click', () => {
+  if (editTool) return; // one interactive mode at a time
+  if (drawTool.armed) drawTool.disarm();
+  else drawTool.arm('rectangle');
+});
+drawTool.on('armed', () => {
+  drawBoxBtn.textContent = 'Drawing… (Esc to cancel)';
+  drawBoxBtn.classList.add('armed');
+});
+drawTool.on('disarmed', () => {
+  drawBoxBtn.textContent = 'Draw box';
+  drawBoxBtn.classList.remove('armed');
+});
+drawTool.on('area', ({ area: drawnArea }) => setCurrentArea(drawnArea));
+const drawControl = {
+  onAdd() {
+    const container = document.createElement('div');
+    container.className = 'maplibregl-ctrl maplibregl-ctrl-group cnmw-draw-ctrl';
+    container.appendChild(drawBoxBtn);
+    return container;
+  },
+  onRemove() {},
+};
+
+// --- Edit shape (design doc §5.2's createEditTool, feature 3) ------------
+let editTool = null;
+document.getElementById('editBtn').addEventListener('click', () => {
+  if (editTool) {
+    const edited = editTool.getArea();
+    editTool.remove();
+    editTool = null;
+    document.getElementById('editBtn').textContent = 'Edit shape';
+    document.getElementById('editBtn').classList.remove('active');
+    drawBoxBtn.disabled = false;
+    setCurrentArea(edited);
+    return;
+  }
+  if (!area) return;
+  if (drawTool.armed) drawTool.disarm();
+  editTool = createEditTool(map, area);
+  editTool.on('change', ({ area: edited }) => {
+    // Live updates while still editing: track the latest edited Area (so a
+    // Download started mid-edit uses it) and keep the panel text current,
+    // but don't call control.setArea() here -- that would re-fit the map
+    // on every vertex commit, which is exactly the jumpy behaviour a user
+    // dragging a vertex does not want. The edit tool draws its own live
+    // outline on the map already.
+    area = edited;
+    document.getElementById('areaInfo').textContent = describeArea(edited);
+  });
+  document.getElementById('editBtn').textContent = 'Done editing';
+  document.getElementById('editBtn').classList.add('active');
+  drawBoxBtn.disabled = true;
+});
+
 map.on('load', () => {
   map.addControl(control, 'top-left');
-  setStatus('Map loaded. Pick an area (optional), choose a dataset, then Estimate.');
+  map.addControl(drawControl, 'top-left');
+  setStatus('Map loaded. Search, draw a box, choose a dataset, then Download (Estimate is optional).');
 });
 map.on('error', (e) => setStatus('Map style failed to load (offline?) — the rest of the demo still works. ' + (e?.error?.message ?? '')));
 
@@ -292,6 +400,24 @@ function formatBounded(b, unit = '') {
   return `~${Math.round(b.estimate).toLocaleString()}${unit} (range ${Math.round(b.min).toLocaleString()}–${Math.round(b.max).toLocaleString()}${unit})`;
 }
 
+/** Shared by the manual Estimate button AND by startDownload's own
+ *  auto-fill from `handle.estimate` (feature 1: "Estimate" is an optional
+ *  preview, never a gate -- download() runs this exact same estimate
+ *  internally for its ceiling check regardless of whether a user ever
+ *  clicks this button, so showing it here is free once a download starts
+ *  anyway). */
+function renderEstimateInfo(est) {
+  const infoEl = document.getElementById('estimateInfo');
+  infoEl.style.display = 'block';
+  infoEl.textContent =
+    `Rows: ${formatBounded(est.rows)}\n` +
+    `Read from storage: ${formatBounded(est.readBytes, ' B')}\n` +
+    `Output (generic model): ${formatBounded(est.outputBytes, ' B')}\n` +
+    `Files: ${est.files.selected}/${est.files.total}  Row groups: ${est.rowGroups.selected}/${est.rowGroups.total}  HTTP requests: ${est.requests}\n` +
+    `Warnings: ${est.warnings.map((w) => w.code).join(', ') || '(none)'}\n` +
+    `Ceiling exceeded: ${est.ceiling.exceeded}`;
+}
+
 let lastEstimate = null;
 document.getElementById('estimateBtn').addEventListener('click', async () => {
   const entry = currentEntry();
@@ -303,14 +429,7 @@ document.getElementById('estimateBtn').addEventListener('click', async () => {
     const filter = buildFilter(entry);
     const est = await estimate(entry.dataset, area, filter);
     lastEstimate = est;
-    infoEl.textContent =
-      `Rows: ${formatBounded(est.rows)}\n` +
-      `Read from storage: ${formatBounded(est.readBytes, ' B')}\n` +
-      `Output (generic model): ${formatBounded(est.outputBytes, ' B')}\n` +
-      `Files: ${est.files.selected}/${est.files.total}  Row groups: ${est.rowGroups.selected}/${est.rowGroups.total}  HTTP requests: ${est.requests}\n` +
-      `Warnings: ${est.warnings.map((w) => w.code).join(', ') || '(none)'}\n` +
-      `Ceiling exceeded: ${est.ceiling.exceeded}`;
-    document.getElementById('downloadBtn').disabled = false;
+    renderEstimateInfo(est);
   } catch (err) {
     infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
   }
@@ -397,7 +516,10 @@ function resetDownloadUi() {
   document.getElementById('downloadLink').style.display = 'none';
   document.getElementById('progressBar').style.display = 'none';
   document.getElementById('formatLoadError').style.display = 'none';
-  document.getElementById('downloadBtn').disabled = true;
+  // downloadBtn is NOT disabled here (feature 1: no mandatory Estimate
+  // step -- a format is downloadable the instant an area/dataset exist,
+  // which is always true since "no area" means the whole dataset).
+  // startDownload() disables it only for the duration of an actual run.
   document.getElementById('cancelBtn').disabled = true;
   lastEstimate = null;
   activeHandle = null;
@@ -422,6 +544,20 @@ function startDownload(formatId) {
   const handle = download(entry.dataset, area, filter, output, { sink });
   activeHandle = handle;
 
+  // Feature 1 auto-fill: download() runs its own internal estimate
+  // regardless of whether the Estimate button was ever clicked (it's the
+  // ceiling check), and the handle exposes that same estimate here -- so
+  // the "optional preview" box fills in on its own once a download starts,
+  // even on the skip-straight-to-download happy path. Never rejects except
+  // when the run fails before an estimate was computed at all (e.g. the
+  // dataset itself can't be resolved), which this page already surfaces
+  // through downloadInfo's own error handling below.
+  handle.estimate.then((est) => {
+    lastEstimate = est;
+    renderEstimateInfo(est);
+  }).catch(() => {});
+
+  document.getElementById('downloadBtn').disabled = true;
   const progressBar = document.getElementById('progressBar');
   const downloadInfo = document.getElementById('downloadInfo');
   const downloadLink = document.getElementById('downloadLink');
@@ -471,6 +607,7 @@ function startDownload(formatId) {
       pendingLoadFormatId = null;
       progressBar.style.display = 'none';
       document.getElementById('cancelBtn').disabled = true;
+      document.getElementById('downloadBtn').disabled = false;
       downloadInfo.textContent =
         `Done: ${result.rows} rows, ${result.bytes.toLocaleString()} bytes written, ${result.readBytes.toLocaleString()} bytes read, ${result.requests} requests, ${result.elapsedMs.toFixed(0)} ms.`;
       const blob = sink.blob ?? new Blob(sink.chunks, { type: fmtInfo?.mediaType ?? 'application/octet-stream' });
@@ -485,10 +622,11 @@ function startDownload(formatId) {
     (err) => {
       // Not a failure: the handle is `blocked` and the refusal box is
       // showing the user their two ways forward.
-      if (err.code === 'CEILING_EXCEEDED') return;
+      if (err.code === 'CEILING_EXCEEDED') return; // blocked, not settled -- downloadBtn stays disabled until the user decides
       pendingLoadFormatId = null;
       progressBar.style.display = 'none';
       document.getElementById('cancelBtn').disabled = true;
+      document.getElementById('downloadBtn').disabled = false;
       // FORMAT_LOAD_FAILED (registry.js's resolveFormat(), thrown when a
       // lazy descriptor's load() -- the real CDN import() -- rejects) gets
       // its own clean failure box rather than sharing the generic
@@ -515,6 +653,7 @@ function startDownload(formatId) {
     pendingLoadFormatId = null;
     progressBar.style.display = 'none';
     document.getElementById('cancelBtn').disabled = true;
+    document.getElementById('downloadBtn').disabled = false;
     downloadInfo.textContent = 'Cancelled.';
     renderFormatPicker();
   });
@@ -523,7 +662,12 @@ function startDownload(formatId) {
 document.getElementById('downloadBtn').addEventListener('click', () => startDownload(selectedFormat));
 document.getElementById('cancelBtn').addEventListener('click', () => activeHandle?.cancel('user cancelled'));
 
-window.__cnmwDownloadDemo = { geocoder, control, map, get area() { return area; }, get lastEstimate() { return lastEstimate; } };
+window.__cnmwDownloadDemo = {
+  geocoder, control, map, drawTool,
+  get area() { return area; },
+  get lastEstimate() { return lastEstimate; },
+  get editTool() { return editTool; },
+};
 </script>
 </body>
 </html>
