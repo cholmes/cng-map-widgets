@@ -161,7 +161,12 @@ export function createDrawTool(map, options = {}) {
     return () => listeners.get(event)?.delete(fn);
   }
   function emit(event, payload) {
-    for (const fn of listeners.get(event) ?? []) fn(payload);
+    // Iterate a copy: tearing the tool down from inside an `area` handler
+    // is the normal thing for a host to do (portolan-browser's widget
+    // rebuilds its map layers there, which calls `remove()` and so
+    // `listeners.clear()`), and mutating the Set mid-iteration would
+    // silently skip every handler after the one that did it.
+    for (const fn of [...(listeners.get(event) ?? [])]) fn(payload);
   }
 
   function ensurePreviewLayer() {

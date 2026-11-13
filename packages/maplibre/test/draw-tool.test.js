@@ -264,3 +264,24 @@ test('createDrawTool: a tool outside the enabled set is still refused', () => {
   const tool = createDrawTool(stubMap(), { tools: ['rectangle'] });
   assert.throws(() => tool.arm('polygon'), /not in the enabled set/);
 });
+
+test('createDrawTool: a handler that removes the tool does not silence the handlers after it', () => {
+  // What portolan-browser's widget really does: its `area` handler calls
+  // `setArea`, which rebuilds the map layers, which calls `remove()` --
+  // and `remove()` clears the listener set this emit is walking.
+  withDocument(() => {
+    const map = stubMap();
+    const tool = createDrawTool(map, { tools: ['polygon'] });
+    const seen = [];
+    tool.on('area', () => { seen.push('first'); tool.remove(); });
+    tool.on('area', () => seen.push('second'));
+    tool.arm('polygon');
+
+    clickAt(map, 0, 0);
+    clickAt(map, 10, 0);
+    clickAt(map, 10, 10);
+    dblClickAt(map, 10, 10);
+
+    assert.deepEqual(seen, ['first', 'second']);
+  });
+});
