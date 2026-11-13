@@ -650,6 +650,18 @@ guessing would produce a file that claims a codec it did not use.
 | `streamSink(stream)` | Wraps a `WritableStream<Uint8Array>` you own. |
 | `memorySink()` | Collects `.chunks`. For tests, and for headless automation (no native dialog). |
 
+**The sink lifecycle, if you write your own:** one writable per run —
+`open()` once, then exactly one of `close()` or `abort()`. **`close()` is
+what commits.** A format plugin writes to the writer `open()` returned and
+never closes it; closing is the sink's job, and for `fileSystemSink` it is
+the atomic swap-file replace that makes the bytes appear in the user's
+file. A sink whose `close()` does nothing produces a zero-byte file while
+`DownloadResult.bytes` reports the full size — the format writer really did
+hand the bytes over. `open()` twice on one sink throws `SINK_UNSUPPORTED`;
+create a sink per download.
+(`test/browser/filesystem-sink.verify.mjs` holds this against a real
+`FileSystemWritableFileStream`.)
+
 ### Engines
 
 `createHyparquetEngine()` is the only one in core: `id: 'hyparquet'`,

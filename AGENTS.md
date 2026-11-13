@@ -704,6 +704,13 @@ node docs/verify-snippets.mjs agents  # just this file's recipes
 python3 serve.py 8000 &               # real Range support; -m http.server will not do
 node examples/quickstart/verify.mjs 8000
 node examples/download-demo/verify.mjs 8000
+
+# Starts its own server; needs no running serve.py. The File System Access
+# path -- the one `npm test` cannot reach, because no Node runtime has a
+# `FileSystemWritableFileStream` and no headless browser can open a save
+# dialog. Drives the real `download()` into a real OPFS writable, which has
+# the same swap-file commit semantics a picker handle does.
+node packages/download-core/test/browser/filesystem-sink.verify.mjs
 ```
 
 If you add a widget to a page, copy the shape of one of the
