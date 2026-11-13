@@ -238,6 +238,18 @@ split already happened in `@cnmw/spec`. Do not feed it a signed
 
 ---
 
+## Dropdown states
+
+Besides plain options, the listbox renders: a spinner row while loading or
+searching, an error row with a Retry button, a `No matches for "…".` row,
+and — when geocoder-core's fuzzy fallback produced the results (every
+`rank.matchClass` is `'fuzzy'`, which only happens when the prefix search
+found nothing) — a non-interactive caption row above them:
+*No exact matches — showing close matches.* (`li.cnmw-fuzzy-note`,
+`role="presentation"`, excluded from keyboard navigation and click
+handling). A custom `renderItem` only replaces option contents; the caption
+still renders.
+
 ## Gotchas
 
 **`options.geocoder` has no default**, exactly as in the MapLibre adapter, and

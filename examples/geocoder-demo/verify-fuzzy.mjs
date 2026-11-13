@@ -92,12 +92,33 @@ await openDemo('');
   const fuzzy = results.filter((r) => r.matchClass === 'fuzzy');
   if (fuzzy.length > 0) throw new Error(`"bag": fuzzy fallback fired despite prefix matches: ${JSON.stringify(fuzzy)}`);
   console.log('PASS: non-empty prefix results are never augmented with fuzzy matches.');
+  const strayNote = await page.$('li.cnmw-fuzzy-note');
+  if (strayNote) throw new Error('"bag": fuzzy caption rendered on prefix results');
+  console.log('PASS: no fuzzy caption on prefix results.');
 }
 
-// Screenshot the geoBoundaries fuzzy dropdown for the record.
+// Screenshot the geoBoundaries fuzzy dropdown for the record, and assert the
+// "close matches" caption renders above fuzzy results (and only there).
 await page.fill('input[role="combobox"]', '');
 await page.type('input[role="combobox"]', 'liechtenstien', { delay: 20 });
 await page.waitForSelector('li[role="option"]', { timeout: 20_000 });
+{
+  const note = await page.textContent('li.cnmw-fuzzy-note');
+  if (!note || !note.includes('close matches')) {
+    throw new Error(`fuzzy caption missing or wrong: ${JSON.stringify(note)}`);
+  }
+  const noteRole = await page.getAttribute('li.cnmw-fuzzy-note', 'role');
+  if (noteRole !== 'presentation') throw new Error(`fuzzy caption role should be presentation, got ${noteRole}`);
+  console.log('PASS: fuzzy caption "No exact matches — showing close matches." renders with role=presentation.');
+  // Keyboard sanity with the caption present: ArrowDown must select the first
+  // real option, not the caption row.
+  await page.keyboard.press('ArrowDown');
+  const active = await page.getAttribute('input[role="combobox"]', 'aria-activedescendant');
+  if (!active || !active.includes('-option-0')) {
+    throw new Error(`ArrowDown with caption present should activate option 0, got ${active}`);
+  }
+  console.log('PASS: keyboard navigation skips the caption row.');
+}
 const screenshotPath = path.join(here, 'screenshot-fuzzy-fallback.png');
 await page.screenshot({ path: screenshotPath });
 console.log('Screenshot saved to', screenshotPath);

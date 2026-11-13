@@ -96,6 +96,10 @@ const CSS = `
 .cnmw-geocoder .cnmw-option-meta { color: var(--cnmw-meta); font-size: 11px; margin-left: 6px; }
 .cnmw-geocoder .cnmw-more { color: var(--cnmw-meta); cursor: default; }
 .cnmw-geocoder .cnmw-empty, .cnmw-geocoder .cnmw-loading, .cnmw-geocoder .cnmw-searching { padding: 8px; color: var(--cnmw-meta); }
+.cnmw-geocoder .cnmw-fuzzy-note {
+  padding: 4px 8px 5px; color: var(--cnmw-meta); font-size: 11px; font-style: italic; cursor: default;
+  border-bottom: 1px solid var(--cnmw-border); margin-bottom: 2px;
+}
 .cnmw-geocoder .cnmw-error {
   padding: 8px; color: var(--cnmw-error); background: var(--cnmw-error-bg);
   display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: default;
@@ -569,6 +573,18 @@ export class GeocoderControl {
       }
       this._input.removeAttribute('aria-activedescendant');
       return;
+    }
+
+    // Fuzzy results only ever appear when the prefix search found nothing
+    // (geocoder-core's gazet-inspired fallback), so one caption covers the
+    // whole list. role="presentation" keeps it out of _setActive's
+    // [role="option"] index space and the mousedown picker.
+    if (results[0]?.rank?.matchClass === 'fuzzy') {
+      const note = document.createElement('li');
+      note.className = 'cnmw-fuzzy-note';
+      note.setAttribute('role', 'presentation');
+      note.textContent = 'No exact matches — showing close matches.';
+      listbox.appendChild(note);
     }
 
     results.forEach((r, i) => {
