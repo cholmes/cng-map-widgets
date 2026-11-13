@@ -9,10 +9,10 @@
 <style>
   html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
   #map { position: absolute; inset: 0; }
-  /* Top-right: bottom-left belongs to the GeocoderControl's ⓘ attribution
-     widget (and its upward-expanding pill), bottom-right to MapLibre's own
-     attribution. */
-  #status { position: absolute; top: 12px; right: 12px; z-index: 5; background: rgba(255,255,255,0.9);
+  /* Top-right, below the ⚙ gazetteer picker: bottom-left belongs to the
+     GeocoderControl's ⓘ attribution widget (and its upward-expanding
+     pill), bottom-right to MapLibre's own attribution. */
+  #status { position: absolute; top: 50px; right: 12px; z-index: 5; background: rgba(255,255,255,0.9);
     padding: 6px 10px; border-radius: 4px; font-size: 12px; max-width: 420px; }
   .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
 </style>
@@ -41,6 +41,11 @@
 <script type="module">
 import { Geocoder } from '@cnmw/geocoder-core';
 import { GeocoderControl } from '@cnmw/maplibre';
+// The ⚙ gazetteer picker (top-right): switches the ?index= param between
+// the three published gazetteers or a custom manifest URL, then reloads.
+// A copyable zero-dependency snippet -- see ../shared/gazetteer-picker.js.
+import { mountGazetteerPicker } from '../shared/gazetteer-picker.js';
+mountGazetteerPicker();
 
 const statusEl = document.getElementById('status');
 function setStatus(text) { statusEl.textContent = text; }

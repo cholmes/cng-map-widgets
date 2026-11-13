@@ -33,8 +33,10 @@
 <style>
   html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
   #map { position: absolute; inset: 0; }
+  /* Top-right, below the ⚙ gazetteer picker. Bottom-left belongs to the
+     GeocoderControl's ⓘ attribution widget, bottom-right to MapLibre's. */
   #status {
-    position: absolute; bottom: 12px; left: 12px; z-index: 5;
+    position: absolute; top: 50px; right: 12px; z-index: 5;
     background: rgba(255, 255, 255, 0.92); padding: 6px 10px;
     border-radius: 4px; font-size: 12px; max-width: 460px;
   }
@@ -48,6 +50,7 @@
 <script type="module">
 import { Geocoder } from '@cnmw/geocoder-core';
 import { GeocoderControl } from '@cnmw/maplibre';
+import { mountGazetteerPicker } from '../shared/gazetteer-picker.js';
 
 const status = document.getElementById('status');
 
@@ -58,11 +61,22 @@ const map = new maplibregl.Map({
   zoom: 2,
 });
 
-// The live, published geoBoundaries gazetteer: 52,398 named admin units
-// across ADM0/1/2, CC-BY-4.0. Static files on object storage -- there is
-// no API and no server anywhere in this page.
+// The live, published gazetteers: static files on object storage -- there
+// is no API and no server anywhere in this page. The ⚙ picker (top right)
+// switches between them by rewriting ?index= and reloading; the resolution
+// below is the whole scheme ('overture' | 'wof' | a manifest URL | the
+// geoBoundaries default).
+const INDEXES = {
+  default: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json',
+  overture: 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.json',
+  wof: 'https://data.source.coop/portolan-mirrors/whosonfirst-catalog/names/index.json',
+};
+const indexParam = new URLSearchParams(location.search).get('index');
+const indexUrl = indexParam && indexParam.includes('/') ? indexParam : (INDEXES[indexParam] ?? INDEXES.default);
+mountGazetteerPicker();
+
 const geocoder = new Geocoder({
-  indexUrl: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json',
+  indexUrl,
   limit: 8,
   // Show the small pre-simplified outline immediately, then swap in the
   // full-resolution geometry when the background fetch lands (see the

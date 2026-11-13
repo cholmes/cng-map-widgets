@@ -229,12 +229,21 @@ screenshots and readable source.
 | demo | what it shows |
 |---|---|
 | [`quickstart`](examples/quickstart/) | The whole library in one file — the snippet above. |
-| [`geocoder-demo`](examples/geocoder-demo/) | All three admin levels, progressive `select({ resolution: 'both' })`, and `?index=overture` to swap in the 5.6M-name multilingual gazetteer. |
+| [`geocoder-demo`](examples/geocoder-demo/) | All three admin levels, progressive `select({ resolution: 'both' })`, and `?index=overture` / `?index=wof` to swap gazetteers. |
 | [`upload-demo`](examples/upload-demo/) | The composability seam on OpenLayers: a searched area and a dropped GeoJSON produce the same `Area`. Fiji exercises the antimeridian split and the projection bridge. |
 | [`download-demo`](examples/download-demo/) | Search → estimate → download, three real remote datasets, both writers, the ceiling refusal, cancel. |
 | [`firms-explorer`](examples/firms-explorer/) | NASA FIRMS: 632M rows across 27 `year=` partitions, resolved from the collection JSON, with the pruning cascade narrated stage by stage. |
 | [`s2-footprints`](examples/s2-footprints/) | "Type a country, download every Sentinel-2 footprint over it." 30M STAC-GeoParquet rows, the ceiling path, default column projection. |
 | [`raster-demo`](examples/raster-demo/) | The same `Area`, pointed at pixels: open a remote Sentinel-2 COG or STAC item, see its size/dtype/CRS/overviews/bands from one header read, pick bands, and save a clipped GeoTIFF. |
+
+The quickstart and geocoder-demo carry a ⚙ **gazetteer picker** (top
+right): pick geoBoundaries, Overture or Who's On First — or paste any
+manifest URL — and the page reloads with the matching `?index=`
+parameter, so the choice is shareable. It is a zero-dependency, copyable
+snippet:
+[`examples/shared/gazetteer-picker.js`](examples/shared/gazetteer-picker.js)
+only rewrites the URL parameter; your page's own startup resolves it to
+an `indexUrl`, so `mountGazetteerPicker()` is the entire integration.
 
 ## The gazetteers
 
