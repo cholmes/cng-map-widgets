@@ -2,7 +2,7 @@
 
 The MapLibre GL half of the widgets: an accessible search box, an outline
 layer, a viewport provider, an antimeridian-aware camera, a rectangle/
-viewport draw tool, and a vertex editor for an existing outline.
+polygon/viewport draw tool, and a vertex editor for an existing outline.
 
 ```js
 const control = new GeocoderControl({ geocoder });
@@ -276,17 +276,29 @@ fitAreaBounds(map, area.bboxes, { padding: 40, maxZoom: 12 });
 ```js
 import { createDrawTool } from '@cnmw/maplibre';
 
-const drawTool = createDrawTool(map, { tools: ['rectangle', 'viewport'] });
+const drawTool = createDrawTool(map, { tools: ['rectangle', 'polygon', 'viewport'] });
 drawTool.on('area', ({ area }) => { /* an Area with provenance.source === 'draw' */ });
 drawTool.arm('rectangle'); // crosshair cursor; drag a rectangle; Escape disarms
+drawTool.arm('polygon');   // click each corner; double-click/Enter closes; Escape cancels
 drawTool.arm('viewport');  // one-shot: the current map bounds, no drag
 ```
 
-`tools` defaults to `['rectangle', 'viewport']`. `polygon` is accepted in the
-option (forward-compat) but `arm('polygon')` throws — see
-[`src/draw-tool.js`](src/draw-tool.js)'s header for why, and the escape hatch
-(`areaFromGeoJson`) if you need it today. Every emitted `Area` goes through
-`@cnmw/spec`'s `buildArea`, same as every other Area this adapter produces.
+`tools` defaults to `['rectangle', 'viewport']`, so `polygon` has to be asked
+for. Arming one tool disarms whichever was armed before.
+
+**Polygon.** Click each corner. Double-click, press <kbd>Enter</kbd>, or click
+the first corner again to close the ring; <kbd>Esc</kbd> cancels and emits
+`cancel`. Fewer than three corners will not close, and leaves the tool armed.
+`doubleClickZoom` is disabled while armed and restored on disarm, and the
+ordinary `click` MapLibre delivers as the first half of a double-click is
+dropped rather than becoming a duplicate corner. `handle.vertices` is the
+corners placed so far, and `handle.tool` is the armed tool.
+
+`options.names` overrides the emitted Area's display name — `{ drawn }` for
+the rectangle and the polygon, `{ viewport }` for the viewport tool — which a
+host that has to translate those strings will want. Every emitted `Area` goes
+through `@cnmw/spec`'s `buildArea`, same as every other Area this adapter
+produces, with `provenance.draw.tool` naming which tool drew it.
 
 ### `createEditTool(map, area, options?) => EditToolHandle`
 
@@ -326,10 +338,11 @@ always pass one. `geocoderOptions` is accepted and ignored for the same reason.
 calls `map.addSource`/`addLayer`, which MapLibre refuses before the style has
 loaded. Adding it too early throws.
 
-**`createDrawTool`'s `polygon` tool does not exist.** Rectangle and viewport
-are implemented (§5.2); `arm('polygon')` throws. If you need freeform
-polygon drawing today, pass your own draw library's GeoJSON to
-`@cnmw/upload-core`'s `areaFromGeoJson` and you get the same `Area` with
+**`createDrawTool` draws one ring, with no snapping or self-intersection
+check.** Polygon is click-to-add-corner and nothing more: no holes, no
+multi-part shapes, no vertex snapping, and a ring you cross over yourself is
+emitted as drawn. For anything richer, pass your own draw library's GeoJSON
+to `@cnmw/upload-core`'s `areaFromGeoJson` and you get the same `Area` with
 `source: 'upload'`.
 
 **`createEditTool` edits one ring.** Holes, and every polygon in a

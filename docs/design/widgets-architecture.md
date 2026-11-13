@@ -3900,16 +3900,15 @@ export declare function viewportProvider(map: Map): () => BBox;
  *  Not a replacement for mapbox-gl-draw/terra-draw; a host that already has
  *  a draw library passes its GeoJSON to `areaFromGeoJson` instead.
  *
- *  **Implemented 2026-11-13 — see the amendment below.** `polygon` is
- *  accepted in `tools` (and in `DrawToolHandle.arm`'s type) but not
- *  implemented: `arm('polygon')` throws. Rectangle and viewport cover the
- *  demo's actual requirement ("draw their own area"); a half-working
- *  freehand-polygon mode was not worth the added pointer-state surface for
- *  this pass. The escape hatch from the original §8 entry still works
- *  unchanged for anyone who needs it: bring your own draw library and pass
- *  its GeoJSON to `@cnmw/upload-core`'s `areaFromGeoJson` (`source:
- *  'upload'`). */
-export declare function createDrawTool(map: Map, options?: { tools?: ('rectangle'|'polygon'|'viewport')[], id?: string }): DrawToolHandle;
+ *  **Implemented 2026-11-13 — see the two amendments below.** All three
+ *  tools work: rectangle and viewport first, then `polygon` (click each
+ *  corner; double-click/Enter/first-corner closes; Escape cancels).
+ *  `tools` still defaults to `['rectangle', 'viewport']`, so polygon is
+ *  opt-in. No holes, no multi-part shapes, no snapping and no
+ *  self-intersection check: a host needing those still brings its own draw
+ *  library and passes its GeoJSON to `@cnmw/upload-core`'s
+ *  `areaFromGeoJson` (`source: 'upload'`). */
+export declare function createDrawTool(map: Map, options?: { tools?: ('rectangle'|'polygon'|'viewport')[], id?: string, names?: { drawn?: string, viewport?: string } }): DrawToolHandle;
 
 export interface DrawToolHandle {
   readonly armed: boolean;
@@ -3946,11 +3945,11 @@ export interface EditToolHandle {
 `createDrawTool` moves from §8's "specified here, not implemented" table to
 shipped (`packages/maplibre/src/draw-tool.js`): rectangle-by-drag and
 one-click viewport, both producing an `Area` through `buildArea` (never a
-hand-built provenance object, per §5.1). `polygon` stays unimplemented —
-declared in the `tools` type for forward compatibility, but `arm('polygon')`
-throws with a message pointing at the still-working escape hatch
-(`areaFromGeoJson`). Keyboard: `Escape` disarms rectangle mode, mid-drag or
-not.
+hand-built provenance object, per §5.1). `polygon` stayed unimplemented at
+first — declared in the `tools` type for forward compatibility, but
+`arm('polygon')` threw, pointing at the `areaFromGeoJson` escape hatch. See
+the second amendment below: it is implemented now. Keyboard: `Escape`
+disarms rectangle mode, mid-drag or not.
 
 `createEditTool` (`packages/maplibre/src/edit-tool.js`) is new, for "edit a
 boundary you brought up with the place search": drag a vertex, drag a
@@ -3981,6 +3980,44 @@ part lives in `@cnmw/spec`? No — it is DOM, and `spec` is I/O-free. It lives i
 an internal, unpublished `packages/_ui` workspace package that both adapters
 inline at build time. Stated here because "the combobox is implemented twice"
 would be the predictable drift.
+
+
+### Amendment, 2026-11-13 (later) — `createDrawTool`'s `polygon` implemented
+
+The amendment above left `polygon` as the one piece of `createDrawTool` that
+still threw, on the reasoning that a half-working draw tool is worse than
+none and that a host needing it could reach for terra-draw plus
+`areaFromGeoJson`. The first host to need it — portolan-browser's download
+widget, which wanted "Draw polygon" beside "Draw a box" — measured that
+escape hatch at the ~262 KB `edit-tool.js` had already costed for terra-draw
+and its MapLibre adapter, against about a hundred lines of click handling for
+the thing actually wanted: click corners, close the ring.
+
+So it is implemented, in the same file, with the same contract as the other
+two tools: an `Area` through `buildArea`, `provenance.source: 'draw'`, and
+`provenance.draw.tool: 'polygon'`. It was briefly written in the host
+instead, shaped to this API so the move would be mechanical, and then moved
+here and deleted there — the host now imports the shared tool, and its own
+tests exercise it through its bundler alias.
+
+Gestures: click to add a corner; double-click, `Enter`, or a click on the
+first corner closes the ring; `Escape` cancels and emits `cancel` with
+`duringDraw`. Fewer than three corners will not close and leaves the tool
+armed, matching how a mousedown with no drag is ignored by the rectangle.
+`doubleClickZoom` is disabled while armed and restored on disarm, and the
+ordinary `click` MapLibre delivers as the first half of a double-click is
+dropped rather than becoming a duplicate corner. The handle gains `tool` and
+`vertices` getters.
+
+One addition to the options, driven by the same host: `names: { drawn,
+viewport }` overrides the emitted Area's display name, which previously was
+the hardcoded English `'Drawn area'` / `'Current viewport'`. An adapter that
+bakes in a user-visible string cannot be used by a translated host.
+
+Still out of scope, and now said at the declaration rather than promised
+away: no holes, no multi-part shapes, no vertex snapping, and no
+self-intersection check — a ring the user crosses over itself is emitted as
+drawn.
 
 ### 5.3 Hosting in `portolan-browser`
 
@@ -4446,10 +4483,8 @@ than merely documented).
 | `GeocoderOptions.initialFetchSize` | §3.2 | Accepted and ignored. | Superseded by the manifest contract: each file entry declares `footer_metadata_bytes`, so the footer read is exact *per file* rather than one global guess. Nothing is gained by letting a caller override an exact number with an estimate. |
 
 **Resolved since this table was written, and so *not* in it:**
-`createDrawTool` — implemented 2026-11-13 (rectangle + viewport; see the
-§5.2 amendment); its `polygon` sub-tool is the one piece that stays
-unimplemented, noted at its own declaration rather than in this table,
-since the symbol itself now works. A `blocked`
+`createDrawTool` — implemented 2026-11-13 (rectangle + viewport, then
+polygon later the same day; see the two §5.2 amendments). A `blocked`
 handle's `result` now rejects (§3.4 amendment); cancellation now reports
 `CANCELLED` rather than `NETWORK`/`DATASET_UNRESOLVED` (§3.5);
 `DownloadCoreOptions.maxConcurrentRequests` is now honoured;

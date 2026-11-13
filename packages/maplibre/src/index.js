@@ -6,7 +6,16 @@ export { GeocoderControl } from './geocoder-control.js';
 export { addAreaLayer } from './area-layer.js';
 export { viewportProvider } from './viewport.js';
 export { fitAreaBounds } from './fit-bounds.js';
-export { createDrawTool, rectangleRingFromCorners, rectanglePolygonFromCorners, isDegenerateRectangle } from './draw-tool.js';
+export {
+  createDrawTool,
+  rectangleRingFromCorners,
+  rectanglePolygonFromCorners,
+  isDegenerateRectangle,
+  polygonRingFromVertices,
+  polygonFromVertices,
+  isClosablePolygon,
+  isSameScreenPoint,
+} from './draw-tool.js';
 export {
   createEditTool,
   buildEditedArea,
