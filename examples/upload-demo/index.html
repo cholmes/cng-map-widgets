@@ -128,6 +128,8 @@ const indexUrl = new URLSearchParams(location.search).get('index') === 'local'
 const geocoder = new Geocoder({
   indexUrl,
   limit: 8,
+  // Visible outline upgrades to full resolution in the background (see geocoder-demo).
+  geometry: { resolution: 'both', upgradeDisplay: true },
 });
 geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
 geocoder.on('load', (info) => setStatus(`Index ready: ${info.rows} places, ${info.strategy}-load, ${info.loadMs.toFixed(0)} ms.`));

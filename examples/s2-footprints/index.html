@@ -176,8 +176,11 @@ const indexUrl = new URLSearchParams(location.search).get('index') === 'local'
   ? '../geocoder-demo/data/index.json'
   : LIVE_INDEX_URL;
 
-const geocoder = new Geocoder({ indexUrl, limit: 8 });
+// resolution 'both' + upgradeDisplay: the visible outline upgrades to full
+// resolution in the background (see geocoder-demo for the full story).
+const geocoder = new Geocoder({ indexUrl, limit: 8, geometry: { resolution: 'both', upgradeDisplay: true } });
 geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
+geocoder.on('area:upgraded', ({ area: upgraded }) => { if (area && area.id === upgraded.id) area = upgraded; });
 geocoder.on('select', ({ result, area: selectedArea }) => {
   area = selectedArea;
   document.getElementById('areaInfo').textContent =

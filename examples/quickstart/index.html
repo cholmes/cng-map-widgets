@@ -64,9 +64,10 @@ const map = new maplibregl.Map({
 const geocoder = new Geocoder({
   indexUrl: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json',
   limit: 8,
-  // Show the small pre-simplified outline immediately, then upgrade the
-  // filter geometry from the full-resolution file in the background.
-  geometry: { resolution: 'both' },
+  // Show the small pre-simplified outline immediately, then swap in the
+  // full-resolution geometry when the background fetch lands (see the
+  // geocoder-demo's longer explanation of upgradeDisplay).
+  geometry: { resolution: 'both', upgradeDisplay: true },
 });
 
 geocoder.on('load', (info) => {

@@ -178,8 +178,10 @@ const map = new maplibregl.Map({
   zoom: 5,
 });
 
-const geocoder = new Geocoder({ indexUrl: '../geocoder-demo/data/index.json', limit: 8 });
+// Visible outline upgrades to full resolution in the background (see geocoder-demo).
+const geocoder = new Geocoder({ indexUrl: '../geocoder-demo/data/index.json', limit: 8, geometry: { resolution: 'both', upgradeDisplay: true } });
 geocoder.on('error', (err) => setStatus(`Geocoder error: ${err.code} — ${err.message}`));
+geocoder.on('area:upgraded', ({ area: upgraded }) => { if (area && area.id === upgraded.id) area = upgraded; });
 geocoder.on('select', ({ result, area: selectedArea }) => {
   area = selectedArea;
   document.getElementById('areaInfo').textContent =
