@@ -22,7 +22,7 @@ export { evaluatePredicate, evaluateWhere, getPath } from './predicate.js';
 export { rowMatchesArea, bboxIntersectsAny, pointInGeometry, geometriesIntersect, geometryIntersectsArea } from './spatial.js';
 export { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 export { boundedExact, boundedRange, addBounded, sumBounded, scaleBounded, capBounded, isEstimateWide } from './bounded.js';
-export { enumeratePartitions, partitionPruneCascade } from './partitions.js';
+export { enumeratePartitions, partitionPruneCascade, resolveMirrorPartUrl } from './partitions.js';
 export { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, predicateExcludesRowGroup, avgColumnBytesPerRow, STATS_PRUNABLE_OPS } from './prune.js';
 export { CnmwError, CancelledError, CeilingExceededError, isCnmwError } from '@cnmw/spec';
 

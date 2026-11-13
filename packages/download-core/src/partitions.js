@@ -97,7 +97,7 @@ export async function enumeratePartitions(source, options = {}) {
     // `utf8: false` alongside `geoparquet: false` -- see parquet-io.js's
     // readRows() for why both are needed together.
     const rows = await hyparquet.parquetReadObjects({ file, metadata, compressors, utf8: false });
-    const parts = rows.map((row) => partFromMirrorRow(row, keys));
+    const parts = rows.map((row) => partFromMirrorRow(row, keys, enumeration.url));
     return { parts, requests: 1 };
   }
 
@@ -112,9 +112,123 @@ export async function enumeratePartitions(source, options = {}) {
   throw new CnmwError(`Unsupported partition enumeration kind: ${enumeration.kind}`, 'DATASET_UNRESOLVED');
 }
 
+/**
+ * The path forms an absolute URI could be compared by, most specific first.
+ *
+ * Two forms, because the same file's `s3://` and `https://` spellings put
+ * the bucket in different places: source.coop serves `s3://ftw/x/y.parquet`
+ * at `https://data.source.coop/ftw/x/y.parquet`, so the s3 URI's *host* is
+ * the http URL's first path segment. Comparing "host included" catches
+ * that pairing; "host dropped" catches an alternate on the same host under
+ * a different domain. Pure.
+ * @param {string} uri
+ * @returns {string[]}
+ */
+function candidatePaths(uri) {
+  const noScheme = uri.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/[?#].*$/, '');
+  const firstSlash = noScheme.indexOf('/');
+  const hostDropped = firstSlash === -1 ? '/' : noScheme.slice(firstSlash);
+  return [`/${noScheme}`, hostDropped];
+}
+
+function isAbsoluteUri(href) {
+  return typeof href === 'string' && /^[a-z][a-z0-9+.-]*:/i.test(href);
+}
+
+/** Every `alternate` href a STAC asset may carry, in declaration order. */
+function alternateHrefs(asset) {
+  const alternate = asset?.alternate;
+  if (!alternate || typeof alternate !== 'object') return [];
+  return Object.values(alternate)
+    .map((entry) => entry?.href)
+    .filter((href) => typeof href === 'string' && href);
+}
+
+/**
+ * The absolute URL of a collection-mirror row's data file.
+ *
+ * A mirror row is a STAC Item serialized into a parquet row, and a STAC
+ * Item's asset hrefs are relative to *that item's own* canonical URL --
+ * which a parquet row, unlike a JSON document, does not inherently know.
+ * stac-geoparquet therefore says mirror hrefs SHOULD be absolute, but real
+ * catalogs publish relative ones: Fields of the World's 2019 mirror
+ * (`.../vector/2019/items.parquet`) stores `./utm01.parquet` for an item
+ * whose canonical URL is `.../vector/2019/zone=01/utm01.json`.
+ *
+ * Before this function existed, that bare `./utm01.parquet` was handed
+ * straight to `fetch`. In Node that throws `Failed to parse URL`; in a
+ * browser it silently resolves against the *page's* location, so every
+ * part read hit `http://localhost:8081/utm01.parquet` and the whole
+ * estimate failed as DATASET_UNRESOLVED ("this dataset's files could not
+ * be read") -- a generic network error for what is really an unresolved
+ * relative href. `enumerateStacItems` below already carries the same
+ * lesson in its own comment; the mirror path never got it.
+ *
+ * Resolution order, most authoritative first:
+ *
+ *  1. An already-absolute href -- nothing to do.
+ *  2. The row's own `self` link: the canonical STAC answer to "where does
+ *     this item live", and what a conformant mirror carries.
+ *  3. An `alternate` href (`alternate.s3.href` is the Portolan/source.coop
+ *     norm) whose path runs through the mirror's own directory. `alternate`
+ *     means "the same file, another scheme or endpoint", so the part of its
+ *     path *below* the mirror directory is the file's path below the
+ *     collection -- `zone=01/utm01.parquet` for FTW. This recovers the hive
+ *     directory that the relative href dropped.
+ *  4. Plain document-relative resolution against the mirror's own URL. The
+ *     previous behaviour's evident intent, and at worst an honest 404 that
+ *     names a real URL instead of a string `fetch` cannot parse.
+ *
+ * @param {object} row a decoded mirror row
+ * @param {string|undefined} mirrorUrl the mirror parquet's own absolute URL
+ * @returns {string|undefined}
+ */
+export function resolveMirrorPartUrl(row, mirrorUrl) {
+  const asset = row?.assets?.data;
+  const href = row?.href ?? row?.url ?? asset?.href ?? row?.['assets.data.href'];
+  if (typeof href !== 'string' || !href) return href ?? undefined;
+  if (isAbsoluteUri(href)) return href;
+
+  const selfLink = (row?.links ?? []).find((l) => l?.rel === 'self')?.href;
+  if (isAbsoluteUri(selfLink)) {
+    try {
+      return new URL(href, selfLink).toString();
+    } catch { /* fall through */ }
+  }
+
+  if (mirrorUrl) {
+    const mirrorDir = mirrorUrl.replace(/[^/]*$/, '');
+    let mirrorDirPath;
+    try {
+      mirrorDirPath = new URL(mirrorDir).pathname;
+    } catch {
+      mirrorDirPath = null;
+    }
+    if (mirrorDirPath) {
+      for (const alt of alternateHrefs(asset)) {
+        if (!isAbsoluteUri(alt)) continue;
+        for (const altPath of candidatePaths(alt)) {
+          const at = altPath.indexOf(mirrorDirPath);
+          if (at === -1) continue;
+          const belowCollection = altPath.slice(at + mirrorDirPath.length);
+          if (!belowCollection) continue;
+          try {
+            return new URL(belowCollection, mirrorDir).toString();
+          } catch { /* fall through */ }
+        }
+      }
+    }
+    try {
+      return new URL(href, mirrorUrl).toString();
+    } catch { /* fall through */ }
+  }
+
+  return href;
+}
+
 /** Best-effort mapping of a collection-mirror (STAC-GeoParquet) row to a DatasetPart. */
-function partFromMirrorRow(row, keys) {
-  const url = row.href ?? row.url ?? row.assets?.data?.href ?? row['assets.data.href'];
+function partFromMirrorRow(row, keys, mirrorUrl) {
+  const url = resolveMirrorPartUrl(row, mirrorUrl);
   const bbox = Array.isArray(row.bbox)
     ? /** @type {[number,number,number,number]} */ (row.bbox)
     : row.bbox
@@ -124,9 +238,15 @@ function partFromMirrorRow(row, keys) {
   const end = row.end_datetime ?? row.datetime ?? null;
   const partKeys = {};
   for (const k of keys) if (row[k.name] !== undefined) partKeys[k.name] = row[k.name];
+  // A mirror row usually repeats its hive key as a column -- but FTW's does
+  // not (its `zone` lives only in the item's directory), and until the URL
+  // above resolved to a real path there was nothing to read it back from.
+  // Same fallback `stac-items` parts get, for the same reason: without it
+  // an explicit `filter.partitions` silently matches every part.
+  const resolvedKeys = Object.keys(partKeys).length ? partKeys : (url ? keysFromHiveUrl(url, keys) : undefined);
   return {
     url,
-    keys: Object.keys(partKeys).length ? partKeys : undefined,
+    keys: resolvedKeys,
     bbox,
     rowCount: row.row_count ?? row['table:row_count'],
     bytes: row.file_size ?? row.bytes,

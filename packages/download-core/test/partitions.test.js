@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { enumeratePartitions, partitionPruneCascade } from '../src/partitions.js';
+import { enumeratePartitions, partitionPruneCascade, resolveMirrorPartUrl } from '../src/partitions.js';
+import { setHyparquetModules, clearHyparquetModules } from '../src/cdn.js';
 
 // Synthetic FIRMS-shaped hive source (design doc §2.7 worked example):
 // year=* partitions, declared values -- the 'declared' enumeration needs
@@ -180,4 +181,120 @@ test('partitionPruneCascade: parts with no bbox/interval metadata at all are nev
   const bare = [{ url: 'https://x/a.parquet' }, { url: 'https://x/b.parquet' }];
   const { selected } = partitionPruneCascade(bare, [[0, 0, 1, 1]], { start: '2020-01-01', end: '2020-02-01' }, undefined);
   assert.equal(selected.length, 2);
+});
+
+// --- resolveMirrorPartUrl: a collection-mirror row's relative asset href
+// (design doc §2.1 PartitionEnumeration; found against the live Fields of
+// the World 2019 collection, whose mirror stores `./utm01.parquet` for an
+// item that actually lives in `zone=01/`). ---
+
+const FTW_MIRROR = 'https://data.source.coop/ftw/global-data-2e/vector/2019/items.parquet';
+
+test('resolveMirrorPartUrl: an already-absolute href is returned untouched', () => {
+  const row = { assets: { data: { href: 'https://example.test/a/b.parquet' } } };
+  assert.equal(resolveMirrorPartUrl(row, FTW_MIRROR), 'https://example.test/a/b.parquet');
+});
+
+test('resolveMirrorPartUrl: a relative href resolves against the row\'s own self link', () => {
+  const row = {
+    assets: { data: { href: './utm01.parquet' } },
+    links: [{ rel: 'self', href: 'https://data.source.coop/ftw/global-data-2e/vector/2019/zone=01/utm01.json' }],
+  };
+  assert.equal(
+    resolveMirrorPartUrl(row, FTW_MIRROR),
+    'https://data.source.coop/ftw/global-data-2e/vector/2019/zone=01/utm01.parquet',
+  );
+});
+
+test('resolveMirrorPartUrl: FTW\'s real shape -- a relative href recovers its hive directory from the s3 alternate', () => {
+  // Exactly the row shape read off the live mirror: a relative href, no
+  // self link, no `zone` column, and an `alternate.s3.href` carrying the
+  // full path. This is the case that made every estimate fail.
+  const row = {
+    id: 'utm01',
+    assets: {
+      data: {
+        href: './utm01.parquet',
+        alternate: { s3: { href: 's3://ftw/global-data-2e/vector/2019/zone=01/utm01.parquet' } },
+      },
+    },
+  };
+  assert.equal(
+    resolveMirrorPartUrl(row, FTW_MIRROR),
+    'https://data.source.coop/ftw/global-data-2e/vector/2019/zone=01/utm01.parquet',
+  );
+});
+
+test('resolveMirrorPartUrl: with neither self link nor alternate, falls back to the mirror\'s own directory', () => {
+  const row = { assets: { data: { href: './flat.parquet' } } };
+  assert.equal(
+    resolveMirrorPartUrl(row, FTW_MIRROR),
+    'https://data.source.coop/ftw/global-data-2e/vector/2019/flat.parquet',
+  );
+});
+
+test('resolveMirrorPartUrl: never returns a bare relative string once a mirror URL is known', () => {
+  for (const href of ['./a.parquet', 'a.parquet', '../up/a.parquet', '/abs/a.parquet']) {
+    const out = resolveMirrorPartUrl({ assets: { data: { href } } }, FTW_MIRROR);
+    assert.ok(/^https:\/\//.test(out), `${href} -> ${out}`);
+  }
+});
+
+test('enumeratePartitions: a collection-mirror yields absolute part URLs and recovers hive keys from them', async () => {
+  // A mirror whose rows look like FTW's, served through an injected
+  // hyparquet so the test stays offline.
+  const rows = [
+    {
+      id: 'utm01',
+      bbox: { xmin: -175.3, ymin: -21.2, xmax: -175.0, ymax: -21.0 },
+      'table:row_count': 7335,
+      assets: {
+        data: {
+          href: './utm01.parquet',
+          'file:size': 4379586,
+          alternate: { s3: { href: 's3://ftw/global-data-2e/vector/2019/zone=01/utm01.parquet' } },
+        },
+      },
+    },
+    {
+      id: 'utm10',
+      bbox: { xmin: -124.5, ymin: 34.4, xmax: -119.1, ymax: 57.7 },
+      'table:row_count': 305720,
+      assets: {
+        data: {
+          href: './utm10.parquet',
+          'file:size': 282789498,
+          alternate: { s3: { href: 's3://ftw/global-data-2e/vector/2019/zone=10/utm10.parquet' } },
+        },
+      },
+    },
+  ];
+  setHyparquetModules({
+    hyparquet: {
+      asyncBufferFromUrl: async () => ({}),
+      parquetMetadataAsync: async () => ({}),
+      parquetReadObjects: async () => rows,
+    },
+    compressors: {},
+  });
+  try {
+    const { parts, requests } = await enumeratePartitions({
+      kind: 'hive',
+      scheme: 'hive',
+      glob: 'https://data.source.coop/ftw/global-data-2e/vector/2019/zone=*/utm*.parquet',
+      keys: [{ name: 'zone', type: 'string' }],
+      enumeration: { kind: 'collection-mirror', url: FTW_MIRROR },
+    });
+    assert.equal(requests, 1);
+    assert.deepEqual(parts.map((p) => p.url), [
+      'https://data.source.coop/ftw/global-data-2e/vector/2019/zone=01/utm01.parquet',
+      'https://data.source.coop/ftw/global-data-2e/vector/2019/zone=10/utm10.parquet',
+    ]);
+    // The hive key the mirror never stored as a column, read back off the URL.
+    assert.deepEqual(parts.map((p) => p.keys), [{ zone: '01' }, { zone: '10' }]);
+    assert.deepEqual(parts[0].bbox, [-175.3, -21.2, -175.0, -21.0]);
+    assert.equal(parts[0].rowCount, 7335);
+  } finally {
+    clearHyparquetModules();
+  }
 });
