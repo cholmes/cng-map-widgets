@@ -381,9 +381,21 @@ function buildBatch(rows, outputColumns, geometryColumn) {
     if (name === geometryColumn) continue;
     columns[name] = rows.map((r) => r[name] ?? null);
   }
-  // Always raw WKB already (parquet-io.js's `geoparquet: false`), so
-  // `FeatureBatch.geometry`'s WKB contract (design doc §3.4) is satisfied
-  // with no decode/re-encode round trip.
-  const geometry = rows.map((r) => r[geometryColumn] ?? null);
+  // `outputColumns` is the one place `filter.columns.dropGeometry` already
+  // takes effect (`columns.js`'s `resolveOutputColumns`): it excludes
+  // `geometryColumn` from the *output* projection, unconditionally, even
+  // though `readColumns` (`resolveReadColumns` / `geometryNeededForFilter`)
+  // may still have asked the engine to decode geometry internally to
+  // evaluate a spatial filter. Without this check, a `dropGeometry` request
+  // with an `intersects` filter would read geometry for filtering (as it
+  // must) and then leak those same decoded bytes into every writer via
+  // `batch.geometry` -- the "no-op, not an error" bug this check closes.
+  // Every writer must still receive an array the length of `rows`, so a
+  // dropped geometry is `null` per row rather than an omitted field: a
+  // format whose output always carries a `geometry` member (GeoJSON's
+  // `Feature.geometry`, nullable by the RFC) writes `null`; GeoParquet's
+  // writer (`formats/geoparquet.js`) goes further and omits the physical
+  // column entirely when every row model reaching it is `null`.
+  const geometry = outputColumns.includes(geometryColumn) ? rows.map((r) => r[geometryColumn] ?? null) : rows.map(() => null);
   return { rows: rows.length, columns, geometry };
 }

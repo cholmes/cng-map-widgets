@@ -547,12 +547,23 @@ exist.
   `onFormatState` subscription instead of only being bumped in `finally`,
   which is also what makes a *failed* format load show up in the picker.
   Branch is local and unpushed, so nothing is broken for anyone yet.
-- **Two API lies found and left unfixed** (outside this pass's scope, both
-  in the root README's known-issues table now): `inferTableFromSchema`
-  flattens struct children, so a dataset with a `bbox` struct and no
-  declared `table` fails its read; and `filter.columns.dropGeometry` is a
-  silent no-op because `buildBatch` always populates `batch.geometry`.
-  Both are small fixes; say the word.
+- **Two API lies found, and now fixed** (were in the root README's
+  known-issues table; both entries removed now that they're closed):
+  `inferTableFromSchema` no longer flattens a struct's children into the
+  top-level column list — it walks the schema's `num_children` nesting and
+  keeps a struct (e.g. `bbox`) as one column, so a dataset with a struct
+  `bbox` and no declared `table` reads correctly. `filter.columns.dropGeometry`
+  now actually drops geometry from the output: `buildBatch`
+  (`engine-hyparquet.js`) only populates `batch.geometry` when
+  `outputColumns` still carries the geometry column, and the GeoParquet
+  writer omits the physical column and the `geo` metadata entirely. The
+  design decision behind the combination of `dropGeometry` with a spatial
+  filter — never a refusal, because `dropGeometry` is an output-only
+  instruction; geometry is still read internally whenever row-level
+  filtering needs it (`columns.js`'s `geometryNeededForFilter`) — is
+  documented there and in the design doc's §3.4 amendment below. Tests:
+  `packages/download-core/test/infer-table.test.js`,
+  `columns.test.js`, `drop-geometry.test.js`.
 - **`limit: 0`** now returns zero rows instead of one. Called it a bug fix.
 - The **measurement discrepancy I thought I had found is not real** —
   worth recording because it nearly went into the doc as a finding. A

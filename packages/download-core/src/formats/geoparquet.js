@@ -65,7 +65,7 @@ const TYPE_MAP = {
  *
  * @param {readonly { name: string, type?: string }[]} schema
  * @param {import('../bounded.js').Bounded} rows
- * @param {{ avgGeometryBytes?: number|null }} [ctx]
+ * @param {{ avgGeometryBytes?: number|null, geometryColumn?: string }} [ctx]
  * @returns {import('../bounded.js').Bounded}
  */
 export function estimateGeoParquetBytes(schema, rows, ctx) {
@@ -73,7 +73,13 @@ export function estimateGeoParquetBytes(schema, rows, ctx) {
   // text. Measured 31 B/row of non-geometry bytes for FTW's 3-column
   // schema plus its four covering columns, 54 for CGAZ ADM0's 4.
   const perRowProps = schema.length * 10;
-  const perRowGeometry = typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 1.0 : 60;
+  // `filter.columns.dropGeometry`: see `geojson.js`'s `estimateGeoJsonBytes`
+  // for why this checks `schema` rather than always adding the geometry
+  // term. This format's writer (`close()`, below) omits the geometry
+  // column and the `geo` metadata entirely in that case, so 0 is the
+  // honest number, not even the 60-byte flat fallback.
+  const geometryKept = !ctx?.geometryColumn || schema.some((c) => c.name === ctx.geometryColumn);
+  const perRowGeometry = !geometryKept ? 0 : typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 1.0 : 60;
   const perRow = perRowProps + perRowGeometry;
   return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
 }
@@ -92,6 +98,19 @@ export function createGeoParquetFormat() {
       // row with geometry, not just at `close()` (which already awaited
       // `loadHyparquetWriter()` for `parquetWriteBuffer`).
       const { geojsonToWkb } = await loadHyparquetWriter();
+
+      // `filter.columns.dropGeometry` (design doc §2.2): `ctx.schema` is
+      // built from `plan.outputColumns` (`download.js`'s `schemaFor`), which
+      // `resolveOutputColumns` already excludes the geometry column from
+      // when `dropGeometry` is set -- so its absence here is the one
+      // signal this writer needs, with no separate flag threaded through
+      // `FormatContext`. `batch.geometry[i]` arrives all-`null` in that
+      // case regardless (`engine-hyparquet.js`'s `buildBatch`), but a
+      // GeoParquet file can do better than GeoJSON's "the member is `null`"
+      // compromise: omit the physical column, and the `geo` GeoParquet
+      // metadata that describes it, entirely, so the output is an honest
+      // plain Parquet file with no trace of geometry at all.
+      const dropGeometry = !ctx.schema.some((c) => c.name === ctx.geometryColumn);
 
       /** @type {Record<string, unknown[]>} */
       const columnData = {};
@@ -123,6 +142,10 @@ export function createGeoParquetFormat() {
               if (needsBigInt && typeof v === 'number') v = BigInt(v);
               columnData[name].push(v ?? null);
             }
+          }
+          if (dropGeometry) {
+            rows += batch.rows;
+            return;
           }
           for (let i = 0; i < batch.rows; i++) {
             const wkb = batch.geometry[i];
@@ -170,12 +193,22 @@ export function createGeoParquetFormat() {
             const declared = ctx.schema.find((c) => c.name === name)?.type;
             columnSources.push({ name, data, type: TYPE_MAP[declared], nullable: true });
           }
-          columnSources.push({ name: ctx.geometryColumn, data: geometryData, type: 'BYTE_ARRAY', nullable: true });
-          if (writeCovering) {
-            columnSources.push({ name: 'bbox_xmin', data: bboxCols.xmin, type: 'DOUBLE', nullable: true });
-            columnSources.push({ name: 'bbox_ymin', data: bboxCols.ymin, type: 'DOUBLE', nullable: true });
-            columnSources.push({ name: 'bbox_xmax', data: bboxCols.xmax, type: 'DOUBLE', nullable: true });
-            columnSources.push({ name: 'bbox_ymax', data: bboxCols.ymax, type: 'DOUBLE', nullable: true });
+          // `filter.columns.dropGeometry`: write a plain Parquet file --
+          // no geometry column, no covering columns, no `geo` GeoParquet
+          // metadata at all -- rather than a geometry column that exists
+          // but is entirely `null` plus a `geo` key-value entry describing
+          // a covering with nothing in it. That half-measure was
+          // considered and rejected: it still names a `primary_column`
+          // that carries no data, which is a worse lie than the one this
+          // fix closes.
+          if (!dropGeometry) {
+            columnSources.push({ name: ctx.geometryColumn, data: geometryData, type: 'BYTE_ARRAY', nullable: true });
+            if (writeCovering) {
+              columnSources.push({ name: 'bbox_xmin', data: bboxCols.xmin, type: 'DOUBLE', nullable: true });
+              columnSources.push({ name: 'bbox_ymin', data: bboxCols.ymin, type: 'DOUBLE', nullable: true });
+              columnSources.push({ name: 'bbox_xmax', data: bboxCols.xmax, type: 'DOUBLE', nullable: true });
+              columnSources.push({ name: 'bbox_ymax', data: bboxCols.ymax, type: 'DOUBLE', nullable: true });
+            }
           }
 
           const geoMeta = {
@@ -215,7 +248,7 @@ export function createGeoParquetFormat() {
             columnData: columnSources,
             codec,
             rowGroupSize,
-            kvMetadata: [{ key: 'geo', value: JSON.stringify(geoMeta) }],
+            kvMetadata: dropGeometry ? [] : [{ key: 'geo', value: JSON.stringify(geoMeta) }],
             createdBy: '@cnmw/download-core',
           });
           const bytes = new Uint8Array(buffer);

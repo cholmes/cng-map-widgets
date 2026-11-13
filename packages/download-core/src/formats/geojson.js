@@ -41,7 +41,7 @@ function roundGeometry(geometry, precision) {
  *
  * @param {readonly { name: string, type?: string }[]} schema
  * @param {import('../bounded.js').Bounded} rows
- * @param {{ avgGeometryBytes?: number|null }} [ctx]
+ * @param {{ avgGeometryBytes?: number|null, geometryColumn?: string }} [ctx]
  * @returns {import('../bounded.js').Bounded}
  */
 export function estimateGeoJsonBytes(schema, rows, ctx) {
@@ -49,7 +49,17 @@ export function estimateGeoJsonBytes(schema, rows, ctx) {
   // Measured: 91 B/row of non-geometry text for FTW's 3-column schema,
   // 108 for CGAZ ADM0's 4.
   const perRowProps = schema.length * 25;
-  const perRowGeometry = typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 1.55 + 40 : 220;
+  // `filter.columns.dropGeometry`: `download.js`'s `schemaFor` already
+  // drops the geometry column from `schema` in that case (via
+  // `resolveOutputColumns`), so its absence -- checked only when `ctx`
+  // names a `geometryColumn` at all, which a direct unit-test call may not
+  // -- means the geometry term should be 0, not the generic fallback: a
+  // dropped GeoJSON geometry writes `"geometry":null`, not 220 bytes of
+  // coordinates. See `columns.js`'s `geometryNeededForFilter` for why this
+  // never makes the *read* skip geometry outright when a spatial filter is
+  // still evaluating it.
+  const geometryKept = !ctx?.geometryColumn || schema.some((c) => c.name === ctx.geometryColumn);
+  const perRowGeometry = !geometryKept ? 0 : typeof ctx?.avgGeometryBytes === 'number' ? ctx.avgGeometryBytes * 1.55 + 40 : 220;
   const perRow = perRowProps + perRowGeometry;
   return { min: rows.min * perRow, max: rows.max * perRow, estimate: rows.estimate * perRow, exact: false };
 }

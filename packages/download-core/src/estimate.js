@@ -7,7 +7,7 @@ import { resolveDataset } from './dataset-resolve.js';
 import { enumeratePartitions, partitionPruneCascade } from './partitions.js';
 import { openParquetFile } from './parquet-io.js';
 import { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, readBytesForRowGroups, coveringPaths, avgColumnBytesPerRow } from './prune.js';
-import { resolveOutputColumns, resolveReadColumns } from './columns.js';
+import { resolveOutputColumns, resolveReadColumns, geometryNeededForFilter } from './columns.js';
 import { defaultCeiling, requirementsOf } from './ceiling.js';
 import { boundedExact, boundedRange, sumBounded, capBounded, isEstimateWide } from './bounded.js';
 import { sha256Hex } from './digest.js';
@@ -20,17 +20,63 @@ export function bboxColumnNames(covering) {
   return [...new Set([covering.xmin, covering.ymin, covering.xmax, covering.ymax])];
 }
 
-/** Guess a minimal `DatasetTable` from a parquet schema when the descriptor didn't declare one. */
-function inferTableFromSchema(metadata) {
-  const names = metadata.schema.slice(1).map((e) => e.name); // schema[0] is the synthetic 'root'
+/**
+ * Walk a flat parquet `schema` array (thrift `SchemaElement[]`, `schema[0]`
+ * the synthetic root) and return only its *direct* children -- i.e. the
+ * dataset's real top-level (physical) columns, each with the number of
+ * flattened entries its own subtree occupies.
+ *
+ * A struct/group column (`num_children > 0`, e.g. a GeoParquet 1.1
+ * `bbox: {xmin, ymin, xmax, ymax}` covering) has its leaf fields flattened
+ * *inline*, immediately after it, in the same array -- there is no nesting
+ * in the wire format, only in `num_children`'s bookkeeping. Naively mapping
+ * every element's `.name` (as the previous version of this function did)
+ * therefore lists a struct's children as if they were columns of their own
+ * (`bbox`, *and* `xmin`, `ymin`, `xmax`, `ymax`), which is wrong twice over:
+ * `table.columns` gets four extra top-level entries that do not exist as
+ * physical columns, and a read that projects one of them fails with
+ * "parquet column not found" because hyparquet's `columns` option only
+ * accepts real top-level names. This walk instead treats `bbox` as *one*
+ * column, matching `predicate.js`'s dotted-path addressing of its children
+ * (`bbox.xmin`) and `prune.js`'s/`columns.js`'s use of `covering.column`.
+ * @param {readonly { name: string, num_children?: number }[]} schema
+ * @returns {{ name: string, isStruct: boolean }[]}
+ */
+function topLevelSchemaColumns(schema) {
+  /** Size (element count) of the subtree rooted at `schema[index]`, including itself. */
+  function subtreeSize(index) {
+    const numChildren = schema[index].num_children ?? 0;
+    let size = 1;
+    let seen = 0;
+    while (seen < numChildren) {
+      size += subtreeSize(index + size);
+      seen += 1;
+    }
+    return size;
+  }
+  const out = [];
+  let i = 1; // schema[0] is the synthetic root
+  while (i < schema.length) {
+    const el = schema[i];
+    out.push({ name: el.name, isStruct: (el.num_children ?? 0) > 0 });
+    i += subtreeSize(i);
+  }
+  return out;
+}
+
+/** Guess a minimal `DatasetTable` from a parquet schema when the descriptor didn't declare one. @param {{ schema: readonly { name: string, num_children?: number }[] }} metadata */
+export function inferTableFromSchema(metadata) {
+  const topLevel = topLevelSchemaColumns(metadata.schema);
+  const names = topLevel.map((c) => c.name);
   const geometryColumn = names.includes('geometry') ? 'geometry' : names[names.length - 1];
-  const bbox = names.includes('bbox') ? { kind: 'struct', column: 'bbox' } : { kind: 'none' };
+  const bboxCol = topLevel.find((c) => c.name === 'bbox');
+  const bbox = bboxCol?.isStruct ? { kind: 'struct', column: 'bbox' } : { kind: 'none' };
   return {
     geometryColumn,
     geometryEncoding: 'WKB',
     crs: 'OGC:CRS84',
     bbox,
-    columns: names.map((name) => ({ name, type: 'unknown' })),
+    columns: topLevel.map((c) => ({ name: c.name, type: c.isStruct ? 'struct' : 'unknown' })),
   };
 }
 
@@ -119,9 +165,15 @@ export async function planRequest(dataset, area, filter, options = {}) {
   }
 
   const bboxCols = bboxColumnNames(covering);
-  const allColumns = table.columns?.map((c) => c.name) ?? [...new Set(perPart.flatMap((p) => [...p.handle.metadata.schema.slice(1).map((e) => e.name)]))];
+  const allColumns = table.columns?.map((c) => c.name) ?? [...new Set(perPart.flatMap((p) => topLevelSchemaColumns(p.handle.metadata.schema).map((c) => c.name)))];
   const outputColumns = resolveOutputColumns(filter.columns, allColumns, geometryColumn, bboxCols);
-  const readColumns = resolveReadColumns(outputColumns, filter, table.timeColumn ?? null, bboxCols, geometryColumn);
+  // Geometry is always excluded from `outputColumns` when `dropGeometry` is
+  // set (`resolveOutputColumns`, above), but it may still need to be *read*
+  // -- never output, just read -- when a spatial filter can't be decided
+  // without it. See `columns.js`'s `geometryNeededForFilter` doc comment
+  // for the exact rule and the design decision behind it.
+  const needsGeometryForFilter = geometryNeededForFilter(area, covering, filter.spatial);
+  const readColumns = resolveReadColumns(outputColumns, filter, table.timeColumn ?? null, bboxCols, geometryColumn, needsGeometryForFilter);
 
   const rowGroupBboxStage = {
     stage: 'row-group-bbox',

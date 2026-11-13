@@ -3120,6 +3120,103 @@ download}.js` and `src/formats/{geojson,geoparquet}.js`, plus
 `packages/download-core/test/{engine-concurrency,prune-where,
 estimate-geometry-bytes}.test.js`.
 
+### Amendment, 2026-11-13 — reason: two download-core API lies closed
+(root README's known-issues table)
+
+Two entries in the known-issues table described behaviour that
+contradicted this document outright, rather than a documented gap. Both
+are fixed; the table entries are removed.
+
+#### 1. `inferTableFromSchema` no longer flattens a struct's children into the top-level column list
+
+A parquet footer's `schema` is a **flat** array of thrift `SchemaElement`s
+in file order — `schema[0]` a synthetic root, every other element either a
+leaf column or a struct/group whose own children immediately follow it,
+with `num_children` the only thing that says where its subtree ends. The
+previous version of this function read every element's `.name` after the
+root as if the array were already a column list
+(`metadata.schema.slice(1).map((e) => e.name)`). For a GeoParquet 1.1
+covering declared as a `bbox: {xmin, ymin, xmax, ymax}` struct (the shape
+§2.1's `BboxCovering` documents, and the shape CGAZ/GAUL/World Bank
+publish), that listed `bbox` **and** `xmin`, `ymin`, `xmax`, `ymax` as four
+additional top-level columns that do not exist as physical parquet
+columns. A dataset descriptor that declared `table` explicitly never hit
+this (every descriptor in this repo does), but one that didn't — relying
+on this function to infer the table — got `table.columns` with those four
+phantom entries, and a read that projected one of them failed with
+hyparquet's "parquet column not found".
+
+The fix walks the flat array respecting `num_children`, so a struct is
+kept as **one** top-level column (`{ name: 'bbox', type: 'struct' }`),
+exactly matching how `predicate.js`'s dotted-path addressing
+(`bbox.xmin`), `prune.js`'s `coveringPaths`, and `columns.js`'s
+`BboxCovering.column` already treat it. No change to any declared-`table`
+path; this only changes what an *inferred* table looks like.
+
+Implemented: `packages/download-core/src/estimate.js`
+(`topLevelSchemaColumns`, `inferTableFromSchema`). Tests:
+`packages/download-core/test/infer-table.test.js`, against the real
+struct-`bbox` fixtures `test/fixtures/{geo-metadata,bare}.parquet` (shared
+with `geoparquet-decode.test.js`) plus synthetic schemas for a
+non-`bbox`-named struct and a two-level-nested one.
+
+#### 2. `filter.columns.dropGeometry` now actually drops geometry from the output
+
+`resolveOutputColumns` (`columns.js`) already excluded the geometry column
+from `outputColumns` correctly. The bug was downstream:
+`engine-hyparquet.js`'s `buildBatch` populated `batch.geometry` from the
+decoded row unconditionally, and every `FormatWriter` wrote from
+`batch.geometry` unconditionally — `dropGeometry` changed nothing an
+output ever saw.
+
+**The design decision, worked through rather than assumed:** `dropGeometry`
+is an *output* instruction only — "this download is a different product,
+without geometry" (§2.2's `ColumnProjection` doc comment) — never a
+promise that the engine will not look at the geometry column while
+deciding what to filter. A spatial filter in `mode: 'intersects'` (or
+`'clip'`, which runs `intersects` first) needs the real, decoded geometry
+for its point-in-polygon/edge test regardless of what the output asks for;
+so does `mode: 'bbox'` when the dataset has no bbox covering at all (§2.1
+`BboxCovering: { kind: 'none' }`), because then there is no statistic to
+get a row's bbox from except decoding its geometry. **This is deliberately
+not a refusal.** `FILTER_REQUIRES_ENGINE` (`ceiling.js`'s
+`requirementsOf`) exists for a filter an engine's declared `capabilities`
+genuinely cannot run at all (`exact-clip` today); the hyparquet engine's
+`'intersects'` capability already means "I can decode geometry to test it
+exactly", so a `dropGeometry` request combined with a spatial filter the
+engine can already satisfy is never refused — it simply reads geometry
+when filtering needs it and withholds it from the output regardless. The
+exact rule — four cases, each with its reasoning — is
+`columns.js`'s `geometryNeededForFilter`, consumed by
+`resolveReadColumns`'s new (optional, default-`true` for backward
+compatibility) fifth argument. The net effect: geometry is excluded from
+the *read* wherever nothing needs it (the common case — most downloads
+have no spatial filter at all, or one a bbox covering already answers),
+and excluded from the *output* unconditionally, every time.
+
+`buildBatch` now only sets `batch.geometry[i]` from the decoded row when
+`outputColumns` still carries the geometry column; otherwise every entry
+is `null`, regardless of whether the column was read. A format whose
+output always carries a geometry member (GeoJSON's `Feature.geometry`, in
+`FormatWriter`'s terms "null for a null geometry") therefore writes
+`null` for every feature. GeoParquet's writer does better, because it can:
+it omits the physical geometry column, the `bbox_*` covering columns, and
+the whole `geo` GeoParquet key-value metadata entry, producing an honest
+plain Parquet file rather than a geometry column that exists but carries
+nothing. `FormatPlugin.estimateBytes`'s geometry term (the item-7
+amendment above) is correspondingly zero when the output schema it is
+given has no geometry column, so a dropped-geometry request's
+`outputBytes` estimate — and therefore its ceiling check — reflects what
+actually gets written, not what would have been written with geometry.
+
+Implemented: `packages/download-core/src/{columns,engine-hyparquet,
+estimate}.js` and `src/formats/{geojson,geoparquet}.js`. Tests:
+`packages/download-core/test/{columns,drop-geometry}.test.js`, including
+an end-to-end case that drops geometry *and* runs an `intersects` filter
+against a real fixture, asserting both that filtering is still correct
+(only the row that actually intersects comes back) and that the output
+carries no geometry.
+
 ### Amendment, 2026-11-12 — reason: lazy format loading (O5's heavy-format
 survey, E10)
 
