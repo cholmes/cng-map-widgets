@@ -63,9 +63,8 @@ const LOCAL_INDEX_URL = './data/index.json';
 // catalog, like the not-yet-published cn-geocoder-overture staging tree);
 // no param -> the live published geoboundaries-catalog.
 const OVERTURE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.json';
-// Who's On First: locally served staging until its source.coop repo exists
-// (then this flips to data.source.coop/portolan-mirrors/whosonfirst-catalog/...).
-const WOF_INDEX_URL = 'http://localhost:8789/names/index.json';
+// Who's On First: the live published catalog (9,478,779 names, levels 0-5).
+const WOF_INDEX_URL = 'https://data.source.coop/portolan-mirrors/whosonfirst-catalog/names/index.json';
 const indexParam = new URLSearchParams(location.search).get('index');
 const indexUrl = indexParam === 'local' ? LOCAL_INDEX_URL
   : indexParam === 'overture' ? OVERTURE_INDEX_URL
