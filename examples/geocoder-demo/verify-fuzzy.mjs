@@ -63,11 +63,20 @@ async function typeAndCollect(query, { expectOptions }) {
   const ms = Date.now() - t0;
   // The last 'results' emission for this query, straight off the geocoder
   // -- the source of truth for rank.matchClass, which the dropdown text
-  // doesn't carry.
-  const results = await page.evaluate(async (q) => {
-    const r = await window.__cnmwDemo.geocoder.search(q);
-    return r.map((x) => ({ name: x.name, country: x.country, level: x.level, matchClass: x.rank.matchClass, similarity: x.rank.similarity }));
-  }, query);
+  // doesn't carry. On a range-mode index this evaluate()'s search can race
+  // the widget's own debounced keystroke search: whichever starts last
+  // supersedes the other, and a superseded search resolves [] by contract.
+  // So when options are expected, retry an empty answer a few times until
+  // the widget has settled and our search is the last one standing.
+  let results = [];
+  for (let attempt = 0; attempt < (expectOptions ? 6 : 1); attempt += 1) {
+    results = await page.evaluate(async (q) => {
+      const r = await window.__cnmwDemo.geocoder.search(q);
+      return r.map((x) => ({ name: x.name, country: x.country, level: x.level, matchClass: x.rank.matchClass, similarity: x.rank.similarity }));
+    }, query);
+    if (results.length > 0 || !expectOptions) break;
+    await page.waitForTimeout(1_000);
+  }
   const options = await page.$$eval('li[role="option"]', (els) => els.map((el) => el.textContent.trim()));
   console.log(`"${query}" -> ${options.length} dropdown options in ${ms} ms;`, JSON.stringify(results.slice(0, 3)));
   return { options, results };
@@ -134,6 +143,34 @@ await openDemo('?index=overture');
     throw new Error(`"brookln": Brooklyn should rank first (population promotion), got ${JSON.stringify(results.slice(0, 3))}`);
   }
   console.log('PASS: typo "brookln" surfaces Brooklyn first via the prominent-index fuzzy scan (range mode).');
+}
+
+// ── 4. The LIVE Who's On First catalog (range strategy + eager prominent) ───
+// Published 2026-11-13 with names/wof_names_prominent.parquet (285,735 rows,
+// english_guarantee): the file this fuzzy scan reads in range mode.
+await openDemo('?index=wof');
+{
+  const { options, results } = await typeAndCollect('liechtenstien', { expectOptions: true });
+  const hit = results.find((r) => r.name === 'Liechtenstein');
+  if (!hit) throw new Error(`WOF "liechtenstien": expected Liechtenstein, got ${JSON.stringify(results)}`);
+  if (hit.matchClass !== 'fuzzy') throw new Error(`WOF "liechtenstien": expected matchClass 'fuzzy', got '${hit.matchClass}'`);
+  if (!options.some((o) => o.includes('Liechtenstein'))) throw new Error('WOF: Liechtenstein not visible in the dropdown');
+  console.log('PASS: typo "liechtenstien" surfaces Liechtenstein via the live WOF prominent index (range mode).');
+  const wofShot = path.join(here, 'screenshot-fuzzy-wof.png');
+  await page.screenshot({ path: wofShot });
+  console.log('Screenshot saved to', wofShot);
+}
+{
+  // WOF's 9.5M names include a real locality literally spelled "Bagdhad"
+  // (India), so this typo is an EXACT match there and the fallback must
+  // stay out of the way -- the sharpest live proof of the zero-results
+  // trigger condition.
+  const { results } = await typeAndCollect('bagdhad', { expectOptions: true });
+  if (results.length === 0) throw new Error('WOF "bagdhad": expected prefix/exact results');
+  if (results.some((r) => r.matchClass === 'fuzzy')) {
+    throw new Error(`WOF "bagdhad": fuzzy fired despite real matches: ${JSON.stringify(results.slice(0, 3))}`);
+  }
+  console.log('PASS: "bagdhad" is a real WOF place (exact match) and the fallback correctly stays silent.');
 }
 
 console.log('\nConsole errors:', consoleErrors.length);

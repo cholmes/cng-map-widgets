@@ -35,10 +35,11 @@
 > gpq null-geometry panic · geoBoundaries mojibake/invalid-geoms/ADM1-drift
 > · FIRMS extent vs newest partition + row-group stats · fieldmaps STAC
 > license field · sort-on-filtered-column advocacy.
-> **Chris's queue:** WOF source.coop repo · MIT confirm · @cnmw scope ·
-> gbOpen ADM3/4 (rec: skip) · browser-card decisions (date-window ≥2yr
-> default, "More formats" grouping, CDN writers) · tge-labs deletion after
-> cutover.
+> **Chris's queue:** @cnmw scope · gbOpen ADM3/4 (rec: skip) · browser-card
+> decisions (date-window ≥2yr default, "More formats" grouping, CDN writers)
+> · tge-labs deletion after cutover. (WOF source.coop repo + MIT: done —
+> catalog LIVE 2026-11-13 with prominent index; demo ?index=wof points at
+> the published manifest.)
 
 > **Naming decision (2026-11-12, Chris):** the DATA products are **cloud-native
 > gazetteers** — the names indexes and the catalogs that publish them
@@ -412,12 +413,22 @@ gazet in code and READMEs.
   range/prominent paths); `verify-fuzzy.mjs` browser-verified live on
   geoBoundaries + Overture, screenshot committed; verify-snippets 60/60.
 
-**Catalog follow-up queued, out of widget scope:** the Overture
-`prominent_index` is missing Baghdad-the-locality entirely (Iraq ADM0 alt
-rows and 112K-pop Bagalkote are in; the 7.2M-pop capital is not), so
-"bagdhad" on Overture finds nothing — prominent-selection criteria in
-cn-gazetteer-overture need a look. WOF catalog should ship a
-`prominent_index` to get fuzzy (and two-wave search) at all.
+**Catalog follow-up — both closed 2026-11-13:** (1) Overture's
+`prominent_index` was missing Baghdad-the-locality (level-4 alt rows were
+dropped; a non-Latin-primary city is reachable in English *only* through an
+alt row) — fixed in cn-gazetteer-overture 47a6a06 with a two-cut policy
+(primary ≥ 50, alt ≥ 70 prominence), published live, "bagdhad" verified in
+the browser. (2) WOF now ships `names/wof_names_prominent.parquet` (285,735
+rows, 21.2 MB, criteria in the manifest): all primaries at levels 0–2,
+localadmins at `mz≤12 OR pop≥25k`, localities at `mz≤10 OR pop≥50k`, alt
+spellings per level, plus an **english_guarantee** — English alt rows follow
+each level's primary rule, because this WOF build's primary names are in no
+particular language (Contra Costa County's primary row is Arabic; 328 of 353
+country primaries carry no Latin letter). Two-wave + fuzzy verified against
+the live catalog. Side discovery for the upstream-report queue:
+geocode.earth's language columns mislabel some English forms (e.g. "Contra
+Costa County" filed under `deu`), so the guarantee can only be as good as
+the `eng` column.
 
 ## Status snapshot (2026-11-13, pre-publish hardening pass)
 
