@@ -347,10 +347,30 @@ geometry, same as any other Area construction.
 | `coordinatePrecision` | 7 decimal places | ~1 cm. Trimmed on serialization only; in-memory geometry is untouched. |
 
 Tolerance search: binary search `toleranceDeg` over `[1e-7, 1]` for at most 20
-iterations, taking the largest tolerance whose output is under the ceiling;
-abort early if `areaDeltaRatio > areaDeltaMaxRatio`. Deterministic, no
-dependency on a geometry library, ~20 passes over the ring at worst, which for
-a 200k-vertex input is milliseconds.
+iterations, taking the **smallest** tolerance whose output fits under the
+ceiling; `areaDeltaMaxRatio` is a failure guard (degrade to bbox when even the
+gentlest ceiling-fitting tolerance breaches it), not an objective.
+Deterministic, no dependency on a geometry library, ~20 passes over the ring
+at worst, which for a 200k-vertex input is milliseconds.
+
+> **Amendment (2026-11-13, tolerance-search objective + bisection scale).**
+> As originally written (and implemented), the search took the **largest**
+> acceptable tolerance — maximizing simplification subject to the area
+> guard. That inverted the ceiling's meaning: a vertex ceiling is a detail
+> *budget*, and the caller wants as much detail as fits it. Measured
+> consequence: Poland ADM0 (68,026 full-resolution vertices, ceiling
+> 10,000) produced a **17-vertex** `filterGeometry` after the background
+> upgrade — coarser than the 1,085-vertex display geometry it replaced, so
+> the upgrade made `intersects` filtering *worse*, over-selecting near
+> boundaries while staying inside the 5% area budget. Both
+> `simplifyToVertexCeiling` and `simplifyToVertexCeilingAsync` now search
+> for the smallest ceiling-fitting tolerance, and bisect **geometrically**
+> (`mid = sqrt(lo*hi)`), since useful tolerances span orders of magnitude
+> within `[1e-7, 1]` and arithmetic bisection cannot reach the right decade
+> in the iteration budget (it stalled at 695 output vertices on the same
+> input; geometric reaches 9,994 of the 10,000 budget, area delta 7e-7, at
+> unchanged wall time). `degradedToBbox` semantics, outward-buffered
+> catalog display files, and the result shape are unchanged.
 
 ### 1.4 Multi-feature: union by default, `collect` not `dissolve`
 

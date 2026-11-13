@@ -56,6 +56,23 @@ test('simplifyToVertexCeiling reduces vertex count under the ceiling for a dense
   assert.ok(result.areaDeltaRatio <= 0.1);
 });
 
+test('simplifyToVertexCeiling USES the vertex budget, not just fits it (2026-11-13 fix)', () => {
+  // The ceiling is a detail budget: the search must return the SMALLEST
+  // tolerance that fits it, i.e. keep as many vertices as the budget
+  // allows -- not the most aggressive simplification the area guard
+  // tolerates. Before the 2026-11-13 fix this returned the latter:
+  // Poland's 68,026-vertex ADM0 came back as 17 filter vertices.
+  const geometry = { type: 'Polygon', coordinates: [manyVertexRing(5000)] };
+  const result = simplifyToVertexCeiling(geometry, { vertexCeiling: 500, areaDeltaMaxRatio: 0.1 });
+  assert.ok(result.outputVertices <= 500, `must fit the ceiling, got ${result.outputVertices}`);
+  assert.ok(
+    result.outputVertices >= 250,
+    `must use most of the 500-vertex budget (near-circular input simplifies smoothly), got ${result.outputVertices}`,
+  );
+  // And the retained detail means the area barely moves.
+  assert.ok(result.areaDeltaRatio < 0.01, `area delta should be tiny at this detail level, got ${result.areaDeltaRatio}`);
+});
+
 test('simplifyToVertexCeiling degrades to bbox when the area delta ceiling cannot be honored', () => {
   // A pathological ring that loses a lot of area whenever it's thinned:
   // force the area-delta ceiling to be impossibly tight.

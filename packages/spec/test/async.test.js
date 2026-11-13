@@ -80,6 +80,23 @@ test('simplifyToVertexCeilingAsync matches simplifyToVertexCeiling on the same i
   assert.deepEqual(asyncResult.geometry, sync.geometry);
 });
 
+test('simplifyToVertexCeilingAsync uses the vertex budget, not just fits it (2026-11-13 fix)', async () => {
+  // Mirror of the sync test: the background-upgrade path is the one that
+  // produced 17-vertex Poland filter geometry before the fix.
+  const n = 5000;
+  const ring = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * 2 * Math.PI;
+    ring.push([Math.cos(t), Math.sin(t)]);
+  }
+  ring.push(ring[0]);
+  const geometry = { type: 'Polygon', coordinates: [ring] };
+  const result = await simplifyToVertexCeilingAsync(geometry, { vertexCeiling: 500, areaDeltaMaxRatio: 0.1 });
+  assert.ok(result.outputVertices <= 500, `must fit the ceiling, got ${result.outputVertices}`);
+  assert.ok(result.outputVertices >= 250, `must use most of the budget, got ${result.outputVertices}`);
+  assert.ok(result.areaDeltaRatio < 0.01);
+});
+
 test('simplifyToVertexCeilingAsync: input already under the ceiling is returned untouched, no yielding needed', async () => {
   const geometry = { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]] };
   const result = await simplifyToVertexCeilingAsync(geometry, { vertexCeiling: 10_000 });

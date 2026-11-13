@@ -157,8 +157,21 @@ function simplifyAtTolerance(geometry, areaTolerance) {
 
 /**
  * Binary search `toleranceDeg` over [1e-7, 1] for at most 20 iterations
- * (design doc §1.3), taking the largest tolerance whose output is under
- * `vertexCeiling`; abort early if `areaDeltaRatio > areaDeltaMaxRatio`.
+ * (design doc §1.3, as amended 2026-11-13), taking the SMALLEST tolerance
+ * whose output fits under `vertexCeiling` -- the ceiling is a detail
+ * budget to be used, so the search keeps as many vertices as the budget
+ * allows. `areaDeltaMaxRatio` is a failure guard, not an objective: if
+ * even the gentlest ceiling-fitting tolerance distorts total area beyond
+ * it, the result degrades to bbox (`degradedToBbox: true`).
+ *
+ * (Until 2026-11-13 this searched the opposite direction -- the LARGEST
+ * acceptable tolerance -- which maximized simplification within the area
+ * budget: Poland's 68,026-vertex ADM0 came back as 17 vertices. That made
+ * every `filterGeometry` as coarse as 5% area drift allows, so spatial
+ * 'intersects' filters over-selected near boundaries, and a background
+ * full-resolution upgrade could return a *coarser* filter than the
+ * display geometry it replaced.)
+ *
  * `toleranceDeg` here is interpreted as a triangle-area tolerance in
  * degree^2 (not a linear distance) because Visvalingam is area-based; the
  * field name is kept as the design doc specifies.
@@ -220,28 +233,38 @@ export function simplifyToVertexCeiling(geometry, opts) {
   let bestAreaDeltaRatio = 0;
 
   for (let iter = 0; iter < 20; iter++) {
-    const mid = (lo + hi) / 2;
+    // Geometric (log-space) bisection, not arithmetic: the useful
+    // area-tolerance for a boundary at this coordinate scale lives
+    // somewhere in [1e-7, 1e-3] deg^2, 4+ orders of magnitude below the
+    // top of the range. Arithmetic bisection spends every iteration
+    // halving the uninteresting upper decades (after 12 of them the
+    // bracket is still ~2.4e-4) and lands far from the ceiling; halving
+    // the EXPONENT instead resolves the answer's decade immediately
+    // (measured on Poland ADM0, ceiling 10,000: arithmetic converged to
+    // 695 output vertices, geometric to ~9,900).
+    const mid = Math.sqrt(lo * hi);
     const candidate = simplifyAtTolerance(geometry, mid);
     const outputVertices = vertexCount(candidate);
     const candidateArea = totalArea(candidate);
     const areaDeltaRatio = originalArea === 0 ? 0 : Math.abs(candidateArea - originalArea) / originalArea;
 
-    if (outputVertices <= vertexCeiling && areaDeltaRatio <= areaDeltaMaxRatio) {
-      // Under budget and honest: this tolerance works; try a larger one
-      // (fewer vertices still) in case it's also acceptable.
-      best = candidate;
-      bestTolerance = mid;
-      bestOutputVertices = outputVertices;
-      bestAreaDeltaRatio = areaDeltaRatio;
+    if (outputVertices > vertexCeiling) {
+      // Not simplified enough to fit the ceiling: need a larger tolerance.
       lo = mid;
-    } else if (areaDeltaRatio > areaDeltaMaxRatio) {
-      // Too aggressive already; back off.
-      hi = mid;
     } else {
-      // Still over the vertex ceiling; go more aggressive.
-      lo = mid;
+      // Fits the ceiling. A smaller tolerance keeps MORE detail and
+      // distorts area LESS, so any later fitting candidate is strictly
+      // better than this one -- record this one (when it passes the area
+      // guard) and keep searching smaller.
+      if (areaDeltaRatio <= areaDeltaMaxRatio) {
+        best = candidate;
+        bestTolerance = mid;
+        bestOutputVertices = outputVertices;
+        bestAreaDeltaRatio = areaDeltaRatio;
+      }
+      hi = mid;
     }
-    if (hi - lo < 1e-9) break;
+    if (hi / lo < 1 + 1e-6) break; // bracket resolved (log-space convergence)
   }
 
   if (best === null || bestOutputVertices > vertexCeiling) {

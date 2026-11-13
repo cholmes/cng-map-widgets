@@ -383,6 +383,39 @@ every documented snippet now runs against real published data, not fixtures.
   three artifacts (`.js` / `.cdn.js` / `.bundle.js`) with `.d.ts` — nothing
   below needs it, but npm consumers will.
 
+## Status snapshot (2026-11-13 afternoon, simplifier fix + demo consistency + attribution/gear UX)
+
+Chris's Poland screenshot ("is the full vertice download really
+happening?") exposed three things; all fixed this session, verified
+locally only (he was on a phone connection — no live-catalog fetches, no
+pushes):
+
+- **Tolerance-search objective bug (spec)**: `simplifyToVertexCeiling`/
+  `Async` searched for the *largest* acceptable tolerance, so the
+  post-upgrade `filterGeometry` was the coarsest shape the 5% area guard
+  allowed — Poland 68,026 → **17** vertices. Fixed to smallest fitting
+  tolerance + geometric bisection: Poland now 68,026 → **9,994** of the
+  10,000 budget, area delta 7e-7, unchanged wall time. Design doc §1.3
+  amendment (2026-11-13) is normative. Regression tests pin the
+  budget-use semantics in both sync and async suites.
+- **Example-page inconsistency**: only geocoder-demo opted into
+  `upgradeDisplay: true` — Chris was on another page, where the visible
+  outline deliberately stayed at display resolution. All example pages
+  (quickstart, download-demo, upload-demo, s2-footprints, firms-explorer,
+  raster-demo) now use `geometry: { resolution: 'both', upgradeDisplay:
+  true }`, and pages that capture `area` for estimates refresh it on
+  `area:upgraded`. download-demo also accepts `?index=<manifest URL>`
+  like the geocoder-demo. Verified in-browser (local :8787 + :8790
+  staging catalog): download-demo outline 1,085 → 68,026 vertices.
+- **Attribution UX + gazetteer picker**: see the control changes in this
+  session's commits (compact bottom-left ⓘ replacing the full-width
+  citation line; ⚙ gazetteer picker on demo pages).
+
+**TODO when off the phone connection**: run `node
+docs/verify-snippets.mjs` (hits live catalogs; deliberately skipped this
+session) and re-verify one upgraded-outline select against the LIVE
+geoBoundaries manifest.
+
 ## Status snapshot (2026-11-13, fuzzy fallback — gazet adaptation)
 
 Chris asked whether Development Seed's

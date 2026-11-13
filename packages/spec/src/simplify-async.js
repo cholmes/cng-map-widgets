@@ -232,24 +232,32 @@ export async function simplifyToVertexCeilingAsync(geometry, opts) {
   for (let iter = 0; iter < maxIterations; iter++) {
     signal?.throwIfAborted();
     await yieldToMain(); // always yield between binary-search passes, even on small inputs
-    const mid = (lo + hi) / 2;
+    // Geometric bisection -- see simplify.js (2026-11-13): halve the
+    // exponent, not the value, so few iterations still land in the
+    // right tolerance decade.
+    const mid = Math.sqrt(lo * hi);
     const candidate = await simplifyAtToleranceAsync(geometry, mid, ringOpts);
     const outputVertices = vertexCount(candidate);
     const candidateArea = totalArea(candidate);
     const areaDeltaRatio = originalArea === 0 ? 0 : Math.abs(candidateArea - originalArea) / originalArea;
 
-    if (outputVertices <= vertexCeiling && areaDeltaRatio <= areaDeltaMaxRatio) {
-      best = candidate;
-      bestTolerance = mid;
-      bestOutputVertices = outputVertices;
-      bestAreaDeltaRatio = areaDeltaRatio;
+    if (outputVertices > vertexCeiling) {
+      // Not simplified enough to fit the ceiling: need a larger tolerance.
       lo = mid;
-    } else if (areaDeltaRatio > areaDeltaMaxRatio) {
-      hi = mid;
     } else {
-      lo = mid;
+      // Fits the ceiling: record it when honest, then search SMALLER
+      // tolerances for more retained detail -- same objective as the
+      // synchronous version (see simplify.js, 2026-11-13 fix: the search
+      // previously ran the other way and maximized simplification).
+      if (areaDeltaRatio <= areaDeltaMaxRatio) {
+        best = candidate;
+        bestTolerance = mid;
+        bestOutputVertices = outputVertices;
+        bestAreaDeltaRatio = areaDeltaRatio;
+      }
+      hi = mid;
     }
-    if (hi - lo < 1e-9) break;
+    if (hi / lo < 1 + 1e-6) break; // bracket resolved (log-space convergence)
   }
 
   if (best === null || bestOutputVertices > vertexCeiling) {
