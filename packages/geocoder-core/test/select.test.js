@@ -181,6 +181,14 @@ test('select({ resolution: "both" }): emits "select" before "area:upgraded", upg
   const order = [];
   geocoder.on('select', (p) => order.push({ event: 'select', ...p }));
   geocoder.on('area:upgraded', (p) => order.push({ event: 'area:upgraded', ...p }));
+  // Await the real completion signal -- the 'area:upgraded' emission
+  // itself -- rather than a guessed `delay(ms)`. `_runUpgrade` emits at
+  // most once per select() call and returns immediately after (see
+  // geocoder.js), so there is nothing left for it to race once this
+  // listener has run: a fixed delay here was asserting on timing, not on
+  // the actual causal event, and could spuriously come up short under the
+  // full monorepo suite's own CPU contention.
+  const upgradedPromise = new Promise((resolve) => geocoder.on('area:upgraded', resolve));
 
   const initialArea = await geocoder.select(RESULT_A, { resolution: 'both' });
   assert.equal(order.length, 1, "'select' must have already fired by the time select() resolves");
@@ -189,7 +197,7 @@ test('select({ resolution: "both" }): emits "select" before "area:upgraded", upg
   assert.equal(initialArea.provenance.pendingUpgrade, true);
   const initialFilterVertices = initialArea.vertexCount.filter;
 
-  await delay(100); // let the background upgrade finish
+  await upgradedPromise; // the background upgrade has finished and emitted
 
   assert.equal(order.length, 2, "'area:upgraded' must fire exactly once after 'select'");
   assert.equal(order[1].event, 'area:upgraded');
@@ -231,6 +239,10 @@ test('select({ resolution: "display" }) on an oversized geometry: synchronous bu
   const order = [];
   geocoder.on('select', (p) => order.push({ event: 'select', ...p }));
   geocoder.on('area:upgraded', (p) => order.push({ event: 'area:upgraded', ...p }));
+  // Same completion-signal rewrite as the "both" resolution test above:
+  // await the actual 'area:upgraded' emission instead of a guessed
+  // `delay(ms)`.
+  const upgradedPromise = new Promise((resolve) => geocoder.on('area:upgraded', resolve));
 
   const initialArea = await geocoder.select(RESULT_A, { resolution: 'display' });
   assert.equal(order.length, 1);
@@ -249,7 +261,7 @@ test('select({ resolution: "display" }) on an oversized geometry: synchronous bu
   // it picked the default resolution.
   assert.equal(initialArea.provenance.pendingUpgrade, true);
 
-  await delay(50); // let the filter-only background upgrade finish
+  await upgradedPromise; // the filter-only background upgrade has finished and emitted
 
   assert.equal(order.length, 2, "'area:upgraded' must fire exactly once after 'select'");
   assert.equal(order[1].event, 'area:upgraded');

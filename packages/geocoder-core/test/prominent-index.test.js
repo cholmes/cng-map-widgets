@@ -127,6 +127,17 @@ test('Geocoder: falls back to footer_bytes when footer_metadata_bytes is absent 
 
 test('Geocoder#load(): schedules a background footer prefetch that opens each declared boundary file, display before full, using the manifest\'s footer_bytes', async () => {
   const opened = [];
+  // A completion *signal*, not a guessed delay: the prefetch queue is
+  // exactly 2 entries long (display + full, see `baseManifest`), and
+  // `_scheduleFooterPrefetch`'s own `step()` never schedules a third
+  // round once the queue is empty -- so resolving the moment the 2nd
+  // declared file is opened is the real completion event, not a stand-in
+  // for one. A fixed `delay(ms)` here is exactly the kind of racy-under-
+  // load assertion (timing, not causality) this was rewritten away from:
+  // under the full monorepo suite's own CPU contention a short delay can
+  // elapse before the `setTimeout(fn, 0)`-chained steps actually run.
+  let resolveDone;
+  const donePromise = new Promise((resolve) => { resolveDone = resolve; });
   const deps = {
     loadManifest: async () => baseManifest(),
     loadFullIndex: async () => ({ rows: [], nameNorms: [] }),
@@ -134,13 +145,14 @@ test('Geocoder#load(): schedules a background footer prefetch that opens each de
     resolveGeometry: async () => ({ geometry: null, bbox: undefined }),
     openBoundaryFile: async (url, fetchImpl, signal, footerBytes) => {
       opened.push({ url, footerBytes });
+      if (opened.length >= 2) resolveDone();
       return { url, file: {}, metadata: {}, catalogVersion: 'cv1' };
     },
   };
   const geocoder = new Geocoder({ indexUrl: 'https://example.test/index.json', __deps: deps });
 
   await geocoder.load();
-  await delay(50); // let the setTimeout-scheduled prefetch steps run (no requestIdleCallback under node --test)
+  await donePromise; // both declared boundary files have been opened -- no fixed-time guess needed
 
   assert.equal(opened.length, 2, `expected both declared boundary files prefetched, got ${JSON.stringify(opened)}`);
   assert.ok(opened[0].url.includes('adm4-display'), 'display is prefetched first');
@@ -151,6 +163,14 @@ test('Geocoder#load(): schedules a background footer prefetch that opens each de
 
 test('Geocoder#load(): footer prefetch runs only once per instance, even across repeated load() calls', async () => {
   let openCalls = 0;
+  // Same completion-signal rewrite as the test above: wait for the
+  // prefetch's own queue (exactly 2 declared boundary files) to drain,
+  // not a guessed delay -- `_doLoad()` never runs a second time for a
+  // repeated `load()` call (it returns the cached `_loadPromise`), so
+  // there is nothing further for `openCalls` to do once this settles,
+  // and nothing to gain from waiting any longer than that to assert it.
+  let resolveDone;
+  const donePromise = new Promise((resolve) => { resolveDone = resolve; });
   const deps = {
     loadManifest: async () => baseManifest(),
     loadFullIndex: async () => ({ rows: [], nameNorms: [] }),
@@ -158,6 +178,7 @@ test('Geocoder#load(): footer prefetch runs only once per instance, even across 
     resolveGeometry: async () => ({ geometry: null, bbox: undefined }),
     openBoundaryFile: async (url) => {
       openCalls++;
+      if (openCalls >= 2) resolveDone();
       return { url, file: {}, metadata: {}, catalogVersion: 'cv1' };
     },
   };
@@ -165,7 +186,7 @@ test('Geocoder#load(): footer prefetch runs only once per instance, even across 
 
   await geocoder.load();
   await geocoder.load(); // idempotent: load() returns the cached promise, _doLoad never runs twice
-  await delay(50);
+  await donePromise;
 
   assert.equal(openCalls, 2, 'exactly the 2 declared boundary files, not 4 -- the prefetch itself only ever runs once');
 });

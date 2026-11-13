@@ -519,30 +519,49 @@ export class Geocoder {
           return null;
         });
 
-      // The main index keeps loading in the background; `load()` resolves
-      // now (right after this method returns) without waiting for it.
-      // `_mainReadyPromise` never rejects into an unhandled rejection even
-      // though nobody may ever await it (a page that never searches again
-      // after its first, prominent-only-answered query): the `.catch`
-      // below both reports the failure once and keeps the promise settled
-      // for any later `.then` (`search()`'s second-wave branch) to see.
-      this._mainReadyPromise = mainIndexRaw
-        .then((handle) => {
-          applyMainIndex(handle);
-          this._emitter.emit('index:upgraded', { strategy, loadMs: handle.loadMs });
-          return handle;
-        })
-        .catch((err) => {
-          this._emitter.emit('error', err);
-          return null;
-        });
-
-      if (!this._prominentFull) {
+      if (this._prominentFull) {
+        // The main index keeps loading in the background; `load()`
+        // resolves now (right after this method returns) without waiting
+        // for it. `_mainReadyPromise` never rejects into an unhandled
+        // rejection even though nobody may ever await it (a page that
+        // never searches again after its first, prominent-only-answered
+        // query): the `.catch` below both reports the failure once and
+        // keeps the promise settled for any later `.then` (`search()`'s
+        // second-wave branch) to see.
+        //
+        // This chain is the *only* consumer of `mainIndexRaw` in this
+        // branch -- deliberately: `mainIndexRaw` is a single promise, and
+        // attaching a second, separate `await mainIndexRaw` below (as an
+        // earlier version of this code did, for the `!this._prominentFull`
+        // case) would run `applyMainIndex` a second time and race this
+        // `.then()`'s own 'index:upgraded' emission against whatever ran
+        // after that second await -- a real, if currently silent,
+        // idempotency violation. See the `else` branch just below for the
+        // one `!this._prominentFull` case, kept as a fully separate
+        // single-await path instead.
+        this._mainReadyPromise = mainIndexRaw
+          .then((handle) => {
+            applyMainIndex(handle);
+            this._emitter.emit('index:upgraded', { strategy, loadMs: handle.loadMs });
+            return handle;
+          })
+          .catch((err) => {
+            this._emitter.emit('error', err);
+            return null;
+          });
+      } else {
         // No usable fast wave at all: behave exactly like the no-prominent
-        // path below, so this geocoder is still usable once `load()`
-        // resolves rather than leaving `state` stuck on `'loading'`.
+        // `else` branch at the bottom of this `if` -- so this geocoder is
+        // still usable once `load()` resolves rather than leaving `state`
+        // stuck on `'loading'`. `mainIndexRaw` is awaited exactly once,
+        // here, so `applyMainIndex` runs exactly once -- and, since there
+        // was never a fast wave to upgrade *from*, no 'index:upgraded'
+        // either: that event means "a faster wave's answer just got
+        // superseded by a better one", which cannot have happened when
+        // there was no faster wave at all.
         const handle = await mainIndexRaw;
         applyMainIndex(handle);
+        this._mainReadyPromise = Promise.resolve(handle);
       }
     } else {
       const handle = await mainIndexRaw;
