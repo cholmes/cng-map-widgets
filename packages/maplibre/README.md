@@ -1,8 +1,8 @@
 # @cnmw/maplibre
 
 The MapLibre GL half of the widgets: an accessible search box, an outline
-layer, a viewport provider and an antimeridian-aware camera. Five small things,
-~580 lines, no logic of its own.
+layer, a viewport provider, an antimeridian-aware camera, a rectangle/
+viewport draw tool, and a vertex editor for an existing outline.
 
 ```js
 const control = new GeocoderControl({ geocoder });
@@ -54,6 +54,11 @@ targeting `.cnmw-geocoder` and its children.
 | | files | raw | gzip | gzip, comments stripped | design-doc budget (§4.5) |
 |---|---|---|---|---|---|
 | `@cnmw/maplibre` src | 5 | 18.9 KiB | 5.9 KiB | **4.3 KiB** | ≤ 8 KB min+gz |
+
+(Table above predates `draw-tool.js`/`edit-tool.js`, added 2026-11-13; not
+remeasured here — see the design doc amendment in §5.2 for what they add and
+`edit-tool.js`'s own header for the terra-draw weight comparison that went
+into not adding a dependency instead.)
 
 `maplibre-gl` itself is ~200 KiB min+gz and is a peer — not counted here,
 because you already have it.
@@ -120,12 +125,13 @@ Implements MapLibre's `IControl`, so `map.addControl(control, position)` works.
 | `showAttribution` | `boolean` | `true` | The design-call-#11 attribution line, rendered from `Area.provenance.attribution` after the first selection. |
 | `renderItem` | `(SearchResult) => string \| Node` | the default renderer | A returned string is assigned to `innerHTML`; a `Node` is appended. |
 | `geocoderOptions` | `GeocoderOptions` | — | **Not honored.** Construct the `Geocoder` yourself. |
+| `upgradeNoticeStrings` | `Partial<{ upgrading, upgraded, cancelled, cancelLabel, cancelTitle }>` | English defaults | i18n override for the "loading full detail…" notice below. `upgrading` is a function of the formatted vertex label (`''` when no estimate), e.g. `(v) => v ? \`Chargement… ~${v} sommets\` : 'Chargement…'`. |
 
 | member | notes |
 |---|---|
 | `control.geocoder` | The instance you passed. |
 | `control.area` | The current `Area`, or `null`. |
-| `onAdd(map)` / `onRemove()` | MapLibre's lifecycle. `onRemove` detaches the document click listener, unsubscribes from `'area:upgraded'`, and removes the outline layer. |
+| `onAdd(map)` / `onRemove()` | MapLibre's lifecycle. `onRemove` detaches the document click listener, unsubscribes from every geocoder event (`'select'`, `'area:upgrading'`, `'area:upgraded'`, `'area:upgrade-cancelled'`, `'results'`), clears the notice's auto-hide timer, and removes the outline layer. |
 | `setArea(area)` | Draws it, fits the camera (if `fitBounds`), renders attribution. `null` clears. |
 | `clear()` | Empties the input, closes the list, clears the area, emits `'clear'`. |
 | `focus()` | Focuses the input. |
@@ -133,7 +139,44 @@ Implements MapLibre's `IControl`, so `map.addControl(control, position)` works.
 
 Events: `select` (`{ result, area }`), `results` (`SearchResult[]`),
 `upgrade` (`{ area }` — a background `resolution: 'both'` upgrade landed),
-`clear`, `error`.
+`upgrade-cancelled` (`{ area }` — the user clicked Cancel on the notice
+below), `clear`, `error`.
+
+### The "loading full detail…" notice
+
+If the `Geocoder` is constructed with (or the control's `select()` runs
+with) `geometry: { resolution: 'both', upgradeDisplay: true }`, the control
+shows a small notice below the combobox while the background full-resolution
+fetch is in flight:
+
+```
+Loading full detail… ~69K vertices                                    ✕
+```
+
+The `✕` calls `geocoder.cancelUpgrade()`. Click it and the notice becomes
+"Keeping simplified outline." (auto-hiding after ~2.6s); let it finish and
+it becomes "Full detail loaded." instead, and the outline itself swaps to
+the full-resolution geometry **in place — no camera move**. The vertex
+number is a cheap, manifest-derived *estimate* (geocoder-core's
+`estimateUpgradeOf`) — the average feature size in that boundary file, not
+this feature's actual size — and is simply omitted when the manifest
+doesn't declare enough to compute one.
+
+The outline swap itself is deferred one idle slot
+(`requestIdleCallback`/`setTimeout(fn, 0)`) rather than applied synchronously
+inside the `'area:upgraded'` handler: at `upgradeDisplay`-scale (Canada ADM0
+is ~500K vertices), `GeoJSONSource#setData()`'s structured-clone to
+MapLibre's tiling worker is itself a measurable main-thread task, and
+deferring it keeps that cost off of whatever the user is doing right now.
+See the geocoder demo's long-task report for the measured numbers.
+
+Without `upgradeDisplay`, the background upgrade still runs (it always has —
+it's what keeps `filterGeometry` honest), but the notice never appears and
+the outline never changes: there is nothing user-visible to report.
+
+This state machine (`upgrade-notice.js`'s `upgradeNoticeReducer`/
+`describeUpgradeNotice`) is pure and unit-tested without a DOM, same split
+as the combobox's own `combobox-helpers.js`.
 
 ### The combobox
 
@@ -228,6 +271,44 @@ fitAreaBounds(map, area.bboxes, { padding: 40, maxZoom: 12 });
 
 `AreaLayerHandle.fit()` calls this for you with the current area.
 
+### `createDrawTool(map, options?) => DrawToolHandle`
+
+```js
+import { createDrawTool } from '@cnmw/maplibre';
+
+const drawTool = createDrawTool(map, { tools: ['rectangle', 'viewport'] });
+drawTool.on('area', ({ area }) => { /* an Area with provenance.source === 'draw' */ });
+drawTool.arm('rectangle'); // crosshair cursor; drag a rectangle; Escape disarms
+drawTool.arm('viewport');  // one-shot: the current map bounds, no drag
+```
+
+`tools` defaults to `['rectangle', 'viewport']`. `polygon` is accepted in the
+option (forward-compat) but `arm('polygon')` throws — see
+[`src/draw-tool.js`](src/draw-tool.js)'s header for why, and the escape hatch
+(`areaFromGeoJson`) if you need it today. Every emitted `Area` goes through
+`@cnmw/spec`'s `buildArea`, same as every other Area this adapter produces.
+
+### `createEditTool(map, area, options?) => EditToolHandle`
+
+```js
+import { createEditTool } from '@cnmw/maplibre';
+
+const editTool = createEditTool(map, area);
+editTool.on('change', ({ area: edited }) => { /* Area with provenance.source === 'edited' */ });
+// ... user drags a vertex, drags a midpoint out to insert one, double-clicks one to delete it ...
+const finalArea = editTool.getArea();
+editTool.remove();
+```
+
+Edits the exterior ring with the most vertices (the whole geometry for a
+`Polygon`; the largest component's outer ring for a `MultiPolygon`) — holes
+and any other polygon pass through unedited. `provenance.edited` keeps the
+parent Area's lineage (`parentAreaId`, `parentSource`, `parentCreatedAt`);
+`provenance.features` is carried over from the parent verbatim so the
+original `featureId` is never lost. Hand-rolled rather than built on
+terra-draw — see [`src/edit-tool.js`](src/edit-tool.js)'s header for the
+measured weight that comparison was based on.
+
 ---
 
 ## Gotchas
@@ -245,11 +326,15 @@ always pass one. `geocoderOptions` is accepted and ignored for the same reason.
 calls `map.addSource`/`addLayer`, which MapLibre refuses before the style has
 loaded. Adding it too early throws.
 
-**`createDrawTool` does not exist.** The design doc (§5.2) specifies a minimal
-rectangle/polygon/viewport draw tool; it is not implemented, and is listed as
-such in its §8. If you already
-have a draw library, pass its GeoJSON to `@cnmw/upload-core`'s
-`areaFromGeoJson` and you get the same `Area` with `source: 'upload'`.
+**`createDrawTool`'s `polygon` tool does not exist.** Rectangle and viewport
+are implemented (§5.2); `arm('polygon')` throws. If you need freeform
+polygon drawing today, pass your own draw library's GeoJSON to
+`@cnmw/upload-core`'s `areaFromGeoJson` and you get the same `Area` with
+`source: 'upload'`.
+
+**`createEditTool` edits one ring.** Holes, and every polygon in a
+`MultiPolygon` other than the one with the largest exterior ring, are not
+editable — they pass through the edit unchanged, not dropped.
 
 **A `renderItem` string goes through `innerHTML`.** If any of it comes from the
 index, you are trusting the index's `name` column. Return a `Node` instead if

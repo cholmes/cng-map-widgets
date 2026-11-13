@@ -171,11 +171,13 @@ annotated with `moreCount`. `maxPerGroup` caps rows per `(country, level)`
 *before* the `limit` slice, so a capped group makes room for the next distinct
 group instead of shrinking the list. `maxPerGroup: null` disables the cap.
 
-`GeometryResolverOptions`: `{ resolution = 'display', filterVertexCeiling =
-10_000, displayVertexCeiling = 200_000 }`. (`boundaryUrls` is design doc §8:
-specified, not implemented — boundary URLs always come from the manifest,
-which is also what §6.4's version-skew check relies on. Mirror the catalog
-and point `indexUrl` at your own manifest instead.)
+`GeometryResolverOptions`: `{ resolution = 'display', upgradeDisplay = false,
+filterVertexCeiling = 10_000, displayVertexCeiling = 200_000 }`.
+(`boundaryUrls` is design doc §8: specified, not implemented — boundary URLs
+always come from the manifest, which is also what §6.4's version-skew check
+relies on. Mirror the catalog and point `indexUrl` at your own manifest
+instead.) `upgradeDisplay` only does anything with `resolution: 'both'` — see
+`select()` below.
 
 ### Properties
 
@@ -241,7 +243,7 @@ Fetches the geometry and builds the `Area`. `options` is
 |---|---|
 | `'display'` *(default)* | One read of the level's pre-simplified display file. Fast. `geometryVariant: 'display-simplified'`. |
 | `'full'` | One read of the full-resolution file. `geometryVariant: 'full'`. |
-| `'both'` | Returns the display `Area` immediately with `provenance.pendingUpgrade: true`, then fetches + simplifies the full-resolution geometry in the background and emits `'area:upgraded'` with a copy whose `filterGeometry` and `vertexCount.filter` reflect it. `Area.geometry` never changes. |
+| `'both'` | Returns the display `Area` immediately with `provenance.pendingUpgrade: true`, then fetches + simplifies the full-resolution geometry in the background and emits `'area:upgraded'` with a copy whose `filterGeometry` and `vertexCount.filter` reflect it. `Area.geometry` never changes — *unless* `upgradeDisplay: true`, see below. |
 
 A level with no `display` file declared falls back to `'full'` for both
 `'display'` and `'both'`. Calling `select()` again supersedes a pending
@@ -257,6 +259,41 @@ full.provenance.geocoder.boundaryUrl;     // '…/adm2/cgaz_adm2.parquet'
 `'both'` is what keeps a 500,000-vertex ADM0 feature (Canada) from blocking the
 main thread at all. Use it for anything interactive.
 
+#### `upgradeDisplay: true` — swap the outline too, with a cancel handle
+
+By default `resolution: 'both'` only ever upgrades `filterGeometry` —
+`Area.geometry` (what you draw) stays the simplified outline forever, even
+after the background fetch lands. Pass `upgradeDisplay: true` (per call, or
+as a `Geocoder({ geometry: { resolution: 'both', upgradeDisplay: true } })`
+default) to also swap `geometry` to the full-resolution fetch once it's in:
+
+```js
+const geocoder = new Geocoder({ indexUrl, geometry: { resolution: 'both', upgradeDisplay: true } });
+
+geocoder.on('area:upgrading', ({ estimate }) => {
+  // estimate: { bytes?, vertices? } -- a cheap manifest-derived guess,
+  // present only when the manifest declares enough to compute one.
+  console.log(estimate.vertices ? `loading ~${estimate.vertices} vertices…` : 'loading full detail…');
+});
+geocoder.on('area:upgraded', ({ area }) => {
+  area.geometry;         // now the full-resolution geometry
+  area.displayGeometry;  // the pre-upgrade simplified geometry, kept for reverting
+});
+
+const area = await geocoder.select(result);
+// Changed your mind? Abort it and keep the simplified outline:
+geocoder.cancelUpgrade();          // true if something was actually cancelled
+geocoder.on('area:upgrade-cancelled', ({ area }) => { /* area is unchanged */ });
+```
+
+`cancelUpgrade()` only ever targets the `upgradeDisplay` full-resolution
+upgrade above — not the unrelated filter-only vertex-ceiling-degrade upgrade
+`select()` can also run in the background for an oversized geometry (see
+"Known behaviors" below), which never touches the visible outline and so has
+nothing for a cancel UI to be about. A later `select()` still silently
+supersedes a pending upgrade exactly as before — `cancelUpgrade()` and
+`'area:upgrade-cancelled'` are for an *explicit* user cancel, never for that.
+
 ### `on(event, handler) => unsubscribe`
 
 Handlers run synchronously in registration order. A throwing handler is caught
@@ -268,7 +305,9 @@ and reported via `'error'` rather than stopping the others.
 | `load` | `IndexInfo` | Once, when the index is usable. |
 | `results` | `{ query, results, elapsedMs, wave: 'prominent'\|'final' }` | Per answered `search()`. |
 | `select` | `{ result, area, elapsedMs }` | Per `select()`, as soon as it returns. |
-| `area:upgraded` | `{ result, area, elapsedMs }` | A background upgrade produced a better `filterGeometry`. |
+| `area:upgrading` | `{ result, area, estimate: { bytes?, vertices? } }` | A `resolution: 'both'` background fetch just started (fires right after `select`). |
+| `area:upgraded` | `{ result, area, elapsedMs }` | A background upgrade produced a better `filterGeometry` (and, with `upgradeDisplay: true`, a better `geometry`). |
+| `area:upgrade-cancelled` | `{ result, area }` | `cancelUpgrade()` aborted it; `area` is unchanged. |
 | `index:upgraded` | `{ strategy, loadMs }` | The main index finished loading behind a `prominent_index`. |
 | `warning` | `{ code, message, detail? }` | Tolerated skew, `PROMINENT_INDEX_FAILED`, `GEOMETRY_REF_MISMATCH`. |
 | `error` | `CnmwError` | |
@@ -284,6 +323,15 @@ geocoder.on('results', ({ query, results, wave }) => render(query, results, wave
 geocoder.on('select', ({ result }) => console.log('picked', result.name));
 off();   // unsubscribe
 ```
+
+### `cancelUpgrade() => boolean`
+
+Aborts the currently pending `resolution: 'both'` background upgrade, if one
+is in flight, and keeps the `Area` `select()` already returned exactly as it
+is. Returns `false` (no-op, never throws) when there's nothing pending — no
+`'both'` select() ran, its upgrade already finished/failed, a later
+`select()` already superseded it, or this was already called for it.
+`'area:upgrade-cancelled'` fires once the abort is actually observed.
 
 ### `close()`
 

@@ -24,8 +24,33 @@ import {
   CompositionGate,
   adaptiveDebounceMs,
 } from './combobox-helpers.js';
+import { upgradeNoticeReducer, describeUpgradeNotice, HIDDEN_NOTICE_STATE } from './upgrade-notice.js';
 
 let instanceCounter = 0;
+
+// How long the transient "Full detail loaded."/"Keeping simplified
+// outline." notice stays up before auto-hiding -- same order of magnitude
+// as `_announceGrew`'s moreBadge timeout below, for the same reason: long
+// enough to read, short enough not to linger over the next interaction.
+const UPGRADE_NOTICE_AUTO_HIDE_MS = 2600;
+
+/**
+ * Schedule `fn` off this synchronous event-handler frame (design doc
+ * §1.3/§3.2 amendment, "upgradeDisplay" jank mitigation -- see the
+ * `'area:upgraded'` handler in `onAdd` for why). `requestIdleCallback` in
+ * a browser; `setTimeout(fn, 0)` anywhere that lacks it (older browsers,
+ * `node --test`). Mirrors geocoder-core's own `scheduleIdle`
+ * (geocoder.js) exactly, duplicated rather than imported: this package
+ * does not depend on geocoder-core's internals, only its public events.
+ * @param {() => void} fn
+ */
+function scheduleIdle(fn) {
+  if (typeof globalThis.requestIdleCallback === 'function') {
+    globalThis.requestIdleCallback(fn, { timeout: 500 });
+  } else {
+    setTimeout(fn, 0);
+  }
+}
 
 // Dark mode (prefers-color-scheme): every color is a custom property on
 // `.cnmw-geocoder`. A host page overrides any `--cnmw-*` token by
@@ -91,6 +116,18 @@ const CSS = `
 .cnmw-geocoder .cnmw-attribution a { color: inherit; }
 .cnmw-geocoder .cnmw-sharealike { font-size: 9px; border: 1px solid var(--cnmw-border); border-radius: 2px; padding: 0 3px; margin-left: 2px; }
 @media (prefers-reduced-motion: reduce) { .cnmw-geocoder .cnmw-option-new { animation: none; } }
+.cnmw-geocoder .cnmw-upgrade-notice {
+  margin-top: 4px; padding: 4px 6px; border-radius: 4px; background: var(--cnmw-badge-bg); color: var(--cnmw-meta);
+  font-size: 11px; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+}
+.cnmw-geocoder .cnmw-upgrade-notice[hidden] { display: none; }
+.cnmw-geocoder .cnmw-upgrade-notice-cancel {
+  font: inherit; font-size: 13px; line-height: 1; color: inherit; background: transparent; border: none;
+  cursor: pointer; padding: 0 2px; border-radius: 2px; flex: none;
+}
+.cnmw-geocoder .cnmw-upgrade-notice-cancel[hidden] { display: none; }
+.cnmw-geocoder .cnmw-upgrade-notice-cancel:hover, .cnmw-geocoder .cnmw-upgrade-notice-cancel:focus { color: var(--cnmw-ink); }
+.cnmw-geocoder .cnmw-upgrade-notice-cancel:focus { outline: 2px solid var(--cnmw-focus); outline-offset: -1px; }
 `;
 
 function injectCssOnce() {
@@ -195,6 +232,10 @@ export class GeocoderControl {
     this._searchRequestId = 0;
     this._lastQueryNorm = '';
     this._lastRenderedQuery = null;
+    // "upgradeDisplay" notice (design doc §1.3/§3.2 amendment): see
+    // ./upgrade-notice.js for the state machine this drives.
+    this._upgradeNoticeState = HIDDEN_NOTICE_STATE;
+    this._upgradeNoticeTimer = null;
   }
 
   get area() {
@@ -235,15 +276,40 @@ export class GeocoderControl {
     attribution.className = 'cnmw-attribution';
     attribution.hidden = true;
 
+    // "upgradeDisplay" notice: shown while `select({ resolution: 'both' })`'s
+    // background full-res fetch is in flight, with a Cancel affordance
+    // that calls `geocoder.cancelUpgrade()`. See ./upgrade-notice.js.
+    const upgradeNotice = document.createElement('div');
+    upgradeNotice.className = 'cnmw-upgrade-notice';
+    upgradeNotice.setAttribute('role', 'status');
+    upgradeNotice.setAttribute('aria-live', 'polite');
+    upgradeNotice.hidden = true;
+    const upgradeNoticeText = document.createElement('span');
+    const upgradeNoticeCancel = document.createElement('button');
+    upgradeNoticeCancel.type = 'button';
+    upgradeNoticeCancel.className = 'cnmw-upgrade-notice-cancel';
+    upgradeNotice.appendChild(upgradeNoticeText);
+    upgradeNotice.appendChild(upgradeNoticeCancel);
+
     container.appendChild(input);
     container.appendChild(listbox);
     container.appendChild(moreBadge);
     container.appendChild(attribution);
+    container.appendChild(upgradeNotice);
 
     this._input = input;
     this._listbox = listbox;
     this._moreBadge = moreBadge;
     this._attributionEl = attribution;
+    this._upgradeNoticeEl = upgradeNotice;
+    this._upgradeNoticeTextEl = upgradeNoticeText;
+    this._upgradeNoticeCancelEl = upgradeNoticeCancel;
+
+    upgradeNoticeCancel.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.geocoder?.cancelUpgrade();
+    });
 
     this._outline = opts.outline === false ? null : addAreaLayer(map, opts.outline || {});
     this._getViewport = opts.useViewport === false ? () => undefined : viewportProvider(map);
@@ -278,15 +344,48 @@ export class GeocoderControl {
     };
     document.addEventListener('click', this._onDocumentClick);
 
+    // "upgradeDisplay" notice (design doc §1.3/§3.2 amendment): a new
+    // select() always resets it, whatever resolution it asked for --
+    // 'select' fires synchronously *before* 'area:upgrading' for that same
+    // call (see geocoder.js), so this never races the next handler below.
+    this._unsubscribeSelect = this.geocoder?.on('select', () => {
+      this._dispatchUpgradeNotice({ type: 'select' });
+    });
+    this._unsubscribeUpgrading = this.geocoder?.on('area:upgrading', ({ estimate }) => {
+      this._dispatchUpgradeNotice({ type: 'upgrading', estimate });
+    });
+    this._unsubscribeUpgradeCancelled = this.geocoder?.on('area:upgrade-cancelled', ({ area }) => {
+      if (this._area && area.id === this._area.id) {
+        this._dispatchUpgradeNotice({ type: 'cancelled' });
+        this._emit('upgrade-cancelled', { area });
+      }
+    });
+
     // Progressive select(): 'area:upgraded' fires once select({resolution:
-    // 'both'})'s background fetch replaces filterGeometry. Update the
-    // outline in place (no re-fit; geometry/bbox never change). Guarded
-    // by area.id so a stale upgrade for a since-replaced selection drops.
+    // 'both'})'s background fetch replaces filterGeometry (and, with
+    // `upgradeDisplay: true`, swaps `Area.geometry` to full-res too).
+    // Update the outline in place (no re-fit; `bbox`/`bboxes` are
+    // otherwise unaffected by this swap -- see geocoder.js). Guarded by
+    // area.id so a stale upgrade for a since-replaced selection drops.
     this._unsubscribeUpgrade = this.geocoder?.on('area:upgraded', ({ area }) => {
       if (this._area && area.id === this._area.id) {
         this._area = area;
-        this._outline?.setArea(area);
-        this._emit('upgrade', { area });
+        this._dispatchUpgradeNotice({ type: 'upgraded' });
+        // Deferred, not synchronous: with `upgradeDisplay: true`, `area.
+        // geometry` here can be the full-resolution geometry (Canada ADM0
+        // is ~500K vertices) -- MapLibre's GeoJSONSource#setData() has to
+        // structured-clone that object over to its tiling worker, which is
+        // itself a measurable main-thread cost at that size (see this
+        // package's README / the demo's long-task report). Running it on
+        // the next idle slot instead of inside this synchronous event
+        // handler keeps that cost from landing on top of whatever the user
+        // is doing *right now* (typing, dragging the map) -- it cannot
+        // make the swap itself cheaper, only choose a better moment for it.
+        scheduleIdle(() => {
+          if (this._area !== area) return; // superseded (a new pick, or close()) while this was queued
+          this._outline?.setArea(area);
+          this._emit('upgrade', { area });
+        });
       }
     });
 
@@ -318,10 +417,46 @@ export class GeocoderControl {
       document.removeEventListener('click', this._onDocumentClick);
       this._onDocumentClick = null;
     }
+    clearTimeout(this._upgradeNoticeTimer);
+    this._unsubscribeSelect?.();
+    this._unsubscribeUpgrading?.();
+    this._unsubscribeUpgradeCancelled?.();
     this._unsubscribeUpgrade?.();
     this._unsubscribeResults?.();
     this._outline?.remove();
     this._map = null;
+  }
+
+  /**
+   * Apply one event to the upgrade-notice state machine
+   * (`upgradeNoticeReducer`, ./upgrade-notice.js) and re-render. Also owns
+   * the transient states' auto-hide timer -- the only timing concern in
+   * this whole feature, kept here rather than in the pure reducer so that
+   * module stays trivially testable without fake timers.
+   * @param {{ type: string, estimate?: object }} event
+   */
+  _dispatchUpgradeNotice(event) {
+    this._upgradeNoticeState = upgradeNoticeReducer(this._upgradeNoticeState, event);
+    this._renderUpgradeNotice();
+    clearTimeout(this._upgradeNoticeTimer);
+    if (this._upgradeNoticeState.phase === 'upgraded' || this._upgradeNoticeState.phase === 'cancelled') {
+      this._upgradeNoticeTimer = setTimeout(() => this._dispatchUpgradeNotice({ type: 'timeout' }), UPGRADE_NOTICE_AUTO_HIDE_MS);
+    }
+  }
+
+  _renderUpgradeNotice() {
+    const strings = this._options.upgradeNoticeStrings;
+    const described = describeUpgradeNotice(this._upgradeNoticeState, strings);
+    if (!described) {
+      this._upgradeNoticeEl.hidden = true;
+      return;
+    }
+    this._upgradeNoticeTextEl.textContent = described.text;
+    this._upgradeNoticeCancelEl.hidden = !described.showCancel;
+    this._upgradeNoticeCancelEl.textContent = strings?.cancelLabel ?? '×';
+    this._upgradeNoticeCancelEl.setAttribute('aria-label', strings?.cancelTitle ?? 'Cancel and keep the simplified outline');
+    this._upgradeNoticeCancelEl.title = strings?.cancelTitle ?? 'Cancel and keep the simplified outline';
+    this._upgradeNoticeEl.hidden = false;
   }
 
   async _doSearch() {

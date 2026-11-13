@@ -81,7 +81,19 @@ const geocoder = new Geocoder({
   // full-resolution geometry in the background. This is what keeps a
   // 500K-vertex ADM0 feature (e.g. Canada) from blocking the main thread
   // at all -- the literal "Page Unresponsive" bug this demo used to hit.
-  geometry: { resolution: 'both' },
+  //
+  // upgradeDisplay: true (design doc §1.3/§3.2 amendment, 2026-11-13) goes
+  // one step further: once that background fetch lands, the *visible*
+  // outline swaps to the full-resolution geometry too, not just
+  // filterGeometry -- this is the actual "fetch the higher-res vectors"
+  // behavior Chris asked this demo to show. GeocoderControl shows a
+  // "Loading full detail… ~N vertices" notice with a Cancel button while
+  // it's in flight (geocoder.cancelUpgrade() keeps the simplified outline
+  // if clicked), and defers the outline swap itself to an idle callback --
+  // see @cnmw/maplibre's README for why (MapLibre's GeoJSONSource#setData()
+  // structured-clone cost at Canada-ADM0 scale) and this file's own
+  // long-task measurement notes below.
+  geometry: { resolution: 'both', upgradeDisplay: true },
 });
 
 geocoder.on('error', (err) => setStatus(`Error: ${err.code} — ${err.message}`));
@@ -94,7 +106,10 @@ geocoder.on('select', ({ result, area, elapsedMs }) => {
   setStatus(`Selected "${result.name}" (${result.country}, ADM${result.level}) — outline simplified, ${area.vertexCount.display} vertices, ${elapsedMs.toFixed(0)} ms${upgrading}`);
 });
 geocoder.on('area:upgraded', ({ result, area, elapsedMs }) => {
-  setStatus(`"${result.name}" — outline simplified · full detail loaded (${area.vertexCount.filter} filter vertices, ${elapsedMs.toFixed(0)} ms background).`);
+  setStatus(`"${result.name}" — full detail loaded (${area.vertexCount.display} display / ${area.vertexCount.filter} filter vertices, ${elapsedMs.toFixed(0)} ms background).`);
+});
+geocoder.on('area:upgrade-cancelled', ({ result }) => {
+  setStatus(`"${result.name}" — kept the simplified outline (upgrade cancelled).`);
 });
 
 const control = new GeocoderControl({ geocoder, placeholder: 'Search for a place…' });

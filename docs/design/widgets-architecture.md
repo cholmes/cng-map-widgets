@@ -103,7 +103,7 @@ export type AreaGeometry =
   | GeoJSON.Polygon
   | GeoJSON.MultiPolygon;
 
-export type AreaSourceKind = 'geocoder' | 'upload' | 'draw';
+export type AreaSourceKind = 'geocoder' | 'upload' | 'draw' | 'edited';
 
 export interface Area {
   /** Discriminator for structural checks; always the literal. */
@@ -137,6 +137,17 @@ export interface Area {
   /** What to draw. Full resolution as fetched, or the publisher's
    *  display-simplified variant — `provenance.geometryVariant` says which. */
   readonly geometry: AreaGeometry;
+
+  /** **Added by the 2026-11-13 "upgradeDisplay" amendment below.** Present
+   *  only right after a `resolution: 'both', upgradeDisplay: true` select()
+   *  has upgraded `geometry` to the full-resolution fetch: holds the
+   *  pre-upgrade, display-simplified geometry that `geometry` held before
+   *  the swap, so a consumer that wants to revert ("keep the simplified
+   *  outline") doesn't have to re-fetch or re-simplify anything. Absent in
+   *  every other case — including the default `upgradeDisplay: false`,
+   *  where `geometry` never changes in the first place and there is
+   *  nothing to keep a copy of. */
+  readonly displayGeometry?: AreaGeometry;
 
   /** What to filter with. `null` means "no usable polygon" — filtering falls
    *  back to `bboxes` alone, and download-core emits a
@@ -179,6 +190,7 @@ export interface AreaProvenance {
   readonly geocoder?: GeocoderProvenance;
   readonly upload?: UploadProvenance;
   readonly draw?: DrawProvenance;
+  readonly edited?: EditedProvenance;
 }
 
 export interface AreaFeatureRef {
@@ -284,7 +296,43 @@ export interface DrawProvenance {
   /** Circle tools only: the circle before it was polygonized. */
   readonly circle?: { center: [number, number]; radiusMeters: number; segments: number };
 }
+
+/** Added by the 2026-11-13 amendment below. */
+export interface EditedProvenance {
+  /** The `Area.id` this one was edited from. Never the same as the edited
+   *  Area's own `id` — editing always produces a new Area, not a mutation. */
+  readonly parentAreaId: string;
+  /** The parent's own `provenance.source` — so "edited from a drawn
+   *  rectangle" and "edited from a geocoder selection" stay distinguishable
+   *  after the edit, not collapsed into one undifferentiated `'edited'`. */
+  readonly parentSource: AreaSourceKind;
+  readonly parentCreatedAt: string;
+  readonly tool: 'vertex-editor';
+  /** Counts, not a diff log — "how much was changed", not "exactly what".
+   *  A host that needs the latter keeps its own undo stack; this is the
+   *  honest summary `buildEditedArea` can produce without one. */
+  readonly edits: { moved: number; inserted: number; deleted: number };
+}
 ```
+
+### Amendment, 2026-11-13 — reason: an edited boundary needs its own provenance
+
+Editing a displayed outline's vertices (`createEditTool`, §5.2) produces a
+new `Area`, not a mutation of the one being edited — the pre-edit `Area`
+stays exactly as valid as it always was, which matters for anything already
+holding a reference to it (a download in flight, a different tab of the
+same demo). `source: 'edited'` is additive to `AreaSourceKind`; nothing
+that reads `Area.provenance.source` today can see a value it did not
+already have to handle as "some string", and `validateArea` has never
+enforced an enum on this field, so no existing caller breaks. `features` on
+the edited Area is **copied verbatim from the parent**, deliberately: the
+original `featureId` lineage (what geocoder/upload/draw feature(s) this
+boundary ultimately traces to) must survive an edit, even though the
+geometry itself no longer matches that feature exactly. `filterGeometry` is
+not touched by hand anywhere in this amendment — `buildEditedArea`
+(`packages/maplibre/src/edit-tool.js`) calls the ordinary `buildArea`, which
+re-derives it through §1.3's existing simplify path from the edited
+geometry, same as any other Area construction.
 
 ### 1.3 Limits and defaults
 
@@ -1370,6 +1418,15 @@ export interface GeometryResolverOptions {
    *  `both` fetches display for `Area.geometry` and full for
    *  `Area.filterGeometry`. Default `display`. */
   readonly resolution?: 'display' | 'full' | 'both';
+  /** **Added by the 2026-11-13 "upgradeDisplay" amendment below.**
+   *  `resolution: 'both'` only: when the background full-resolution fetch
+   *  finishes, also swap `Area.geometry` to it (keeping the pre-upgrade
+   *  geometry on `Area.displayGeometry`) instead of only upgrading
+   *  `filterGeometry`. Default `false` — the pre-amendment behavior,
+   *  unchanged. Settable per `select()` call (`options.upgradeDisplay`) or
+   *  as a `GeocoderOptions.geometry.upgradeDisplay` default for every call;
+   *  the per-call value wins. No effect outside `resolution: 'both'`. */
+  readonly upgradeDisplay?: boolean;
   /** Override the boundary file URLs the index sidecar declares.
    *  **PLANNED, not implemented — §8:** boundary URLs always come from the
    *  manifest (`resolveManifestUrl(manifestUrl, entry.full.url)`); this
@@ -1461,6 +1518,14 @@ export declare class Geocoder {
    *  the boundary mirror. */
   select(result: SearchResult, options?: GeometryResolverOptions & { signal?: AbortSignal }): Promise<Area>;
 
+  /** **Added by the 2026-11-13 "upgradeDisplay" amendment below.** Cancel
+   *  the currently pending `resolution: 'both'` background upgrade, if one
+   *  is in flight. The `Area` already returned by `select()` is left
+   *  exactly as it is; `'area:upgrade-cancelled'` fires once the abort is
+   *  actually observed. Returns `false` (no-op) when nothing is pending —
+   *  never throws. */
+  cancelUpgrade(): boolean;
+
   on<K extends keyof GeocoderEvents>(event: K, handler: (payload: GeocoderEvents[K]) => void): Unsubscribe;
 
   /** Drops the in-memory index and aborts in-flight work. */
@@ -1487,6 +1552,36 @@ export interface GeocoderEvents {
    *  see `search()`'s doc comment for when. */
   'results': { query: string; results: SearchResult[]; elapsedMs: number; wave: 'prominent' | 'final' };
   'select': { result: SearchResult; area: Area; elapsedMs: number };
+  /** Documented retroactively by the 2026-11-13 "upgradeDisplay" amendment
+   *  below — this event has existed, unchanged, since progressive
+   *  `select({ resolution: 'both' })` first shipped; this interface simply
+   *  never listed it. Fires once the background fetch + simplify finishes:
+   *  `area` is a copy of the `Area` `select()` already returned, with
+   *  `filterGeometry`/`vertexCount.filter` upgraded to the full-resolution
+   *  fetch (and, with `upgradeDisplay: true`, `geometry` upgraded too — see
+   *  `GeometryResolverOptions.upgradeDisplay`). Never fires for a
+   *  since-superseded or explicitly `cancelUpgrade()`-cancelled selection. */
+  'area:upgraded': { result: SearchResult; area: Area; elapsedMs: number };
+  /** **Added by the 2026-11-13 "upgradeDisplay" amendment below.** Fires
+   *  synchronously, right after `'select'`, the moment a `resolution:
+   *  'both'` background fetch starts — before any byte of it has actually
+   *  arrived. `area` is the display `Area` `select()` is about to return.
+   *  `estimate` is `{ bytes?, vertices? }`: a cheap, manifest-derived guess
+   *  at the full-resolution fetch's size (`geocoder.js`'s
+   *  `estimateUpgradeOf` — the *average* feature size in that boundary
+   *  file, since this feature's own size is unknowable before fetching
+   *  it), present only when the manifest declares enough to compute one. A
+   *  UI uses this to show "loading full detail… ~69K vertices" with a
+   *  cancel affordance that calls `cancelUpgrade()`. */
+  'area:upgrading': { result: SearchResult; area: Area; estimate: { bytes?: number; vertices?: number } };
+  /** **Added by the 2026-11-13 "upgradeDisplay" amendment below.** Fires
+   *  once an explicit `cancelUpgrade()` call's abort is actually observed
+   *  (at the upgrade's next `await` boundary) — never for a selection
+   *  merely superseded by a later `select()`, which stays exactly as
+   *  silent as it always was. `area` is the display `Area`, completely
+   *  unchanged: cancelling never un-does anything, because nothing was
+   *  ever done to it. */
+  'area:upgrade-cancelled': { result: SearchResult; area: Area };
   /** **Added, client-side speed pass.** Fires once the main index finishes
    *  loading in the background after a `prominent_index`-driven `load()`
    *  already resolved early. Informational only -- `search()`'s own
@@ -1516,6 +1611,88 @@ export type Unsubscribe = () => void;
 export const DEFAULT_INDEX_URL: string;
 export const VERSION: string;
 ```
+
+### Amendment, 2026-11-13 — reason: the demo should show, and let the user cancel, the background full-res fetch
+
+Progressive `select({ resolution: 'both' })` has returned the display `Area`
+immediately and upgraded `filterGeometry` from a background full-resolution
+fetch since the "fetch/attach the full-res geometry in the background" task
+— but `Area.geometry` (the drawn outline) deliberately never changed, and
+nothing told a UI the background fetch was even happening, let alone gave
+the user a way to stop it. The geocoder demo's actual ask — "fetch the
+higher-resolution vectors after the quick/low-res one, loading in the
+background, with a notice the user can cancel to stick with the simplified
+outline" — needed three additions, all opt-in, all defaulting to the
+pre-amendment behavior:
+
+1. **`GeometryResolverOptions.upgradeDisplay`** (default `false`). When
+   `true` on a `resolution: 'both'` call, the Area `'area:upgraded'` carries
+   has `geometry` itself swapped to the full-resolution fetch, not just
+   `filterGeometry` — this is what actually makes the *visible* outline
+   sharpen up, which is the point of a "load higher-res vectors" demo. The
+   pre-upgrade display geometry survives on the new `Area.displayGeometry`
+   field (§1.2) so a consumer that wants to revert has it without
+   re-fetching or re-simplifying anything. `bbox`/`bboxes`/
+   `crossesAntimeridian` are recomputed from the full geometry (not reused
+   from the display variant) — a feature's real extent is defined by its
+   full-resolution geometry — but this never moves the map's camera on its
+   own: no adapter calls `fit()` in response to an upgrade, before or after
+   this amendment. `provenance.geometryVariant` flips to `'full'` to match
+   (it already said which variant `geometry` holds; this is what keeps that
+   claim honest once `geometry` itself can be the full-res fetch).
+
+2. **`'area:upgrading'`**, firing synchronously right after `'select'`, the
+   moment the background fetch starts — so a UI can show a notice at
+   exactly the point the fetch begins, not some arbitrary moment later. Its
+   `estimate: { bytes?, vertices? }` is deliberately cheap and deliberately
+   honest about what it is: `geocoder.js`'s `estimateUpgradeOf` divides the
+   full-resolution boundary *file*'s manifest-declared total `size` by its
+   declared `row_count` — the *average* bytes of one feature in that file,
+   not this feature's own size (which is unknowable without fetching it;
+   fetching it in the background is the whole point). `vertices` is that
+   same average turned into a vertex count via the ~16-bytes-per-vertex
+   ratio this doc's own §1.3 limits table already states. Absent entirely
+   when the manifest doesn't declare both inputs — never a fabricated
+   number. This is pure arithmetic over the manifest already in memory: no
+   network request, no row-group read, no additional latency.
+
+3. **`cancelUpgrade()`** / **`'area:upgrade-cancelled'`**. Scoped
+   deliberately to the full-resolution upgrade only (not the pre-existing,
+   unrelated filter-only vertex-ceiling-degrade upgrade `select()` already
+   runs when its synchronous build hits `MAX_SYNC_SIMPLIFY_VERTICES`): that
+   one never touches the visible outline, so there is nothing a
+   user-facing "loading…/cancel" notice would be describing, and it keeps
+   its pre-existing silent-drop-on-supersede behavior untouched.
+   `cancelUpgrade()` aborts the pending upgrade's controller directly
+   (reusing the existing generation-guard's `AbortController`, not bumping
+   its generation) and records which generation asked for the abort, so the
+   upgrade's own error handler can tell "the user explicitly cancelled
+   this" apart from "a new `select()` superseded it" (same abort
+   mechanism, still silent, unchanged) — only the former emits
+   `'area:upgrade-cancelled'`. The Area the caller already has is left
+   exactly as it is: cancelling stops work in flight, it does not undo
+   anything, because with `upgradeDisplay` nothing is swapped until the
+   upgrade actually finishes.
+
+**Adapters.** `@cnmw/maplibre` and `@cnmw/openlayers`'s `GeocoderControl`s
+both grew a small notice attached to the control: "Loading full detail…
+~69K vertices" with a `×` Cancel button while `'area:upgrading'` is current,
+"Full detail loaded." / "Keeping simplified outline." for a couple of
+seconds once it settles. The state machine behind it
+(`upgrade-notice.js`'s `upgradeNoticeReducer`/`describeUpgradeNotice`, in
+each package) is pure and unit-tested without a DOM, same split as
+`combobox-helpers.js`; strings are overridable via
+`GeocoderControlOptions.upgradeNoticeStrings` for i18n. The outline swap
+itself — `'area:upgraded'`'s handler calling the area layer's `setArea()` —
+is deferred one idle slot (`requestIdleCallback`, falling back to
+`setTimeout(fn, 0)`) rather than run synchronously inside the event
+handler: with `upgradeDisplay: true`, `area.geometry` there can be the
+full-resolution fetch (Canada ADM0 is ~500K vertices), and MapLibre's
+`GeoJSONSource#setData()` has to structured-clone that object over to its
+tiling worker, which is itself a measurable main-thread cost at that size.
+Deferring cannot make the swap cheaper, only choose a moment for its cost
+that isn't on top of whatever the user is doing right now; see the
+`@cnmw/maplibre` README / the geocoder demo for the measured numbers.
 
 **The ranking rule, normatively.** *(Amended 2026-11-12 — see the amendment
 below for the bug report, the alternatives measured, and why this is the
@@ -3717,21 +3894,75 @@ export interface AreaLayerHandle {
 
 export declare function addAreaLayer(map: Map, options?: AreaLayerStyle & { id?: string }): AreaLayerHandle;
 export declare function viewportProvider(map: Map): () => BBox;
-/** Minimal draw: rectangle + polygon + "use current viewport". Emits an Area
- *  with `source: 'draw'`. Not a replacement for mapbox-gl-draw; a host that
- *  already has a draw library passes its GeoJSON to `areaFromGeoJson`.
+/** Minimal draw: rectangle (drag) and "use current viewport" (one click, no
+ *  drag). Emits an Area with `source: 'draw'`, built through
+ *  `@cnmw/spec`'s `buildArea` like every other Area this adapter produces.
+ *  Not a replacement for mapbox-gl-draw/terra-draw; a host that already has
+ *  a draw library passes its GeoJSON to `areaFromGeoJson` instead.
  *
- *  **PLANNED, not implemented — §8.** No package exports this symbol, in
- *  either adapter; an `import { createDrawTool }` resolves to `undefined`
- *  and calling it throws. It is pointer-interaction UI (rect drag, polygon
- *  click-to-add plus double-click-to-close, touch, ESC-to-cancel,
- *  re-entrant draw state, teardown on `remove()`) — a half-working version
- *  would be worse than the escape hatch in its own doc comment, which
- *  works today: bring your own draw library and pass its GeoJSON to
- *  `@cnmw/upload-core`'s `areaFromGeoJson`, which yields the same `Area`
- *  with `source: 'upload'`. */
-export declare function createDrawTool(map: Map, options?: { tools?: ('rectangle'|'polygon'|'viewport')[] }): DrawToolHandle;
+ *  **Implemented 2026-11-13 — see the amendment below.** `polygon` is
+ *  accepted in `tools` (and in `DrawToolHandle.arm`'s type) but not
+ *  implemented: `arm('polygon')` throws. Rectangle and viewport cover the
+ *  demo's actual requirement ("draw their own area"); a half-working
+ *  freehand-polygon mode was not worth the added pointer-state surface for
+ *  this pass. The escape hatch from the original §8 entry still works
+ *  unchanged for anyone who needs it: bring your own draw library and pass
+ *  its GeoJSON to `@cnmw/upload-core`'s `areaFromGeoJson` (`source:
+ *  'upload'`). */
+export declare function createDrawTool(map: Map, options?: { tools?: ('rectangle'|'polygon'|'viewport')[], id?: string }): DrawToolHandle;
+
+export interface DrawToolHandle {
+  readonly armed: boolean;
+  /** `'viewport'` is one-shot: builds and emits an Area from the map's
+   *  current bounds immediately, with nothing left armed afterward.
+   *  `'rectangle'` arms a crosshair cursor and pointer drag; disarms itself
+   *  the moment a non-degenerate rectangle is dragged out, or on `Escape`. */
+  arm(tool?: 'rectangle' | 'viewport'): void;
+  disarm(): void;
+  on(event: 'area' | 'armed' | 'disarmed' | 'cancel', handler: (payload: unknown) => void): () => void;
+  remove(): void;
+}
+
+/** Drag a displayed outline's vertices, insert a vertex at a midpoint
+ *  (mousedown-drag on the midpoint marker), delete a vertex (double-click
+ *  it) — single exterior ring only (the larger one, for a `MultiPolygon`);
+ *  holes and other polygon components are carried through unedited, not
+ *  dropped. Emits an updated Area with `source: 'edited'` on every commit
+ *  — see §1.2's `EditedProvenance` for what it keeps from the parent. Hand-
+ *  rolled rather than built on terra-draw; `packages/maplibre/src/
+ *  edit-tool.js`'s header records the measured weight that comparison was
+ *  based on and why it went the other way. */
+export declare function createEditTool(map: Map, area: Area, options?: { id?: string }): EditToolHandle;
+
+export interface EditToolHandle {
+  on(event: 'change', handler: (payload: { area: Area }) => void): () => void;
+  getArea(): Area;
+  remove(): void;
+}
 ```
+
+### Amendment, 2026-11-13 — `createDrawTool` implemented; `createEditTool` added
+
+`createDrawTool` moves from §8's "specified here, not implemented" table to
+shipped (`packages/maplibre/src/draw-tool.js`): rectangle-by-drag and
+one-click viewport, both producing an `Area` through `buildArea` (never a
+hand-built provenance object, per §5.1). `polygon` stays unimplemented —
+declared in the `tools` type for forward compatibility, but `arm('polygon')`
+throws with a message pointing at the still-working escape hatch
+(`areaFromGeoJson`). Keyboard: `Escape` disarms rectangle mode, mid-drag or
+not.
+
+`createEditTool` (`packages/maplibre/src/edit-tool.js`) is new, for "edit a
+boundary you brought up with the place search": drag a vertex, drag a
+midpoint marker out to insert a vertex there, double-click a vertex to
+delete it (refused below a 3-vertex ring — a no-op, not a thrown error).
+Built by hand rather than on terra-draw; the file's header has the measured
+weight (terra-draw 1.39.0's jsdelivr `+esm` bundle: 262,509 B min / 48,359 B
+gzip, plus its separate MapLibre-adapter package) and the version-pinning
+argument against adding a second drawing library with its own compatibility
+surface. The real cost of the choice made instead: only the largest
+exterior ring of the Area's geometry is editable — holes and any other
+polygon in a `MultiPolygon` pass through unchanged.
 
 `@cnmw/openlayers` exports the same names with OL types
 (`Control`, `Map` from `ol`, `VectorLayer`/`VectorSource` internally) and one
@@ -4209,13 +4440,16 @@ than merely documented).
 | what | where it is declared | what happens today | why not implemented / what to do instead |
 |---|---|---|---|
 | `indexUrl` as an **array** (multi-source search) | §3.2 `GeocoderOptions.indexUrl` | A one-element array works. Two or more now throw `INDEX_MULTI_SOURCE_UNSUPPORTED`. **Was** a silent fallback to `DEFAULT_INDEX_URL` — a caller naming two gazetteers got a third, with no error. | Real multi-source means parallel manifest loads, N open indexes queried per keystroke, merged ranking and a partial-failure policy — and design call #6 already puts cross-source merging/dedupe out of scope. Construct one `Geocoder` per index and merge in your own UI. |
-| `createDrawTool` | §5.2 (`@cnmw/maplibre`, and `@cnmw/openlayers` by inheritance) | **The symbol does not exist.** An `import { createDrawTool }` gives `undefined`; calling it throws. | Pointer-interaction UI (rect drag, polygon click-to-add + double-click-to-close, touch, ESC-to-cancel, re-entrant state, teardown) — a half-working draw tool is worse than none. Use any draw library and pass its GeoJSON to `@cnmw/upload-core`'s `areaFromGeoJson`: same `Area`, `source: 'upload'`. |
 | `load:progress` | §3.2 `GeocoderEvents` | Never emitted. Subscribing succeeds and the handler never fires. | Needs byte counting against `content-length` through both the manifest and index fetches, plus throttling (an unthrottled emit on a 4 MB index fires hundreds of times). Genuinely worth building — cold index load, 1.9–5.3 s, is this library's biggest measured UX gap — but it is a feature, not a doc fix. Until then: the `state` event's `'loading'` → `'ready'` transition is what a spinner needs. |
 | `GeocoderControlOptions.geocoder`'s `new Geocoder()` default, and `geocoderOptions` | §5.2 | No default; `geocoderOptions` is accepted and ignored. With no `geocoder` the control renders and types but never searches. | **Deliberate, and should stay.** Either would make the adapters import `@cnmw/geocoder-core` and through it a parquet reader, against §4.5's adapter budget and §5.1's rules. The adapters take a `Geocoder`; the host constructs it. |
 | `GeometryResolverOptions.boundaryUrls` | §3.2 | Accepted and ignored; boundary URLs always come from the manifest. | Small (two call sites in `select()`), but nothing needs it: the manifest is the versioned source of truth for which file a level lives in, and an override that disagrees with it silently defeats §6.4's version-skew check. Mirror the catalog and point `indexUrl` at your manifest instead. |
 | `GeocoderOptions.initialFetchSize` | §3.2 | Accepted and ignored. | Superseded by the manifest contract: each file entry declares `footer_metadata_bytes`, so the footer read is exact *per file* rather than one global guess. Nothing is gained by letting a caller override an exact number with an estimate. |
 
-**Resolved by this pass, and so *not* in this table:** a `blocked`
+**Resolved since this table was written, and so *not* in it:**
+`createDrawTool` — implemented 2026-11-13 (rectangle + viewport; see the
+§5.2 amendment); its `polygon` sub-tool is the one piece that stays
+unimplemented, noted at its own declaration rather than in this table,
+since the symbol itself now works. A `blocked`
 handle's `result` now rejects (§3.4 amendment); cancellation now reports
 `CANCELLED` rather than `NETWORK`/`DATASET_UNRESOLVED` (§3.5);
 `DownloadCoreOptions.maxConcurrentRequests` is now honoured;

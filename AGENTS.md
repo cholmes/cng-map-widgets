@@ -116,6 +116,17 @@ area.vertexCount.filter;   // 44
 area.filterGeometry;       // a Polygon -- or NULL, see pitfalls
 ```
 
+**`resolution: 'both'` also takes `upgradeDisplay: true`** (default `false`):
+`geometry: { resolution: 'both', upgradeDisplay: true }` additionally swaps
+`area.geometry` itself to the full-resolution fetch once the background
+upgrade lands (not just `filterGeometry`), keeping the pre-upgrade geometry
+on `area.displayGeometry`. Listen for `'area:upgrading'` (fires right after
+`'select'`, carries a cheap `{ bytes?, vertices? }` estimate) to show a
+"loading full detail…" notice, and call `geocoder.cancelUpgrade()` any time
+before `'area:upgraded'` fires to abort it and keep the simplified
+`geometry` — that emits `'area:upgrade-cancelled'` instead. See
+[`@cnmw/geocoder-core`'s README](packages/geocoder-core/README.md#upgradedisplay-true--swap-the-outline-too-with-a-cancel-handle).
+
 Hard rules:
 
 - `indexUrl` is the **manifest** (`index.json`), not the parquet, and takes

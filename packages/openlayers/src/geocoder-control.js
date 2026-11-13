@@ -27,8 +27,22 @@ import {
   CompositionGate,
   adaptiveDebounceMs,
 } from './combobox-helpers.js';
+import { upgradeNoticeReducer, describeUpgradeNotice, HIDDEN_NOTICE_STATE } from './upgrade-notice.js';
 
 let instanceCounter = 0;
+
+// See @cnmw/maplibre's geocoder-control.js for the rationale -- identical
+// here, duplicated rather than imported (this package doesn't depend on
+// @cnmw/maplibre's internals, only its public events).
+const UPGRADE_NOTICE_AUTO_HIDE_MS = 2600;
+
+function scheduleIdle(fn) {
+  if (typeof globalThis.requestIdleCallback === 'function') {
+    globalThis.requestIdleCallback(fn, { timeout: 500 });
+  } else {
+    setTimeout(fn, 0);
+  }
+}
 
 // Dark mode: see @cnmw/maplibre's geocoder-control.js for the override
 // hook rationale; identical token set here under the `-ol` class names.
@@ -121,6 +135,18 @@ const CSS = `
   .cnmw-geocoder-ol .cnmw-option-new { animation: none; }
   .cnmw-geocoder-ol .cnmw-spinner { animation-duration: 1.6s; }
 }
+.cnmw-geocoder-ol .cnmw-upgrade-notice {
+  margin-top: 4px; padding: 4px 6px; border-radius: 4px; background: var(--cnmw-badge-bg); color: var(--cnmw-meta);
+  font-size: 11px; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+}
+.cnmw-geocoder-ol .cnmw-upgrade-notice[hidden] { display: none; }
+.cnmw-geocoder-ol .cnmw-upgrade-notice-cancel {
+  font: inherit; font-size: 13px; line-height: 1; color: inherit; background: transparent; border: none;
+  cursor: pointer; padding: 0 2px; border-radius: 2px; flex: none;
+}
+.cnmw-geocoder-ol .cnmw-upgrade-notice-cancel[hidden] { display: none; }
+.cnmw-geocoder-ol .cnmw-upgrade-notice-cancel:hover, .cnmw-geocoder-ol .cnmw-upgrade-notice-cancel:focus { color: var(--cnmw-ink); }
+.cnmw-geocoder-ol .cnmw-upgrade-notice-cancel:focus { outline: 2px solid var(--cnmw-focus); outline-offset: -1px; }
 `;
 
 function injectCssOnce() {
@@ -218,6 +244,8 @@ export class GeocoderControl extends Control {
     this._searchRequestId = 0;
     this._lastQueryNorm = '';
     this._lastRenderedQuery = null;
+    this._upgradeNoticeState = HIDDEN_NOTICE_STATE;
+    this._upgradeNoticeTimer = null;
 
     this._buildDom(container);
   }
@@ -249,15 +277,37 @@ export class GeocoderControl extends Control {
     attribution.className = 'cnmw-attribution';
     attribution.hidden = true;
 
+    const upgradeNotice = document.createElement('div');
+    upgradeNotice.className = 'cnmw-upgrade-notice';
+    upgradeNotice.setAttribute('role', 'status');
+    upgradeNotice.setAttribute('aria-live', 'polite');
+    upgradeNotice.hidden = true;
+    const upgradeNoticeText = document.createElement('span');
+    const upgradeNoticeCancel = document.createElement('button');
+    upgradeNoticeCancel.type = 'button';
+    upgradeNoticeCancel.className = 'cnmw-upgrade-notice-cancel';
+    upgradeNotice.appendChild(upgradeNoticeText);
+    upgradeNotice.appendChild(upgradeNoticeCancel);
+
     container.appendChild(input);
     container.appendChild(listbox);
     container.appendChild(moreBadge);
     container.appendChild(attribution);
+    container.appendChild(upgradeNotice);
 
     this._input = input;
     this._listbox = listbox;
     this._moreBadge = moreBadge;
     this._attributionEl = attribution;
+    this._upgradeNoticeEl = upgradeNotice;
+    this._upgradeNoticeTextEl = upgradeNoticeText;
+    this._upgradeNoticeCancelEl = upgradeNoticeCancel;
+
+    upgradeNoticeCancel.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.geocoder?.cancelUpgrade();
+    });
 
     const runSearch = debounce(() => this._doSearch(), () => adaptiveDebounceMs(this.geocoder?.info?.strategy, opts.debounceMs));
 
@@ -295,6 +345,10 @@ export class GeocoderControl extends Control {
     super.setMap(map);
     this._outline?.remove();
     this._outline = null;
+    clearTimeout(this._upgradeNoticeTimer);
+    this._unsubscribeSelect?.();
+    this._unsubscribeUpgrading?.();
+    this._unsubscribeUpgradeCancelled?.();
     this._unsubscribeUpgrade?.();
     this._unsubscribeResults?.();
     if (this._onDocumentClick) {
@@ -320,11 +374,30 @@ export class GeocoderControl extends Control {
     // rationale. Previously missing entirely from this control (OL
     // selections never reflected a background geometry upgrade, and a
     // second search wave never reached the DOM here).
+    this._unsubscribeSelect = this.geocoder?.on('select', () => {
+      this._dispatchUpgradeNotice({ type: 'select' });
+    });
+    this._unsubscribeUpgrading = this.geocoder?.on('area:upgrading', ({ estimate }) => {
+      this._dispatchUpgradeNotice({ type: 'upgrading', estimate });
+    });
+    this._unsubscribeUpgradeCancelled = this.geocoder?.on('area:upgrade-cancelled', ({ area }) => {
+      if (this._area && area.id === this._area.id) {
+        this._dispatchUpgradeNotice({ type: 'cancelled' });
+        this._emit('upgrade-cancelled', { area });
+      }
+    });
     this._unsubscribeUpgrade = this.geocoder?.on('area:upgraded', ({ area }) => {
       if (this._area && area.id === this._area.id) {
         this._area = area;
-        this._outline?.setArea(area);
-        this._emit('upgrade', { area });
+        this._dispatchUpgradeNotice({ type: 'upgraded' });
+        // Deferred jank mitigation -- see @cnmw/maplibre's identical
+        // handler for the full rationale (GeoJSONSource#setData() /
+        // structured-clone cost at `upgradeDisplay`-scale geometry).
+        scheduleIdle(() => {
+          if (this._area !== area) return;
+          this._outline?.setArea(area);
+          this._emit('upgrade', { area });
+        });
       }
     });
     // See @cnmw/maplibre's onAdd for why `_lastRenderedQuery` is required
@@ -587,6 +660,32 @@ export class GeocoderControl extends Control {
     this._input.value = '';
     this._renderResults([]);
     this.setArea(null);
+  }
+
+  // "upgradeDisplay" notice -- identical to @cnmw/maplibre's
+  // geocoder-control.js; see that file for the full rationale.
+  _dispatchUpgradeNotice(event) {
+    this._upgradeNoticeState = upgradeNoticeReducer(this._upgradeNoticeState, event);
+    this._renderUpgradeNotice();
+    clearTimeout(this._upgradeNoticeTimer);
+    if (this._upgradeNoticeState.phase === 'upgraded' || this._upgradeNoticeState.phase === 'cancelled') {
+      this._upgradeNoticeTimer = setTimeout(() => this._dispatchUpgradeNotice({ type: 'timeout' }), UPGRADE_NOTICE_AUTO_HIDE_MS);
+    }
+  }
+
+  _renderUpgradeNotice() {
+    const strings = this._options.upgradeNoticeStrings;
+    const described = describeUpgradeNotice(this._upgradeNoticeState, strings);
+    if (!described) {
+      this._upgradeNoticeEl.hidden = true;
+      return;
+    }
+    this._upgradeNoticeTextEl.textContent = described.text;
+    this._upgradeNoticeCancelEl.hidden = !described.showCancel;
+    this._upgradeNoticeCancelEl.textContent = strings?.cancelLabel ?? '×';
+    this._upgradeNoticeCancelEl.setAttribute('aria-label', strings?.cancelTitle ?? 'Cancel and keep the simplified outline');
+    this._upgradeNoticeCancelEl.title = strings?.cancelTitle ?? 'Cancel and keep the simplified outline';
+    this._upgradeNoticeEl.hidden = false;
   }
 
   focus() {

@@ -1,6 +1,14 @@
 // @cnmw/geocoder-core -- the Geocoder class (design doc §3.2, §6).
 
-import { CnmwError, normalizeName, buildArea, simplifyToVertexCeilingAsync, MAX_SYNC_SIMPLIFY_VERTICES } from '@cnmw/spec';
+import {
+  CnmwError,
+  normalizeName,
+  buildArea,
+  simplifyToVertexCeilingAsync,
+  MAX_SYNC_SIMPLIFY_VERTICES,
+  computeBBoxes,
+  vertexCount as countVertices,
+} from '@cnmw/spec';
 import { Emitter } from './events.js';
 import {
   loadManifest,
@@ -266,6 +274,46 @@ export function resolveResolutionMode(requested, hasDisplay) {
   return resolution;
 }
 
+/**
+ * ~Bytes of WKB per vertex, used only to turn a cheap byte estimate into a
+ * cheap vertex estimate below. Not a measurement of any specific geometry
+ * -- it is the same back-of-envelope ratio the design doc's §1.3 limits
+ * table already states ("a 10k-vertex ring is ~160 KB of WKB"), reused
+ * here rather than invented fresh.
+ */
+const BYTES_PER_VERTEX_ESTIMATE = 16;
+
+/**
+ * Cheap, best-effort estimate for the `'area:upgrading'` event (design doc
+ * §1.3/§3.2 amendment, "upgradeDisplay"): **this is the full-resolution
+ * boundary *file*'s declared total size divided by its declared row
+ * count** -- the average bytes of *one feature in that file*, not this
+ * particular feature's own size, which is unknowable without actually
+ * fetching it (fetching it in the background is the whole point of the
+ * upgrade). `vertices` is derived from that same average byte figure via
+ * `BYTES_PER_VERTEX_ESTIMATE`, so it inherits the same "average across the
+ * file" caveat. Both come from fields the manifest already declares
+ * (`boundaries[].full.size`/`.row_count`, written by every manifest this
+ * repo builds) -- no network request, no row-group read, nothing beyond
+ * arithmetic on `this._manifest`, which `select()` already has in hand.
+ *
+ * Neither field is fabricated when the manifest doesn't declare both
+ * inputs: an older manifest, or one that genuinely doesn't know its own
+ * row count, yields `{}` -- a UI showing the notice falls back to a
+ * generic "loading full detail…" with no number, which is honest; a
+ * guessed number would not be.
+ * @param {{ full?: { size?: number, row_count?: number } }} [entry]
+ * @returns {{ bytes?: number, vertices?: number }}
+ */
+function estimateUpgradeOf(entry) {
+  const size = entry?.full?.size;
+  const rowCount = entry?.full?.row_count;
+  if (typeof size !== 'number' || typeof rowCount !== 'number' || rowCount <= 0) return {};
+  const bytes = Math.round(size / rowCount);
+  const vertices = Math.round(bytes / BYTES_PER_VERTEX_ESTIMATE);
+  return { bytes, vertices };
+}
+
 export class Geocoder {
   /** @param {import('./types.js').GeocoderOptions} [options] */
   constructor(options = {}) {
@@ -335,6 +383,26 @@ export class Geocoder {
     // rather than just letting it run to a discarded result. See
     // generation-guard.js.
     this._selectGuard = new GenerationGuard();
+
+    // `upgradeDisplay` (design doc §1.3/§3.2 amendment, "the demo fetches
+    // higher-resolution vectors in the background and lets the user
+    // cancel"): the generation + controller of the *currently pending*
+    // `resolution: 'both'` background upgrade, so `cancelUpgrade()` has
+    // something to act on from outside `select()`'s own closure. Scoped
+    // deliberately to the full-resolution upgrade only (`_runUpgrade`),
+    // not the filter-only vertex-ceiling-degrade upgrade
+    // (`_runFilterOnlyUpgrade`): that one never touches the visible
+    // outline, so there is nothing a user-facing "loading…/cancel" notice
+    // would be describing. Cleared at the top of every `select()` (a new
+    // selection always supersedes whatever this described) and again once
+    // the upgrade it describes settles, in whichever way that happens.
+    this._pendingUpgrade = null;
+    // Set by `cancelUpgrade()` to the generation it aborted, so the
+    // aborted upgrade's own `.catch` can tell "the user explicitly
+    // cancelled this" apart from "a new select() superseded it" (which
+    // also aborts the controller, via `GenerationGuard.next()`, but must
+    // stay silent exactly as it always has -- see that `.catch` below).
+    this._cancelledGeneration = null;
 
     // Test-only dependency-injection seam (never documented as public
     // API, never set by production callers): `Geocoder#load()`/`select()`
@@ -989,24 +1057,45 @@ export class Geocoder {
    * `filterGeometry` from it (chunked/yielding decode + simplification,
    * so that background work never blocks the main thread either),
    * emitting `'area:upgraded'` with the result. `Area.geometry` (the
-   * display variant) never changes during an upgrade.
+   * display variant) never changes during an upgrade -- **unless
+   * `options.upgradeDisplay` (or `GeocoderOptions.geometry.upgradeDisplay`)
+   * is `true`**, in which case the upgraded `Area` also swaps `geometry`
+   * to the full-resolution geometry, keeping the pre-upgrade display
+   * geometry available on `displayGeometry` for a consumer that wants to
+   * revert. Default `false`; unset, behavior is identical to before this
+   * option existed.
+   *
+   * Right before the background fetch starts, `'area:upgrading'` fires
+   * with `{ result, area, estimate }` (`area` is the just-returned display
+   * `Area`; `estimate` is `{ bytes?, vertices? }`, a cheap manifest-derived
+   * guess, present only when the manifest declares enough to compute one
+   * -- see `estimateUpgradeOf`). Call `cancelUpgrade()` any time before
+   * `'area:upgraded'` fires to abort it and keep the display `Area`
+   * exactly as it is; that fires `'area:upgrade-cancelled'` instead once
+   * the abort is actually observed.
    *
    * A boundary level with no declared `display` file in the manifest
    * falls back to the `'full'` path for `'display'` and `'both'` alike --
-   * there is nothing fast to show first.
+   * there is nothing fast to show first (and therefore no
+   * `'area:upgrading'`/`'area:upgraded'`/`cancelUpgrade()` either: there is
+   * nothing pending to cancel).
    *
    * Calling `select()` again before a pending `'both'` upgrade has
    * finished supersedes it: the superseded fetch/decode/simplify is
    * aborted and its result (if any slips through before the abort is
-   * observed) is dropped rather than emitted.
+   * observed) is dropped rather than emitted -- silently, same as always;
+   * `'area:upgrade-cancelled'` is reserved for an explicit
+   * `cancelUpgrade()` call, never for this.
    *
    * @param {import('./types.js').SearchResult} result
-   * @param {import('./types.js').GeometryResolverOptions & { signal?: AbortSignal }} [options]
+   * @param {import('./types.js').GeometryResolverOptions & { signal?: AbortSignal, upgradeDisplay?: boolean }} [options]
    */
   async select(result, options = {}) {
     // Supersede any previous pending background upgrade *before* awaiting
     // anything below, so a rapid double-select never races the two.
     const generation = this._selectGuard.next();
+    this._pendingUpgrade = null;
+    this._cancelledGeneration = null;
 
     await this.load(options.signal);
     const t0 = performance.now();
@@ -1149,20 +1238,72 @@ export class Geocoder {
     const elapsedMs = performance.now() - t0;
     this._emitter.emit('select', { result, area, elapsedMs });
 
+    // `upgradeDisplay` (design doc §1.3/§3.2 amendment): default false,
+    // which keeps every line below this exactly as it behaved before --
+    // `Area.geometry` never changes during an upgrade. `true` is what the
+    // "fetch higher-res vectors, then show them" demo flow opts into.
+    const upgradeDisplay = Boolean(options.upgradeDisplay ?? this._options.geometry?.upgradeDisplay ?? false);
+
     const controller = new AbortController();
     this._selectGuard.attach(controller);
+    this._pendingUpgrade = { generation, controller, result };
+    // Emitted synchronously, right after 'select' and before the upgrade's
+    // own fetch has done anything -- a listener sees "the background fetch
+    // is starting" at the same point `select()`'s caller sees the display
+    // Area, not some arbitrary moment later. `estimateUpgradeOf` is pure
+    // manifest arithmetic (no I/O), so this costs nothing to compute here.
+    this._emitter.emit('area:upgrading', { result, area, estimate: estimateUpgradeOf(entry) });
     this._runUpgrade(result, entry, manifest, area, generation, controller, {
       filterVertexCeiling,
       onVersionSkew,
       onWarning,
       userSignal: options.signal,
+      upgradeDisplay,
     }).catch((err) => {
+      if (this._pendingUpgrade?.generation === generation) this._pendingUpgrade = null;
       if (!this._selectGuard.isCurrent(generation)) return; // superseded: silent
-      if (err?.name === 'AbortError' || err?.code === 'CANCELLED') return;
+      if (err?.name === 'AbortError' || err?.code === 'CANCELLED') {
+        // Two different things abort this same controller: a superseding
+        // select() (via GenerationGuard.next(), handled -- silently -- by
+        // the isCurrent() check just above) and an explicit
+        // cancelUpgrade() call, which is the only path that ever sets
+        // `_cancelledGeneration`. Only the latter is user-facing.
+        if (this._cancelledGeneration === generation) {
+          this._cancelledGeneration = null;
+          this._emitter.emit('area:upgrade-cancelled', { result, area });
+        }
+        return;
+      }
       this._emitter.emit('error', err);
     });
 
     return area;
+  }
+
+  /**
+   * Cancel the currently pending `resolution: 'both'` background upgrade,
+   * if one is in flight (design doc §1.3/§3.2 amendment,
+   * "upgradeDisplay"/cancellation). The `Area` already returned by
+   * `select()` -- display geometry, and `geometry` itself when
+   * `upgradeDisplay` was set -- is left exactly as it is: nothing is
+   * un-done, because nothing was ever done to it; the background work is
+   * simply stopped before it produces a result. Once the aborted
+   * fetch/decode/simplify actually notices (at its next `await`
+   * boundary), `'area:upgrade-cancelled'` fires with the Area unchanged.
+   *
+   * A no-op, returning `false`, when there is nothing pending: no
+   * `select({ resolution: 'both' })` ever ran, its upgrade already
+   * finished (`'area:upgraded'` already fired) or failed, a later
+   * `select()` already superseded it, or `cancelUpgrade()` was already
+   * called for it. Never throws.
+   * @returns {boolean} true if a pending upgrade was found and aborted.
+   */
+  cancelUpgrade() {
+    if (!this._pendingUpgrade) return false;
+    this._cancelledGeneration = this._pendingUpgrade.generation;
+    this._pendingUpgrade.controller.abort();
+    this._pendingUpgrade = null;
+    return true;
   }
 
   /**
@@ -1185,7 +1326,7 @@ export class Geocoder {
     const t0 = performance.now();
     const abortSignal = controller.signal;
     const fullUrl = resolveManifestUrl(this._manifestUrl, entry.full.url);
-    const { geometry: fullGeometry } = await this._deps.resolveGeometry(
+    const { geometry: fullGeometry, bbox: fullBbox } = await this._deps.resolveGeometry(
       result,
       fullUrl,
       manifest.catalog_version,
@@ -1224,6 +1365,33 @@ export class Geocoder {
         },
       },
     };
+
+    // `upgradeDisplay` (design doc §1.3/§3.2 amendment): swap the *visible*
+    // geometry to full resolution too, not just filterGeometry. The
+    // pre-upgrade display geometry is kept on `displayGeometry` -- a new,
+    // additive `Area` field, see §1.2 -- so a consumer that wants to
+    // revert ("keep the simplified outline") still has it without
+    // re-fetching anything. bbox/bboxes/crossesAntimeridian are
+    // recomputed from the full geometry via the same `computeBBoxes` a
+    // normal `buildArea()` call uses, rather than reused from the display
+    // variant -- a feature's real extent is defined by its full-resolution
+    // geometry, and `filterGeometry` already gets a correctly-derived bbox
+    // from that geometry everywhere else in this file (`buildSelectedArea`
+    // for the 'full' resolution path). This never moves the map's camera
+    // on its own: nothing in this class or `GeocoderControl`'s
+    // `'area:upgraded'` handler calls `fit()` in response to an upgrade.
+    if (opts.upgradeDisplay) {
+      const { bbox, bboxes, crossesAntimeridian } = computeBBoxes(fullGeometry);
+      upgraded.geometry = fullGeometry;
+      upgraded.displayGeometry = baseArea.geometry;
+      upgraded.bbox = fullBbox ?? bbox;
+      upgraded.bboxes = bboxes;
+      upgraded.crossesAntimeridian = crossesAntimeridian;
+      upgraded.vertexCount = { ...upgraded.vertexCount, display: countVertices(fullGeometry) };
+      upgraded.provenance = { ...upgraded.provenance, geometryVariant: 'full' };
+    }
+
+    if (this._pendingUpgrade?.generation === generation) this._pendingUpgrade = null;
     this._selectGuard.detach(controller);
     const elapsedMs = performance.now() - t0;
     this._emitter.emit('area:upgraded', { result, area: upgraded, elapsedMs });
@@ -1292,6 +1460,8 @@ export class Geocoder {
   close() {
     this._searchGeneration++; // invalidate any in-flight search
     this._selectGuard.cancelAll(); // invalidate/cancel any pending background upgrade
+    this._pendingUpgrade = null;
+    this._cancelledGeneration = null;
     this._full = null;
     this._range = null;
     this._manifest = null;

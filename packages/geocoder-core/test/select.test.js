@@ -316,6 +316,156 @@ test('select(): a second select() supersedes a pending filter-only background up
   assert.equal(errors.length, 0);
 });
 
+// --- upgradeDisplay (design doc §1.3/§3.2 amendment) -----------------------
+
+test('select({ resolution: "both" }): upgradeDisplay default false leaves Area.geometry untouched by the upgrade', async () => {
+  const deps = makeDeps({ manifest: makeManifest({ withDisplay: true }), resolveDelayMs: 5, simplifyDelayMs: 5 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  const upgrades = [];
+  geocoder.on('area:upgraded', (p) => upgrades.push(p));
+
+  const initialArea = await geocoder.select(RESULT_A, { resolution: 'both' });
+  await delay(60);
+
+  assert.equal(upgrades.length, 1);
+  const upgraded = upgrades[0].area;
+  assert.equal(upgraded.geometry, initialArea.geometry, 'default upgradeDisplay: false must never touch Area.geometry');
+  assert.equal(upgraded.displayGeometry, undefined, 'displayGeometry must not appear unless upgradeDisplay was requested');
+  assert.equal(upgraded.provenance.geometryVariant, 'display-simplified');
+});
+
+test('select({ resolution: "both", upgradeDisplay: true }): swaps geometry to full-res, keeps displayGeometry for reverting', async () => {
+  const deps = makeDeps({ manifest: makeManifest({ withDisplay: true }), resolveDelayMs: 5, simplifyDelayMs: 5 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  const upgrades = [];
+  geocoder.on('area:upgraded', (p) => upgrades.push(p));
+
+  const initialArea = await geocoder.select(RESULT_A, { resolution: 'both', upgradeDisplay: true });
+  await delay(60);
+
+  assert.equal(upgrades.length, 1);
+  const upgraded = upgrades[0].area;
+  assert.notEqual(upgraded.geometry, initialArea.geometry, 'upgradeDisplay: true must swap Area.geometry to the full-res fetch');
+  assert.deepEqual(upgraded.displayGeometry, initialArea.geometry, 'the pre-upgrade display geometry must still be reachable');
+  assert.equal(upgraded.provenance.geometryVariant, 'full');
+  assert.equal(upgraded.provenance.resolution, 'full');
+  // squarePolygon(9) is the "full" fake geometry in makeDeps() -- 9 vertices.
+  assert.equal(upgraded.vertexCount.display, 9);
+});
+
+test('GeocoderOptions.geometry.upgradeDisplay sets the default for every select() call', async () => {
+  const deps = makeDeps({ manifest: makeManifest({ withDisplay: true }), resolveDelayMs: 5, simplifyDelayMs: 5 });
+  const geocoder = new Geocoder({
+    indexUrl: 'https://example.test/fake/index.json',
+    __deps: deps,
+    geometry: { upgradeDisplay: true },
+  });
+  const upgrades = [];
+  geocoder.on('area:upgraded', (p) => upgrades.push(p));
+
+  const initialArea = await geocoder.select(RESULT_A, { resolution: 'both' });
+  await delay(60);
+
+  assert.equal(upgrades.length, 1);
+  assert.notEqual(upgrades[0].area.geometry, initialArea.geometry);
+});
+
+// --- 'area:upgrading' / cancelUpgrade() / 'area:upgrade-cancelled' ---------
+
+test('select({ resolution: "both" }): emits "area:upgrading" synchronously before the background fetch resolves', async () => {
+  const manifest = makeManifest({ withDisplay: true });
+  manifest.boundaries[0].full.size = 1_600_000;
+  manifest.boundaries[0].full.row_count = 100;
+  const deps = makeDeps({ manifest, resolveDelayMs: 10, simplifyDelayMs: 5 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  const order = [];
+  geocoder.on('select', () => order.push('select'));
+  geocoder.on('area:upgrading', (p) => order.push({ kind: 'upgrading', ...p }));
+  geocoder.on('area:upgraded', () => order.push('upgraded'));
+
+  await geocoder.select(RESULT_A, { resolution: 'both' });
+  assert.deepEqual(order.map((e) => (typeof e === 'string' ? e : e.kind)), ['select', 'upgrading'], "'area:upgrading' must fire before select() even returns, since the fetch is still in flight");
+
+  const upgrading = order[1];
+  assert.equal(upgrading.result, RESULT_A);
+  // 1_600_000 bytes / 100 rows = 16,000 bytes/feature average; at the
+  // documented ~16 bytes/vertex this is a 1,000-vertex estimate.
+  assert.deepEqual(upgrading.estimate, { bytes: 16_000, vertices: 1_000 });
+
+  await delay(60);
+  assert.ok(order.includes('upgraded'));
+});
+
+test('select({ resolution: "both" }): "area:upgrading" estimate is absent when the manifest declares no full-file size/row_count', async () => {
+  const deps = makeDeps({ manifest: makeManifest({ withDisplay: true }), resolveDelayMs: 5, simplifyDelayMs: 5 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  let estimate;
+  geocoder.on('area:upgrading', (p) => { estimate = p.estimate; });
+
+  await geocoder.select(RESULT_A, { resolution: 'both' });
+  assert.deepEqual(estimate, {}, 'no size/row_count on the manifest entry: never a fabricated number');
+});
+
+test('cancelUpgrade(): aborts a pending "both" upgrade, keeps the simplified Area, emits "area:upgrade-cancelled" instead of "area:upgraded"', async () => {
+  const deps = makeDeps({ manifest: makeManifest({ withDisplay: true }), resolveDelayMs: 30, simplifyDelayMs: 20 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  const events = [];
+  geocoder.on('area:upgraded', (p) => events.push({ kind: 'upgraded', ...p }));
+  geocoder.on('area:upgrade-cancelled', (p) => events.push({ kind: 'cancelled', ...p }));
+  geocoder.on('error', (e) => events.push({ kind: 'error', e }));
+
+  const initialArea = await geocoder.select(RESULT_A, { resolution: 'both', upgradeDisplay: true });
+  const cancelled = geocoder.cancelUpgrade();
+  assert.equal(cancelled, true);
+
+  await delay(100);
+
+  assert.equal(events.length, 1, 'exactly one of area:upgraded/area:upgrade-cancelled/error, never zero and never both');
+  assert.equal(events[0].kind, 'cancelled');
+  assert.equal(events[0].result, RESULT_A);
+  // Cancellation keeps the Area the caller already has: geometry is still
+  // the simplified display variant, not swapped to full-res, even though
+  // upgradeDisplay was requested.
+  assert.equal(events[0].area.geometry, initialArea.geometry);
+  assert.equal(events[0].area.displayGeometry, undefined);
+  assert.equal(events[0].area.provenance.pendingUpgrade, true);
+});
+
+test('cancelUpgrade(): returns false when nothing is pending', async () => {
+  const deps = makeDeps({ manifest: makeManifest({ withDisplay: true }) });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+
+  assert.equal(geocoder.cancelUpgrade(), false, 'before any select() at all');
+
+  await geocoder.select(RESULT_A); // resolution: 'display' -- no 'both' upgrade ever starts
+  assert.equal(geocoder.cancelUpgrade(), false, "a non-'both' select() has nothing to cancel");
+
+  const deps2 = makeDeps({ manifest: makeManifest({ withDisplay: true }), resolveDelayMs: 5, simplifyDelayMs: 5 });
+  const geocoder2 = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps2 });
+  await geocoder2.select(RESULT_A, { resolution: 'both' });
+  await delay(40); // let the upgrade finish normally
+  assert.equal(geocoder2.cancelUpgrade(), false, 'already finished: nothing left to cancel');
+});
+
+test('cancelUpgrade(): a later select() silently supersedes rather than being reported as a cancellation', async () => {
+  const deps = makeDeps({ manifest: makeManifest({ withDisplay: true }), resolveDelayMs: 20, simplifyDelayMs: 10 });
+  const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });
+  const events = [];
+  geocoder.on('area:upgraded', (p) => events.push(['upgraded', p.result.featureId]));
+  geocoder.on('area:upgrade-cancelled', (p) => events.push(['cancelled', p.result.featureId]));
+  geocoder.on('error', (e) => events.push(['error', e]));
+
+  await geocoder.select(RESULT_A, { resolution: 'both' }); // A's upgrade pending
+  await geocoder.select(RESULT_B, { resolution: 'both' }); // supersedes A -- not a "cancel"
+  assert.equal(geocoder.cancelUpgrade(), true); // cancels B's own now-pending upgrade
+
+  await delay(80);
+
+  // A's supersession is silent (no event at all, exactly as before this
+  // feature existed); only B's explicit cancellation is reported.
+  assert.deepEqual(events, [['cancelled', 'B']]);
+});
+
 test('select(): close() cancels a pending background upgrade', async () => {
   const deps = makeDeps({ manifest: makeManifest({ withDisplay: true }), resolveDelayMs: 15, simplifyDelayMs: 10 });
   const geocoder = new Geocoder({ indexUrl: 'https://example.test/fake/index.json', __deps: deps });

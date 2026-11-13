@@ -283,6 +283,7 @@
     <tr><td><code>node examples/quickstart/verify.mjs 8000</code></td><td>The README quickstart loads the live index, searches, selects, and renders attribution.</td></tr>
     <tr><td><code>node examples/geocoder-demo/verify-live.mjs 8000</code></td><td>ADM0, ADM1 and ADM2 all resolve against the published catalog, with real network timings.</td></tr>
     <tr><td><code>node examples/geocoder-demo/verify-progressive.mjs 8000</code></td><td><code>resolution: 'both'</code> returns early and upgrades <code>filterGeometry</code> in the background.</td></tr>
+    <tr><td><code>node examples/geocoder-demo/verify-upgrade-display.mjs 8000</code></td><td><code>upgradeDisplay: true</code>: the "loading full detail…" notice, <code>cancelUpgrade()</code> keeping the simplified outline, and the un-cancelled outline swap (by vertex count) with no long task over budget.</td></tr>
     <tr><td><code>node examples/upload-demo/verify.mjs 8000</code></td><td>Antimeridian search + a repaired GeoJSON upload, both drawn through the OpenLayers adapter.</td></tr>
     <tr><td><code>node examples/download-demo/verify.mjs 8000</code></td><td>estimate() then a real GeoJSON <em>and</em> GeoParquet download of FTW Liechtenstein.</td></tr>
     <tr><td><code>node examples/firms-explorer/verify.mjs 8000</code></td><td>Collection-JSON resolution, partition pruning, and a real download from a 632M-row table.</td></tr>

@@ -125,7 +125,8 @@ Extends `ol/control/Control`. Added with `map.addControl(control)`; OL calls
 Every [`@cnmw/maplibre` option](../maplibre/README.md#new-geocodercontroloptions)
 applies identically — `geocoder` (**required in practice, no default**),
 `placeholder`, `debounceMs` (80), `useViewport` (true), `limit`, `fitBounds`
-(true), `outline`, `showAttribution` (true), `renderItem` — plus:
+(true), `outline`, `showAttribution` (true), `renderItem`,
+`upgradeNoticeStrings` — plus:
 
 | option | type | notes |
 |---|---|---|
@@ -134,9 +135,14 @@ applies identically — `geocoder` (**required in practice, no default**),
 
 Members and events match the MapLibre adapter: `control.geocoder`,
 `control.area`, `setArea`, `clear`, `focus`, `on(event, handler)`, and the
-events `select`, `results`, `upgrade`, `clear`, `error`. The combobox is the
-same ARIA 1.2 pattern, the same keyboard handling, the same lazy
-`geocoder.load()` on first focus, and the
+events `select`, `results`, `upgrade`, `upgrade-cancelled`, `clear`, `error`.
+With `geometry: { resolution: 'both', upgradeDisplay: true }` on the
+`Geocoder`, this control shows the same
+["loading full detail…" notice, with a cancel affordance](../maplibre/README.md#the-loading-full-detail-notice)
+as the MapLibre adapter — same pure state machine
+(`./src/upgrade-notice.js`, duplicated verbatim), same deferred-outline-swap
+jank mitigation. The combobox is the same ARIA 1.2 pattern, the same
+keyboard handling, the same lazy `geocoder.load()` on first focus, and the
 [same default option renderer](../maplibre/README.md#the-combobox).
 
 > The ~150 lines of combobox DOM are **duplicated** between this package and
