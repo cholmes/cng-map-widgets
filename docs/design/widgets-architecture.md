@@ -3916,8 +3916,29 @@ An adapter adds exactly five things:
 
 1. **Search control UI** — an accessible combobox: `<input role="combobox">`
    + `<ul role="listbox">`, `aria-activedescendant`, arrow/enter/escape
-   handling, debounce, loading and empty states, and the attribution line that
-   design call #11 requires. The default option renderer (overridable via
+   handling, debounce, loading and empty states, and the attribution that
+   design call #11 requires.
+
+   > **Amendment (2026-11-13, compact attribution).** The design-call-#11
+   > attribution was an unconstrained-width text line inside the control;
+   > a full geoBoundaries citation spanned the entire map (Chris: "Could
+   > we make the display of the attribution a bit better? Like put it on
+   > the bottom maybe with the 'i', instead of going over everything.").
+   > It is now a compact widget modeled on MapLibre's own compact
+   > attribution: a 24px circular ⓘ button anchored bottom-left of the
+   > MAP (bottom-right belongs to the basemap attribution in both
+   > MapLibre and OpenLayers), expanding upward into a themed pill
+   > (max-width `min(70vw, 480px)`) carrying the same
+   > `Area.provenance.attribution` text/links and the share-alike badge.
+   > Collapsed by default; collapses on outside click and on each new
+   > selection; keyboard accessible (`aria-expanded`/`aria-controls`);
+   > mounted in MapLibre's bottom-left control corner / OL's stop-event
+   > overlay container and removed on `onRemove`/`setMap(null)`.
+   > `showAttribution: false` still suppresses it entirely. The pill
+   > content element keeps the `.cnmw-attribution` class, so existing
+   > assertions on its text keep working.
+
+   The default option renderer (overridable via
    `renderItem`) shows `SearchResult.parentName`/`countryName` as
    disambiguating secondary text when the loaded index carries one (§3.2
    amendment, "Dropdown context" — e.g. `"Bag — Rajasthan · IND · ADM4"`),

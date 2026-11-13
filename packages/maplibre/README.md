@@ -122,7 +122,7 @@ Implements MapLibre's `IControl`, so `map.addControl(control, position)` works.
 | `limit` | `number` | the geocoder's own | Passed to each `search()`. |
 | `fitBounds` | `boolean \| { padding?, maxZoom? }` | `true` | `padding` defaults to 40. |
 | `outline` | `false \| AreaLayerStyle` | a sensible outline | `false` draws nothing — useful if you render the area yourself. |
-| `showAttribution` | `boolean` | `true` | The design-call-#11 attribution line, rendered from `Area.provenance.attribution` after the first selection. |
+| `showAttribution` | `boolean` | `true` | The design-call-#11 attribution, rendered from `Area.provenance.attribution` after the first selection — since 2026-11-13 as a compact bottom-left ⓘ button on the map (in MapLibre's `bottom-left` control corner; bottom-right is MapLibre's own attribution) that expands to a pill with the text and links. The pill starts collapsed, collapses on outside click and on each new selection, and the host is removed in `onRemove`. Keep page overlays out of the map's bottom-left corner, or the pill expands underneath them. |
 | `renderItem` | `(SearchResult) => string \| Node` | the default renderer | A returned string is assigned to `innerHTML`; a `Node` is appended. |
 | `geocoderOptions` | `GeocoderOptions` | — | **Not honored.** Construct the `Geocoder` yourself. |
 | `upgradeNoticeStrings` | `Partial<{ upgrading, upgraded, cancelled, cancelLabel, cancelTitle }>` | English defaults | i18n override for the "loading full detail…" notice below. `upgrading` is a function of the formatted vertex label (`''` when no estimate), e.g. `(v) => v ? \`Chargement… ~${v} sommets\` : 'Chargement…'`. |

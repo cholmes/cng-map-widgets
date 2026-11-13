@@ -47,7 +47,7 @@ function scheduleIdle(fn) {
 // Dark mode: see @cnmw/maplibre's geocoder-control.js for the override
 // hook rationale; identical token set here under the `-ol` class names.
 const CSS = `
-.cnmw-geocoder-ol {
+.cnmw-geocoder-ol, .cnmw-attribution-ctrl-ol {
   --cnmw-bg: #fff;
   --cnmw-ink: #1a1a1a;
   --cnmw-border: #ccc;
@@ -65,7 +65,7 @@ const CSS = `
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  .cnmw-geocoder-ol {
+  .cnmw-geocoder-ol, .cnmw-attribution-ctrl-ol {
     --cnmw-bg: #1e1f22;
     --cnmw-ink: #e8e8e6;
     --cnmw-border: #46484d;
@@ -130,8 +130,30 @@ const CSS = `
   font-size: 11px; color: var(--cnmw-meta); margin-top: 2px; transition: opacity 0.3s ease;
 }
 .cnmw-geocoder-ol .cnmw-more-badge[hidden] { display: none; }
-.cnmw-geocoder-ol .cnmw-attribution { font-size: 10px; color: var(--cnmw-meta); margin-top: 4px; }
-.cnmw-geocoder-ol .cnmw-attribution a { color: inherit; }
+/* Compact attribution (2026-11-13): bottom-left ⓘ + pill on the map;
+   OL's own attribution is bottom-right. Standalone classes because the
+   host lives outside .cnmw-geocoder-ol. */
+.cnmw-attribution-ctrl-ol {
+  /* top: auto overrides the top: 10px this element inherits from sharing
+     the variable-scope rule with .cnmw-geocoder-ol. */
+  position: absolute; top: auto; left: 8px; bottom: 8px; z-index: 1;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+}
+.cnmw-attribution-toggle-ol {
+  width: 24px; height: 24px; border-radius: 50%; flex: none; cursor: pointer;
+  font: 700 13px/1 Georgia, 'Times New Roman', serif; font-style: italic;
+  color: var(--cnmw-meta); background: var(--cnmw-bg); border: 1px solid var(--cnmw-border);
+  box-shadow: 0 1px 4px var(--cnmw-shadow); padding: 0;
+}
+.cnmw-attribution-toggle-ol:hover, .cnmw-attribution-toggle-ol:focus { color: var(--cnmw-ink); }
+.cnmw-attribution-toggle-ol:focus { outline: 2px solid var(--cnmw-focus); outline-offset: 1px; }
+.cnmw-attribution-ctrl-ol .cnmw-attribution {
+  font-size: 11px; color: var(--cnmw-meta); background: var(--cnmw-bg);
+  border: 1px solid var(--cnmw-border); border-radius: 12px; box-shadow: 0 1px 4px var(--cnmw-shadow);
+  padding: 4px 10px; max-width: min(70vw, 480px); overflow-wrap: break-word;
+}
+.cnmw-attribution-ctrl-ol .cnmw-attribution[hidden] { display: none; }
+.cnmw-attribution-ctrl-ol .cnmw-attribution a { color: inherit; }
 .cnmw-geocoder-ol .cnmw-sharealike {
   font-size: 9px; border: 1px solid var(--cnmw-border); border-radius: 2px; padding: 0 3px; margin-left: 2px;
 }
@@ -277,8 +299,12 @@ export class GeocoderControl extends Control {
     moreBadge.setAttribute('aria-live', 'polite');
     moreBadge.hidden = true;
 
+    // Compact attribution (2026-11-13): ⓘ toggle + pill, mounted on the
+    // map (bottom-left; OL's own attribution is bottom-right) in setMap,
+    // not inside this control's container -- same UX as @cnmw/maplibre.
     const attribution = document.createElement('div');
     attribution.className = 'cnmw-attribution';
+    attribution.id = `${this._instanceId}-attribution`;
     attribution.hidden = true;
 
     const upgradeNotice = document.createElement('div');
@@ -296,7 +322,6 @@ export class GeocoderControl extends Control {
     container.appendChild(input);
     container.appendChild(listbox);
     container.appendChild(moreBadge);
-    container.appendChild(attribution);
     container.appendChild(upgradeNotice);
 
     this._input = input;
@@ -359,11 +384,18 @@ export class GeocoderControl extends Control {
       document.removeEventListener('click', this._onDocumentClick);
       this._onDocumentClick = null;
     }
+    if (this._onAttributionOutsideClick) {
+      document.removeEventListener('click', this._onAttributionOutsideClick);
+      this._onAttributionOutsideClick = null;
+    }
+    this._attributionHost?.remove();
+    this._attributionHost = null;
     if (!map) {
       this._map = null;
       return;
     }
     this._map = map;
+    this._mountAttribution(map);
     const opts = this._options;
     this._outline = opts.outline === false ? null : addAreaLayer(map, { featureProjection: opts.featureProjection, ...(opts.outline || {}) });
     this._getViewport = opts.useViewport === false ? () => undefined : viewportProvider(map, { featureProjection: opts.featureProjection });
@@ -644,14 +676,57 @@ export class GeocoderControl extends Control {
     this._renderAttribution(area);
   }
 
+  /**
+   * Mount the compact attribution widget into the map's stop-event
+   * overlay container (so clicks on it never reach the map). Mirrors
+   * @cnmw/maplibre's _mountAttribution; torn down in setMap.
+   * @param {import('ol/Map').default} map
+   */
+  _mountAttribution(map) {
+    const pill = this._attributionEl;
+    const host = document.createElement('div');
+    host.className = 'cnmw-attribution-ctrl-ol';
+    host.hidden = true;
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'cnmw-attribution-toggle-ol';
+    toggle.setAttribute('aria-label', 'Data attribution');
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-controls', pill.id);
+    toggle.textContent = 'i';
+    host.appendChild(pill);
+    host.appendChild(toggle);
+    toggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._setAttributionExpanded(pill.hidden);
+    });
+    this._onAttributionOutsideClick = (e) => {
+      if (!host.contains(e.target)) this._setAttributionExpanded(false);
+    };
+    document.addEventListener('click', this._onAttributionOutsideClick);
+    const target = map.getOverlayContainerStopEvent?.() ?? map.getTargetElement?.() ?? null;
+    target?.appendChild(host);
+    this._attributionHost = host;
+    this._attributionToggle = toggle;
+  }
+
+  _setAttributionExpanded(expanded) {
+    if (!this._attributionEl || !this._attributionToggle) return;
+    this._attributionEl.hidden = !expanded;
+    this._attributionToggle.setAttribute('aria-expanded', String(expanded));
+  }
+
   _renderAttribution(area) {
+    if (!this._attributionHost) return; // not attached to a map yet
     if (this._options.showAttribution === false) {
-      this._attributionEl.hidden = true;
+      this._attributionHost.hidden = true;
       return;
     }
     const attribution = area?.provenance?.attribution ?? [];
     if (attribution.length === 0) {
-      this._attributionEl.hidden = true;
+      this._attributionHost.hidden = true;
+      this._setAttributionExpanded(false);
       return;
     }
     this._attributionEl.innerHTML = attribution
@@ -669,7 +744,9 @@ export class GeocoderControl extends Control {
         return label + tag;
       })
       .join(' · ');
-    this._attributionEl.hidden = false;
+    // Show the ⓘ; the pill starts (and returns to) collapsed.
+    this._attributionHost.hidden = false;
+    this._setAttributionExpanded(false);
   }
 
   clear() {

@@ -57,7 +57,7 @@ function scheduleIdle(fn) {
 // redeclaring it on an ancestor (inherited) or on `.cnmw-geocoder` with
 // higher cascade priority; nothing below reads a computed value.
 const CSS = `
-.cnmw-geocoder {
+.cnmw-geocoder, .cnmw-attribution-ctrl {
   --cnmw-bg: #fff; --cnmw-ink: #1a1a1a; --cnmw-border: #ccc; --cnmw-focus: #1a73e8;
   --cnmw-meta: #666; --cnmw-selected-bg: #e8f0fe; --cnmw-highlight-ink: inherit;
   --cnmw-highlight-bg: #fff3b0; --cnmw-shadow: rgba(0,0,0,0.15); --cnmw-error: #b3261e;
@@ -65,7 +65,7 @@ const CSS = `
   position: relative; font: 13px/1.4 system-ui, sans-serif; color: var(--cnmw-ink); color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  .cnmw-geocoder {
+  .cnmw-geocoder, .cnmw-attribution-ctrl {
     --cnmw-bg: #1e1f22; --cnmw-ink: #e8e8e6; --cnmw-border: #46484d; --cnmw-focus: #7ab2f5;
     --cnmw-meta: #a3a3a0; --cnmw-selected-bg: #2a3a52; --cnmw-highlight-bg: #5a4a12;
     --cnmw-shadow: rgba(0,0,0,0.5); --cnmw-error: #ff8a80; --cnmw-error-bg: #3a2323;
@@ -116,8 +116,29 @@ const CSS = `
 @keyframes cnmw-spin { to { transform: rotate(360deg); } }
 .cnmw-geocoder .cnmw-more-badge { font-size: 11px; color: var(--cnmw-meta); margin-top: 2px; }
 .cnmw-geocoder .cnmw-more-badge[hidden] { display: none; }
-.cnmw-geocoder .cnmw-attribution { font-size: 10px; color: var(--cnmw-meta); margin-top: 4px; }
-.cnmw-geocoder .cnmw-attribution a { color: inherit; }
+/* Compact attribution (2026-11-13): a bottom-left ⓘ toggle + pill on the
+   map itself, modeled on MapLibre's own compact attribution control --
+   replaces the old full-width text line that ran over the map. The host
+   lives in MapLibre's bottom-left control corner so corner stacking is
+   handled for us; bottom-right is MapLibre's own attribution. */
+/* Column layout, pill above the ⓘ: expanding upward keeps the pill off
+   whatever page chrome sits along the bottom edge (status bars etc.). */
+.cnmw-attribution-ctrl { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.cnmw-attribution-toggle {
+  width: 24px; height: 24px; border-radius: 50%; flex: none; cursor: pointer;
+  font: 700 13px/1 Georgia, 'Times New Roman', serif; font-style: italic;
+  color: var(--cnmw-meta); background: var(--cnmw-bg); border: 1px solid var(--cnmw-border);
+  box-shadow: 0 1px 4px var(--cnmw-shadow); padding: 0;
+}
+.cnmw-attribution-toggle:hover, .cnmw-attribution-toggle:focus { color: var(--cnmw-ink); }
+.cnmw-attribution-toggle:focus { outline: 2px solid var(--cnmw-focus); outline-offset: 1px; }
+.cnmw-attribution-ctrl .cnmw-attribution {
+  font-size: 11px; color: var(--cnmw-meta); background: var(--cnmw-bg);
+  border: 1px solid var(--cnmw-border); border-radius: 12px; box-shadow: 0 1px 4px var(--cnmw-shadow);
+  padding: 4px 10px; max-width: min(70vw, 480px); overflow-wrap: break-word;
+}
+.cnmw-attribution-ctrl .cnmw-attribution[hidden] { display: none; }
+.cnmw-attribution a { color: inherit; }
 .cnmw-geocoder .cnmw-sharealike { font-size: 9px; border: 1px solid var(--cnmw-border); border-radius: 2px; padding: 0 3px; margin-left: 2px; }
 @media (prefers-reduced-motion: reduce) { .cnmw-geocoder .cnmw-option-new { animation: none; } }
 .cnmw-geocoder .cnmw-upgrade-notice {
@@ -276,8 +297,14 @@ export class GeocoderControl {
     moreBadge.setAttribute('aria-live', 'polite');
     moreBadge.hidden = true;
 
+    // Compact attribution (2026-11-13, replaces the design-call-#11
+    // full-width line): a ⓘ button + expandable pill, mounted in the
+    // map's bottom-left control corner -- NOT in this control's own
+    // container, so a long citation never runs over the map. See
+    // _renderAttribution and _mountAttribution.
     const attribution = document.createElement('div');
     attribution.className = 'cnmw-attribution';
+    attribution.id = `${this._instanceId}-attribution`;
     attribution.hidden = true;
 
     // "upgradeDisplay" notice: shown while `select({ resolution: 'both' })`'s
@@ -298,8 +325,8 @@ export class GeocoderControl {
     container.appendChild(input);
     container.appendChild(listbox);
     container.appendChild(moreBadge);
-    container.appendChild(attribution);
     container.appendChild(upgradeNotice);
+    this._mountAttribution(map, attribution);
 
     this._input = input;
     this._listbox = listbox;
@@ -421,6 +448,12 @@ export class GeocoderControl {
       document.removeEventListener('click', this._onDocumentClick);
       this._onDocumentClick = null;
     }
+    if (this._onAttributionOutsideClick) {
+      document.removeEventListener('click', this._onAttributionOutsideClick);
+      this._onAttributionOutsideClick = null;
+    }
+    this._attributionHost?.remove();
+    this._attributionHost = null;
     clearTimeout(this._upgradeNoticeTimer);
     this._unsubscribeSelect?.();
     this._unsubscribeUpgrading?.();
@@ -712,14 +745,61 @@ export class GeocoderControl {
     this._renderAttribution(area);
   }
 
+  /**
+   * Mount the compact attribution widget (ⓘ toggle + pill) into the map's
+   * bottom-left control corner. Lifecycle: created in onAdd, removed in
+   * onRemove. The pill starts collapsed; a new selection collapses it
+   * again; a click anywhere outside collapses it.
+   * @param {import('maplibre-gl').Map} map
+   * @param {HTMLElement} pill the `.cnmw-attribution` content element
+   */
+  _mountAttribution(map, pill) {
+    const host = document.createElement('div');
+    host.className = 'maplibregl-ctrl cnmw-attribution-ctrl';
+    host.hidden = true;
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'cnmw-attribution-toggle';
+    toggle.setAttribute('aria-label', 'Data attribution');
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-controls', pill.id);
+    toggle.textContent = 'i';
+    host.appendChild(pill);
+    host.appendChild(toggle);
+    toggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._setAttributionExpanded(pill.hidden);
+    });
+    this._onAttributionOutsideClick = (e) => {
+      if (!host.contains(e.target)) this._setAttributionExpanded(false);
+    };
+    document.addEventListener('click', this._onAttributionOutsideClick);
+    // The bottom-left control corner exists as soon as the Map does;
+    // falling back to the map container keeps a headless/mocked map from
+    // crashing the control.
+    const corner = map.getContainer().querySelector('.maplibregl-ctrl-bottom-left') ?? map.getContainer();
+    corner.appendChild(host);
+    this._attributionHost = host;
+    this._attributionToggle = toggle;
+  }
+
+  _setAttributionExpanded(expanded) {
+    if (!this._attributionEl || !this._attributionToggle) return;
+    this._attributionEl.hidden = !expanded;
+    this._attributionToggle.setAttribute('aria-expanded', String(expanded));
+  }
+
   _renderAttribution(area) {
+    if (!this._attributionHost) return; // not added to a map yet
     if (this._options.showAttribution === false) {
-      this._attributionEl.hidden = true;
+      this._attributionHost.hidden = true;
       return;
     }
     const attribution = area?.provenance?.attribution ?? [];
     if (attribution.length === 0) {
-      this._attributionEl.hidden = true;
+      this._attributionHost.hidden = true;
+      this._setAttributionExpanded(false);
       return;
     }
     // Share-alike (design call #11, ODbL/Overture) gets a small tag;
@@ -741,7 +821,10 @@ export class GeocoderControl {
         return label + tag;
       })
       .join(' · ');
-    this._attributionEl.hidden = false;
+    // Show the ⓘ; the pill itself starts (and, on a new selection,
+    // returns to) collapsed.
+    this._attributionHost.hidden = false;
+    this._setAttributionExpanded(false);
   }
 
   clear() {

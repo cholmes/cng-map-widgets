@@ -125,8 +125,10 @@ Extends `ol/control/Control`. Added with `map.addControl(control)`; OL calls
 Every [`@cnmw/maplibre` option](../maplibre/README.md#new-geocodercontroloptions)
 applies identically — `geocoder` (**required in practice, no default**),
 `placeholder`, `debounceMs` (80), `useViewport` (true), `limit`, `fitBounds`
-(true), `outline`, `showAttribution` (true), `renderItem`,
-`upgradeNoticeStrings` — plus:
+(true), `outline`, `showAttribution` (true — the compact bottom-left ⓘ
+attribution widget, same UX as `@cnmw/maplibre`'s; here it mounts in the
+map's stop-event overlay container and is torn down on `setMap(null)`),
+`renderItem`, `upgradeNoticeStrings` — plus:
 
 | option | type | notes |
 |---|---|---|
