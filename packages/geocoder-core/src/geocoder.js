@@ -21,7 +21,8 @@ import {
   DEFAULT_RANGE_GROUP_CONCURRENCY,
   DEFAULT_RANGE_MAX_CANDIDATE_GROUPS,
 } from './index-loader.js';
-import { rankRow, compareRanked, scoreOf, applyDiversity, DEFAULT_EXACT_LEVEL_PROMOTION, DEFAULT_ALT_LEVEL_DEMOTION, DEFAULT_DIVERSITY } from './ranking.js';
+import { rankRow, rankFuzzyRow, compareRanked, compareFuzzyRanked, scoreOf, applyDiversity, DEFAULT_EXACT_LEVEL_PROMOTION, DEFAULT_ALT_LEVEL_DEMOTION, DEFAULT_DIVERSITY } from './ranking.js';
+import { fuzzyScan, fuzzyScanAsync, resolveFuzzyOptions } from './fuzzy.js';
 import { resolveGeometry, openBoundaryFile } from './geometry-resolver.js';
 import { GenerationGuard } from './generation-guard.js';
 
@@ -323,6 +324,10 @@ export class Geocoder {
     this._normalize = options.normalize ?? defaultNormalize;
     this._rankingOptions = { ...DEFAULT_RANKING, ...options.ranking };
     this._loadStrategyOption = options.loadStrategy ?? 'auto';
+    // Fuzzy fallback (design doc §3.2 amendment, 2026-11-13; adapted from
+    // Development Seed's gazet -- see fuzzy.js). `null` when disabled via
+    // `fuzzy: false`; defaults applied/overridden otherwise.
+    this._fuzzy = resolveFuzzyOptions(options.fuzzy);
     this._fullLoadMaxBytes = options.fullLoadMaxBytes ?? 5_242_880;
     this._onVersionSkew = options.onVersionSkew ?? 'error';
 
@@ -807,7 +812,55 @@ export class Geocoder {
     const queryNorm = this._normalize(prefix);
     const limit = options.limit ?? this._options.limit ?? 10;
     const rows = await this._searchRows(queryNorm);
-    return this._rankAndFilter(rows, queryNorm, options, limit);
+    const results = this._rankAndFilter(rows, queryNorm, options, limit);
+    if (results.length > 0) return results;
+
+    // Fuzzy fallback (design doc §3.2 amendment, 2026-11-13; adapted from
+    // Development Seed's gazet, see fuzzy.js): only ever runs when the
+    // normal prefix search produced NOTHING -- a non-empty result list is
+    // never reordered or augmented, so this is zero-risk to the ranking
+    // above. The async scan yields to the event loop between chunks, so a
+    // large in-memory index never blocks the main thread; a search
+    // superseded mid-scan still resolves [] via `search()`'s existing
+    // generation check, same as every other slow path.
+    const fuzzyRows = this._fuzzyRows(queryNorm);
+    if (!fuzzyRows) return results;
+    const candidates = await fuzzyScanAsync(fuzzyRows, queryNorm, this._fuzzy);
+    return this._rankFuzzy(candidates, queryNorm, options, limit);
+  }
+
+  /**
+   * The in-memory rows the fuzzy fallback may scan for this query, or
+   * `null` when it must not run at all: disabled (`fuzzy: false`), query
+   * too short (`minQueryLength`, default 3 -- at one or two characters
+   * nearly every short name "matches"), or nothing is fully resident in
+   * memory to scan. **The fallback never triggers range reads**: in range
+   * mode it scans the eagerly-loaded prominent index when the manifest
+   * shipped one -- which is exactly the prominent places a typo'd query
+   * most plausibly means -- and is skipped entirely on a range-mode index
+   * without one. Honest limitation, documented in the design amendment.
+   * @param {string} queryNorm
+   * @returns {readonly object[] | null}
+   */
+  _fuzzyRows(queryNorm) {
+    if (!this._fuzzy || queryNorm.length < this._fuzzy.minQueryLength) return null;
+    if (this._full) return this._full.rows;
+    if (this._prominentFull) return this._prominentFull.rows;
+    return null;
+  }
+
+  /**
+   * Rank fuzzy-scan candidates into normal `SearchResult`s: the same
+   * projection/filter/diversity pipeline as `_rankAndFilter`, with
+   * `rankFuzzyRow` supplying each row's rank (`matchClass: 'fuzzy'`,
+   * plus `similarity`/`substring` on `rank`) and `compareFuzzyRanked`
+   * supplying the order (substring > similarity > the usual comparator).
+   * @param {{ row: object, similarity: number, substring: boolean }[]} candidates
+   */
+  _rankFuzzy(candidates, queryNorm, options, limit) {
+    const fuzzyByRow = new Map();
+    for (const c of candidates) fuzzyByRow.set(c.row, c);
+    return this._rankAndFilter(candidates.map((c) => c.row), queryNorm, options, limit, fuzzyByRow);
   }
 
   /**
@@ -913,10 +966,24 @@ export class Geocoder {
     const limit = options.limit ?? this._options.limit ?? 10;
     const [start, end] = prefixRange(this._full.nameNorms, queryNorm);
     const rows = this._full.rows.slice(start, end);
-    return this._rankAndFilter(rows, queryNorm, options, limit);
+    const results = this._rankAndFilter(rows, queryNorm, options, limit);
+    if (results.length > 0) return results;
+
+    // Fuzzy fallback, synchronous flavor: `searchSync` is only reachable
+    // in full-load mode (guarded above), where the whole index is already
+    // in memory -- one synchronous scan measures ~11-23 ms at
+    // geoBoundaries scale (52K rows, query-length dependent; see the
+    // design amendment's table). That honors this method's *zero-await*
+    // contract, which is what it promises -- a caller that can't afford
+    // the occasional >10 ms no-match frame should use `search()`, whose
+    // chunked async scan never blocks longer than one ~16K-row slice.
+    const fuzzyRows = this._fuzzyRows(queryNorm);
+    if (!fuzzyRows) return results;
+    const candidates = fuzzyScan(fuzzyRows, queryNorm, this._fuzzy);
+    return this._rankFuzzy(candidates, queryNorm, options, limit);
   }
 
-  _rankAndFilter(rows, queryNorm, options, limit) {
+  _rankAndFilter(rows, queryNorm, options, limit, fuzzyByRow = null) {
     const levels = options.levels ?? this._options.levels;
     const countries = options.countries ?? this._options.countries;
     const rankOpts = { ...this._rankingOptions, viewport: options.viewport };
@@ -969,11 +1036,12 @@ export class Geocoder {
       const placeClass = typeof row.class === 'string' ? row.class : undefined;
       const isAlt = row.alt_of != null;
       const primaryName = isAlt ? localNameById.get(row.alt_of) ?? fullNameById?.get(row.alt_of) : undefined;
-      const rank = rankRow(
-        { nameNorm: row.name_norm, level: row.level, bbox: rowBBox, featureId: row.feature_id, areaKm2, population, class: placeClass, isAlt },
-        queryNorm,
-        rankOpts,
-      );
+      // Fuzzy fallback rows (and only those -- `fuzzyByRow` is null on
+      // every normal search) are ranked by `rankFuzzyRow`: same rank
+      // shape, `matchClass: 'fuzzy'`, plus `similarity`/`substring`.
+      const fuzzy = fuzzyByRow?.get(row);
+      const rankInput = { nameNorm: row.name_norm, level: row.level, bbox: rowBBox, featureId: row.feature_id, areaKm2, population, class: placeClass, isAlt };
+      const rank = fuzzy ? rankFuzzyRow(rankInput, fuzzy, rankOpts) : rankRow(rankInput, queryNorm, rankOpts);
       if (rank === null) continue;
       ranked.push({
         featureId: row.feature_id,
@@ -1016,7 +1084,7 @@ export class Geocoder {
         geometryRef: projectGeometryRef(row.geometry_ref),
       });
     }
-    ranked.sort(compareRanked);
+    ranked.sort(fuzzyByRow ? compareFuzzyRanked : compareRanked);
 
     // Result diversity (design doc §3.2 amendment, "Result diversity"):
     // collapse (nameNorm, country, level) duplicates to one row annotated

@@ -9,7 +9,20 @@ export { Geocoder, DEFAULT_INDEX_URL, VERSION, resolveResolutionMode } from './g
 export { resolveJoinKey, geometryRefRowRange, firstMatch, resolveGeometry, openBoundaryFile } from './geometry-resolver.js';
 export { CDN, loadHyparquet, setHyparquetModules, clearHyparquetModules } from './cdn.js';
 export {
+  jaroSimilarity,
+  jaroWinklerSimilarity,
+  similarityUpperBound,
+  scoreFuzzyCandidate,
+  fuzzyScan,
+  fuzzyScanAsync,
+  resolveFuzzyOptions,
+  DEFAULT_FUZZY_MIN_SIMILARITY,
+  DEFAULT_FUZZY_MIN_QUERY_LENGTH,
+} from './fuzzy.js';
+export {
   compareRanked,
+  compareFuzzyRanked,
+  rankFuzzyRow,
   classifyMatch,
   computeViewportRank,
   rankRow,

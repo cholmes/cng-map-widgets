@@ -397,3 +397,16 @@ you — but everything here tells you.
 [hyparquet-writer](https://github.com/hyparam/hyparquet-writer) (MIT).
 Peer dependencies: [MapLibre GL JS](https://maplibre.org/) (BSD-3-Clause),
 [OpenLayers](https://openlayers.org/) (BSD-2-Clause).
+
+## Credits
+
+The geocoder's fuzzy-match fallback (typo tolerance: "liechtenstien" →
+Liechtenstein) adapts the ranking approach of
+[gazet](https://github.com/developmentseed/gazet) by
+[Development Seed](https://developmentseed.org/blog/2026-04-29-gazet) (MIT):
+Jaro-Winkler similarity with substring containment ranked above raw
+similarity, best-of-all-names matching, and population tiebreaks. Our
+implementation is a from-scratch JS port of those measured decisions, not
+of the code — see
+[`packages/geocoder-core/src/fuzzy.js`](packages/geocoder-core/src/fuzzy.js)
+for exactly what was taken and where it deviates.

@@ -2711,6 +2711,92 @@ somewhere behind it in the collapsed `+30`. Worth revisiting if a future
 WOF build adds `area_km2`.
 
 
+### Amendment, 2026-11-13 — fuzzy-match fallback (adapted from Development Seed's gazet)
+
+**What:** when a normal prefix search produces **zero** results and the
+normalized query is at least 3 characters, `search()`/`searchSync()` fall
+back to a fuzzy scan: Jaro-Winkler similarity plus a substring-containment
+signal over index rows already resident in memory. Pure JS
+(`src/fuzzy.js`), no new dependencies, no network.
+
+**Provenance.** The ranking decisions are adapted from Development Seed's
+[gazet](https://github.com/developmentseed/gazet) (MIT) — specifically
+`src/gazet/search.py`'s `simple_fuzzy_search` and the DuckDB
+`jaro_winkler_similarity` ordering it ships: substring containment
+outranks a higher raw similarity ("Loja" inside "Loja Province" beats the
+near-miss "Lodja"); a record is reachable by every name it answers to
+(our alt-name rows give us this for free); population breaks ties. Blog:
+<https://developmentseed.org/blog/2026-04-29-gazet>. gazet's *LLM*
+components (place extraction, text-to-SQL) are deliberately not part of
+this amendment.
+
+**The contract:**
+
+- **Trigger.** Only on an otherwise-empty result (after level/country
+  filters), only when `normalize(query).length >= fuzzy.minQueryLength`
+  (default 3). A non-empty prefix result is **never** reordered or
+  augmented — zero risk to the ranking above this amendment.
+- **Search space.** Full-load mode: all in-memory index rows. Range mode:
+  the eagerly-loaded `prominent_index` rows — which are exactly the
+  prominent places a typo'd query most plausibly means. A range-mode index
+  without a prominent index skips the fallback entirely: **fuzzy never
+  triggers range reads.** (Honest consequence, measured live: the WOF
+  staging manifest ships no `prominent_index`, so WOF gets no fuzzy
+  fallback until its catalog adds one.)
+- **Candidate rule.** A row survives when its `name_norm` *contains* the
+  folded query (one-directional, exactly gazet's `contains(s.folded,
+  query)`; the reverse direction was tried and rejected — "bagdhad"
+  contains "bag", so query-contains-name would hand every village named
+  "Bag" a substring win over Baghdad's 0.967 similarity), OR its
+  Jaro-Winkler similarity ≥ `fuzzy.minSimilarity` (default **0.90**).
+  Winkler bonus: standard 0.1 prefix scale, 4-char cap, applied only above
+  the 0.7 jaro boost threshold (DuckDB-compatible, so scores are
+  comparable to gazet's).
+- **Threshold, measured 2026-11-13** (this implementation, verified live
+  against the published geoBoundaries and Overture indexes):
+  targets "liechtenstien"→liechtenstein 0.9846, "bagdhad"→baghdad 0.9667,
+  "brookln"→brooklyn 0.9750, "mumbia"→mumbai 0.9667, "san fransisco"→san
+  francisco 0.9526, "californa"→california 0.9800 — all ≥ 0.95; noise
+  "bagdhad" vs baghdud 0.8944 / bandad 0.8794 / baidoa 0.7968 — all
+  < 0.90. 0.90 keeps every target with margin and cuts the whole measured
+  noise tail.
+- **Ordering.** `compareFuzzyRanked`: substring DESC, similarity DESC,
+  then the existing `compareRanked` total order. Ranks are built by
+  `rankFuzzyRow`, which reuses `rankRow`'s measured `effLevel` machinery
+  (alt demotion, population promotion, and their mutual-exclusion gate)
+  minus the exact-match promotion, which cannot apply (an exact match
+  would have been found by the normal search). Verified live on Overture:
+  "brookln" puts Brooklyn-the-borough (population 2.5M) first via the
+  population promotion, above the closer-spelled small "Brooks" rows.
+- **Result shape.** Normal `SearchResult` with `rank.matchClass: 'fuzzy'`
+  (`MATCH_CLASS_RANK.fuzzy = 4`, below every real class) and
+  `rank.similarity` (0..1) / `rank.substring` added. Diversity dedupe and
+  the per-group cap apply unchanged; `scoreOf` maps a fuzzy rank's class
+  component to `0.25 × similarity`, strictly below a real substring
+  match's 0.25.
+- **Options.** `GeocoderOptions.fuzzy?: boolean | { minSimilarity?:
+  number, minQueryLength?: number }` — on by default, `false` disables.
+- **Performance, measured** (M-series Mac, Node 22, mixed-length names,
+  `similarityUpperBound` length prefilter active): 52K rows (geoBoundaries
+  full index) 11–23 ms per no-match query; 300K rows ~59 ms. `search()`
+  scans via `fuzzyScanAsync`, yielding every 16,384 rows (~3–7 ms of work
+  per slice), so the main thread never blocks for the whole scan;
+  `searchSync` (full-load only, zero-await contract) runs the scan
+  synchronously and accepts the 11–23 ms worst case. A search superseded
+  mid-scan resolves `[]` via the existing generation guard, never rejects.
+- **Live demo verification:** `examples/geocoder-demo/verify-fuzzy.mjs`
+  (screenshot `screenshot-fuzzy-fallback.png`): "liechtenstien" → fuzzy
+  Liechtenstein on live geoBoundaries (full-load path, 421 ms cold);
+  "brookln" → fuzzy Brooklyn first on Overture (range mode, prominent-scan
+  path, 1.5 s including the range prefix miss); "bag" → prefix results
+  with zero fuzzy rows (non-firing case). Known catalog-side gap, out of
+  scope here: the Overture prominent index does not contain
+  Baghdad-the-locality at all (Iraq's country rows and 112K-population
+  Bagalkote are present), so "bagdhad" on Overture finds nothing — a
+  prominent-selection issue to fix in cn-gazetteer-overture, not in this
+  fallback.
+
+
 ### 3.3 `@cnmw/upload-core`
 
 ```ts

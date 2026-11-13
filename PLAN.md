@@ -382,6 +382,43 @@ every documented snippet now runs against real published data, not fixtures.
   three artifacts (`.js` / `.cdn.js` / `.bundle.js`) with `.d.ts` — nothing
   below needs it, but npm consumers will.
 
+## Status snapshot (2026-11-13, fuzzy fallback — gazet adaptation)
+
+Chris asked whether Development Seed's
+[gazet](https://github.com/developmentseed/gazet) could serve the
+geocoding; investigation found its *fuzzy matching is pure
+DuckDB Jaro-Winkler SQL* (no LLM — the LLM is a separate fine-tuned
+Qwen3.5-0.8B for NL place extraction + text-to-SQL). Chris's call: adopt
+the fuzzy fallback on our stack (no DuckDB), skip the NL mode, credit
+gazet in code and READMEs.
+
+**Shipped** (`packages/geocoder-core/src/fuzzy.js` + `ranking.js`/
+`geocoder.js` wiring; design doc §3.2 amendment 2026-11-13 is normative):
+
+- Prefix search returns nothing + query ≥ 3 chars → Jaro-Winkler scan of
+  the in-memory rows (full index, or the prominent index in range mode —
+  never range reads; WOF has no prominent index so no fallback there until
+  its catalog adds one). Non-empty results are never touched.
+- Threshold `minSimilarity: 0.9` measured, not guessed (targets ≥ 0.9526,
+  noise ≤ 0.8944 — table in the amendment). Substring containment
+  one-directional (name ⊇ query), per gazet; the reverse direction was
+  tried and rejected ("bagdhad" ⊇ "bag" would bury Baghdad).
+- Results are normal `SearchResult`s with `rank.matchClass: 'fuzzy'` +
+  `rank.similarity`/`substring`; ordering substring → similarity →
+  existing comparator (population promotion verified live: "brookln" →
+  Brooklyn first on Overture). `fuzzy: false` disables.
+- Perf measured: 52K rows 11–23 ms sync; async path yields every 16K rows.
+- Suite 709/709 (23 new tests incl. classic JW vectors, supersede-mid-scan,
+  range/prominent paths); `verify-fuzzy.mjs` browser-verified live on
+  geoBoundaries + Overture, screenshot committed; verify-snippets 60/60.
+
+**Catalog follow-up queued, out of widget scope:** the Overture
+`prominent_index` is missing Baghdad-the-locality entirely (Iraq ADM0 alt
+rows and 112K-pop Bagalkote are in; the 7.2M-pop capital is not), so
+"bagdhad" on Overture finds nothing — prominent-selection criteria in
+cn-gazetteer-overture need a look. WOF catalog should ship a
+`prominent_index` to get fuzzy (and two-wave search) at all.
+
 ## Status snapshot (2026-11-13, pre-publish hardening pass)
 
 The consolidated follow-up to the overnight audits above. Every numbered

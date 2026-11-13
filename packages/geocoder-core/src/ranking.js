@@ -9,10 +9,15 @@
 import { bboxesIntersect, bboxContainsPoint, bboxCenter, scaleBBox } from '@cnmw/spec';
 
 /** @typedef {import('@cnmw/spec').BBox} BBox */
-/** @typedef {'exact'|'prefix'|'word-prefix'|'substring'} MatchClass */
+/** @typedef {'exact'|'prefix'|'word-prefix'|'substring'|'fuzzy'} MatchClass */
 /** @typedef {'inside'|'overlap'|'near'|'outside'} ViewportRank */
 
-export const MATCH_CLASS_RANK = { exact: 0, prefix: 1, 'word-prefix': 2, substring: 3 };
+// `fuzzy` (design doc §3.2 amendment, 2026-11-13): produced only by the
+// fuzzy fallback (see fuzzy.js), never by `classifyMatch` -- a fuzzy rank
+// ranks below every real match class by construction, though in practice
+// the two kinds never meet in one result list (the fallback only runs when
+// the normal search matched nothing at all).
+export const MATCH_CLASS_RANK = { exact: 0, prefix: 1, 'word-prefix': 2, substring: 3, fuzzy: 4 };
 export const VIEWPORT_RANK = { inside: 0, overlap: 1, near: 2, outside: 3 };
 
 /** Default admin-level promotion granted to an `exact` match over a
@@ -266,6 +271,78 @@ export function rankRow(row, queryNorm, options) {
 }
 
 /**
+ * Build the rank record for one row matched by the **fuzzy fallback**
+ * (design doc §3.2 amendment, 2026-11-13; adapted from Development Seed's
+ * gazet, see fuzzy.js's module comment for the full credit and the parts
+ * taken). The shape is `rankRow`'s with `matchClass: 'fuzzy'` plus the two
+ * fuzzy signals (`similarity`, `substring`), so a fuzzy result flows
+ * through `applyDiversity`, `scoreOf` and every consumer of
+ * `SearchResult.rank` unchanged.
+ *
+ * Reuses `rankRow`'s measured `effLevel` machinery rather than
+ * reimplementing it, with the one difference that follows from what a
+ * fuzzy match *is*: there is no exact-match promotion (a fuzzy match is
+ * never exact -- an exact match would have been found by the normal
+ * search and the fallback would not be running). The alt-row demotion and
+ * the population promotion (and their mutual-exclusion gate) apply
+ * exactly as in `rankRow` -- a typo'd "bagdhad" should still surface
+ * Baghdad-the-7-million-person-city over a hamlet spelled closer.
+ *
+ * @param {{ nameNorm: string, level: number, bbox: BBox, featureId: string, areaKm2?: number|null, population?: number|bigint|null, class?: string|null, isAlt?: boolean }} row
+ * @param {{ similarity: number, substring: boolean }} fuzzy
+ * @param {Parameters<typeof rankRow>[2]} options
+ * @returns {(ReturnType<typeof rankRow> & { similarity: number, substring: boolean })}
+ */
+export function rankFuzzyRow(row, fuzzy, options) {
+  const viewportRank = computeViewportRank(row.bbox, options.viewport, options.nearFactor);
+  const boostEligible = viewportRank === 'inside' || viewportRank === 'overlap';
+  const isAlt = Boolean(row.isAlt);
+  const demotion = isAlt ? (options.altLevelDemotion ?? DEFAULT_ALT_LEVEL_DEMOTION) : 0;
+  const population = toPopulation(row.population);
+  const populationThreshold = options.populationPromotionThreshold ?? DEFAULT_POPULATION_PROMOTION_THRESHOLD;
+  const populationPromotion =
+    demotion === 0 && population !== undefined && population >= populationThreshold
+      ? (options.populationLevelPromotion ?? DEFAULT_POPULATION_LEVEL_PROMOTION)
+      : 0;
+  const effLevel = Math.max(0, row.level + demotion - populationPromotion);
+  const levelAdjusted = effLevel - (boostEligible ? options.viewportBoost : 0);
+  return {
+    matchClass: 'fuzzy',
+    level: row.level,
+    effLevel,
+    levelAdjusted,
+    viewportRank,
+    nameLength: row.nameNorm.length,
+    areaKm2: typeof row.areaKm2 === 'number' && !Number.isNaN(row.areaKm2) ? row.areaKm2 : undefined,
+    population,
+    class: typeof row.class === 'string' ? row.class : undefined,
+    isAlt,
+    similarity: fuzzy.similarity,
+    substring: fuzzy.substring,
+  };
+}
+
+/**
+ * Comparator for fuzzy-fallback result lists (every row's rank built by
+ * `rankFuzzyRow`): the two fuzzy signals decide first -- substring
+ * containment over everything (gazet's measured call: literal containment
+ * is a stronger true-match signal than a higher edit-distance score),
+ * then similarity descending -- and everything still tied falls through
+ * to `compareRanked`, i.e. the exact viewport/level/prominence order every
+ * other result list already sorts by.
+ * @param {{ rank: ReturnType<typeof rankFuzzyRow>, nameNorm: string, featureId: string }} a
+ * @param {{ rank: ReturnType<typeof rankFuzzyRow>, nameNorm: string, featureId: string }} b
+ * @returns {number}
+ */
+export function compareFuzzyRanked(a, b) {
+  const subA = a.rank.substring ? 1 : 0;
+  const subB = b.rank.substring ? 1 : 0;
+  if (subA !== subB) return subB - subA;
+  if (a.rank.similarity !== b.rank.similarity) return b.rank.similarity - a.rank.similarity;
+  return compareRanked(a, b);
+}
+
+/**
  * Coerce a decoded `population` cell to a usable finite number, or
  * `undefined` when the row has no usable population.
  *
@@ -506,7 +583,13 @@ export function compareRanked(a, b) {
  * @returns {number}
  */
 export function scoreOf(rank) {
-  const mc = 1 - MATCH_CLASS_RANK[rank.matchClass] / 4; // 1, .75, .5, .25
+  // A fuzzy match's class component is its similarity scaled into the band
+  // *below* `substring`'s fixed 0.25 -- so a confidence bar always shows a
+  // fuzzy result as less certain than any real match class, and more-alike
+  // fuzzy results as more certain than less-alike ones.
+  const mc = rank.matchClass === 'fuzzy'
+    ? 0.25 * (rank.similarity ?? 0)
+    : 1 - MATCH_CLASS_RANK[rank.matchClass] / 4; // 1, .75, .5, .25
   const vr = 1 - VIEWPORT_RANK[rank.viewportRank] / 4;
   return Math.max(0, Math.min(1, 0.7 * mc + 0.3 * vr));
 }

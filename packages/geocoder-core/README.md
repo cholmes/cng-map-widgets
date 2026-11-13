@@ -134,6 +134,7 @@ Verified by [`docs/verify-snippets.mjs`](../../docs/verify-snippets.mjs)
 | `levels` | `number[]` | — | yes | Pre-filter, applied before ranking. |
 | `countries` | `string[]` | — | yes | ISO-3166-1 alpha-3. |
 | `diversity` | `DiversityOptions` | `{ dedupe: true, maxPerGroup: 3 }` | yes | |
+| `fuzzy` | `boolean \| { minSimilarity?, minQueryLength? }` | `{ minSimilarity: 0.9, minQueryLength: 3 }` | yes | The typo fallback below. `false` disables it. |
 | `geometry` | `GeometryResolverOptions` | `{ resolution: 'display' }` | yes | Defaults for `select()`. |
 | `onVersionSkew` | `'error' \| 'warn' \| 'ignore'` | `'error'` | yes | |
 | `fetch` | `typeof fetch` | `globalThis.fetch` | yes | Every request goes through this. |
@@ -213,6 +214,28 @@ await stale;   // []  -- not a rejection
 await fresh;   // the real results
 ```
 
+**Fuzzy fallback (typo tolerance).** When the prefix search matches
+*nothing* and the normalized query is at least 3 characters, the query is
+re-run as a Jaro-Winkler fuzzy scan over the rows already in memory:
+`"liechtenstien"` → Liechtenstein (similarity 0.985), `"brookln"` →
+Brooklyn. Fallback results carry `rank.matchClass: 'fuzzy'` plus
+`rank.similarity` (0..1) and `rank.substring`; a UI can caption them
+("showing close matches") off the match class. The rules, in one breath: a
+non-empty prefix result is **never** reordered or augmented; a substring
+hit (the name *contains* the query) outranks any raw similarity; otherwise
+candidates need similarity ≥ `fuzzy.minSimilarity` (default 0.90,
+measured — see the design doc's 2026-11-13 amendment for the
+target/noise table); survivors order by similarity then the normal
+comparator, so the population promotion still puts Brooklyn-the-borough
+above closer-spelled hamlets. In range mode the scan covers the
+**prominent index only — the fallback never issues range reads** — and an
+index without a `prominent_index` skips it entirely. The scan chunks and
+yields every ~16K rows (52K-row geoBoundaries: 11–23 ms total, off the
+critical path by definition — it only runs when there was nothing to
+show). Adapted from [Development Seed's
+gazet](https://github.com/developmentseed/gazet) (MIT) — see
+[`src/fuzzy.js`](src/fuzzy.js) for the full credit and deviations.
+
 **Two-wave search.** If the manifest declares a `prominent_index` (a small
 eager-loaded subset — the Overture gazetteer ships one at 8.6 MiB / 108,919
 rows against a 409 MB full index), `load()` resolves as soon as that subset is
@@ -233,6 +256,11 @@ p50 / 0.1 ms p95), so a promise per keystroke *is* the per-keystroke cost.
 geocoder.searchSync('contra costa')[0].name;   // 'Contra Costa'
 new Geocoder({ indexUrl }).searchSync('paris'); // throws GEOCODER_NOT_LOADED
 ```
+
+The fuzzy fallback applies here too, synchronously — a no-match query pays
+the full scan in one block (11–23 ms at 52K rows) instead of `search()`'s
+chunked version. If that occasional frame matters more to you than the
+zero-await contract, use `search()`, or pass `fuzzy: false`.
 
 ### `select(result, options?) => Promise<Area>`
 
@@ -355,7 +383,7 @@ background upgrades, clears the boundary-handle cache, and returns `state` to
 | `bbox` | `BBox` | `[xmin, ymin, xmax, ymax]`, flattened from the index's struct column. |
 | `source` | `string` | From the row's `source` column, else the manifest's top-level `source`. |
 | `score` | `number` | Derived `0..1`, **for display only** — the sort never reads it. |
-| `rank` | `object` | Why it ranked where it did: `matchClass`, `level`, `effLevel`, `levelAdjusted`, `viewportRank`, `nameLength`, `areaKm2`, `population`, `class`, `isAlt`. `effLevel` is `level` after the three bounded one-level adjustments; the gap between them is the whole explanation of any surprising order. |
+| `rank` | `object` | Why it ranked where it did: `matchClass`, `level`, `effLevel`, `levelAdjusted`, `viewportRank`, `nameLength`, `areaKm2`, `population`, `class`, `isAlt` — plus `similarity` and `substring` when `matchClass` is `'fuzzy'` (the typo fallback). `effLevel` is `level` after the three bounded one-level adjustments; the gap between them is the whole explanation of any surprising order. |
 | `moreCount` | `number?` | Set when dedupe collapsed N identical rows into this one. Render as "(+N more)". |
 | `geometryRef` | `{ file, rowGroup, row }?` | Advisory fast-path pointer. `row` is parquet `INT64`, converted to a plain `number` at this boundary so a `SearchResult` survives `JSON.stringify()`. |
 

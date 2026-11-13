@@ -143,6 +143,16 @@ Hard rules:
 - Pass `{ viewport: [w, s, e, n] }` to `search()` for the ranking boost. It
   genuinely reorders: `"contra"` → `Contralmirante Villar` without it,
   `Contra Costa` with a Bay Area viewport.
+- **Typos still resolve.** When the prefix search matches *nothing* and the
+  query is ≥ 3 chars, a Jaro-Winkler fuzzy fallback (adapted from
+  [Development Seed's gazet](https://github.com/developmentseed/gazet), MIT)
+  scans the in-memory index: `"liechtenstien"` → Liechtenstein,
+  `"brookln"` → Brooklyn. Those results carry `rank.matchClass: 'fuzzy'`
+  and `rank.similarity` (0..1); a non-empty prefix result is never
+  reordered or augmented. In range mode it scans the prominent index only
+  — **never range reads** — so an index without `prominent_index` gets no
+  fallback. Disable with `fuzzy: false`, tune with
+  `fuzzy: { minSimilarity: 0.9 }` (the measured default).
 
 `SearchResult` fields worth using: `featureId`, `name`, `level`, `country`,
 `parentName` ?? `countryName` (dropdown context), `areaKm2`, `moreCount`
