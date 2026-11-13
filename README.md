@@ -373,13 +373,6 @@ Honest list, all measured:
 
 **Code: MIT.** See [`LICENSE`](LICENSE); every package carries a copy.
 
-> ⚠️ MIT is a **placeholder pending Chris's confirmation.** It is the obvious
-> choice for a widget library meant to be embedded anywhere, including in
-> commercial products, and it matches the permissive posture of the rest of the
-> stack. If the intent is Apache-2.0 (patent grant, more common for
-> foundation-adjacent geospatial work) or BSD-3-Clause, say so and this is a
-> one-line change in seven files.
-
 **Data: per catalog, and not ours to relicense.** The widgets never bundle
 data; they read a published catalog whose manifest declares its own license and
 attribution:

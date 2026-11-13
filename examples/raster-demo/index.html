@@ -213,6 +213,11 @@ let sources = new Map();
 
 el('openBtn').addEventListener('click', async () => {
   el('openBtn').disabled = true;
+  // Reset immediately: leaving the previous source's text in place made it
+  // impossible to tell "still opening" from "done" (verify.mjs raced ahead
+  // on the stale text), and it is also just confusing for a real user who
+  // switched sources.
+  el('sourceInfo').textContent = 'Reading header…';
   setStatus(`Loading geotiff.js (~${Math.round(APPROX_BYTES.read / 1024)} KB gz) and reading the header…`);
   try {
     const s = currentSource();
@@ -376,7 +381,22 @@ el('acceptCeilingBtn').addEventListener('click', () => {
 el('cancelBtn').addEventListener('click', () => handle?.cancel('user cancelled'));
 
 /** Read the GeoTIFF we just wrote back with geotiff.js and draw a stretched
- *  preview -- proof the bytes are a real, readable, georeferenced raster. */
+ *  preview -- proof the bytes are a real, readable, georeferenced raster.
+ *
+ *  Root cause of "open raster doesn't show any raster" (debugged live with
+ *  Playwright against localhost:8787, console+network clean, canvas pixels
+ *  sampled directly): this function was never broken -- band→RGB mapping,
+ *  the percentile stretch and the GeoTIFF round-trip all produce a correct,
+ *  non-blank image (checked with getImageData variance, not just
+ *  `display !== 'none'`). The bug is layout: #panel scrolls its own content
+ *  (`overflow-y:auto`), the band list alone can be 15 checkboxes tall for a
+ *  full Sentinel-2 item, and nothing ever moved `panel.scrollTop` -- so on a
+ *  normal (non-maximized) window the canvas renders ~460px below the visible
+ *  fold and a real user never scrolls down to find it. verify.mjs papered
+ *  over this by scrolling the panel itself before its screenshot, which hid
+ *  the bug from the one place that would have caught it. The fix: bring the
+ *  canvas into view the moment it has pixels, same as a real user would
+ *  expect after clicking Download. */
 async function drawPreview(blob, bandNames = []) {
   const gt = await loadGeoTiff();
   const tiff = await gt.fromArrayBuffer(await blob.arrayBuffer());
@@ -395,6 +415,16 @@ async function drawPreview(blob, bandNames = []) {
   const img = ctx.createImageData(cw, ch);
   // Map R/G/B to the right bands when we can name them (the band list is
   // sorted by name, so B02/B03/B04 would otherwise land as R=blue).
+  // S2 L2A surface-reflectance DNs run roughly 0-4000 (bright targets, glint
+  // and cloud edges go higher), and vary clip to clip -- a fixed 0-4000
+  // linear stretch washes out typical land cover, while a fixed low ceiling
+  // clips highlights. So each rendered channel is independently stretched to
+  // its own clip's 2nd/98th percentile (computed below): robust to a
+  // nodata=0 border or a bright outlier without a server round trip or
+  // hand-picked constants. A single-band source (e.g. the FTW float32
+  // confidence raster) has no R/G/B bands to find, so every channel falls
+  // back to band 0 and the same per-channel percentile stretch yields a
+  // grayscale preview instead of color.
   const rgbNames = [['B04', 'red'], ['B03', 'green'], ['B02', 'blue']];
   const order = rgbNames.map(([n, common]) => {
     const i = bandNames.findIndex((b) => b === n || b === common);
@@ -416,6 +446,11 @@ async function drawPreview(blob, bandNames = []) {
   }
   ctx.putImageData(img, 0, 0);
   canvas.style.display = 'block';
+  // The actual fix: #panel is its own scroll container and routinely has
+  // more content above the canvas than fits in the viewport (see the note
+  // above this function), so bring the just-drawn raster into view instead
+  // of leaving it wherever the layout put it.
+  canvas.scrollIntoView({ behavior: 'instant', block: 'nearest' });
 }
 </script>
 </body>

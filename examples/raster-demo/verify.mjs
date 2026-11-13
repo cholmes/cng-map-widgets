@@ -18,7 +18,8 @@
 //   5. the bytes fetched are a small fraction of the source files.
 //
 // Usage: node examples/raster-demo/verify.mjs [port]   (serve.py must be running)
-// Writes: examples/raster-demo/screenshot.png
+// Writes: examples/raster-demo/screenshot.png       (S2 RGB case)
+//         examples/raster-demo/screenshot-ftw.png   (single-band FTW case)
 //         examples/raster-demo/clip.tif  (when --keep-tif is passed)
 
 import { chromium } from 'playwright';
@@ -139,8 +140,53 @@ console.log('result:', JSON.stringify({
   bands: result?.bands, dtype: result?.dtype, epsg: result?.epsg, requests: result?.requests,
   readBytes: result?.readBytes, elapsedMs: result?.elapsedMs,
 }));
-const previewVisible = await page.isVisible('#preview');
+// `display !== 'none'` alone does not prove anything was drawn -- a bug
+// fixed in this file left the canvas with real pixels but scrolled ~460px
+// below #panel's visible fold, so a human running the demo normally (not
+// this script's old `panel.scrollTop = panel.scrollHeight` hack) saw no
+// raster at all. Wait for the draw (it is async and can lag the "Done:"
+// text), then check BOTH that the canvas holds non-blank pixels and that
+// it is actually inside the panel's visible, scrolled viewport.
+let previewVisible = false;
+for (let i = 0; i < 40; i++) {
+  previewVisible = await page.evaluate(() => document.getElementById('preview').style.display === 'block');
+  if (previewVisible) break;
+  await new Promise((r) => setTimeout(r, 250));
+}
 console.log('preview drawn (page re-read its own GeoTIFF):', previewVisible);
+
+const previewStats = previewVisible
+  ? await page.evaluate(() => {
+      const c = document.getElementById('preview');
+      const panel = document.getElementById('panel');
+      const ctx = c.getContext('2d');
+      const img = ctx.getImageData(0, 0, c.width, c.height);
+      const d = img.data;
+      const n = c.width * c.height;
+      const channels = [0, 1, 2].map((ch) => {
+        let sum = 0;
+        let sumSq = 0;
+        for (let p = 0; p < n; p++) {
+          const v = d[p * 4 + ch];
+          sum += v;
+          sumSq += v * v;
+        }
+        const mean = sum / n;
+        return { mean, variance: sumSq / n - mean * mean };
+      });
+      const r = c.getBoundingClientRect();
+      const pr = panel.getBoundingClientRect();
+      const inView = r.top >= pr.top - 1 && r.bottom <= pr.bottom + 1;
+      return { channels, rect: { top: r.top, bottom: r.bottom }, panelRect: { top: pr.top, bottom: pr.bottom }, inView };
+    })
+  : null;
+if (previewStats) {
+  console.log(
+    'preview pixel variance (R,G,B):',
+    previewStats.channels.map((c) => c.variance.toFixed(1)).join(', '),
+    '| scrolled into view:', previewStats.inView,
+  );
+}
 const timing = await page.evaluate(() =>
   performance
     .getEntriesByType('resource')
@@ -166,16 +212,73 @@ if (keepTif) {
   console.log('wrote', path.join(here, 'clip.tif'), '- run gdalinfo on it');
 }
 
-// Scroll the panel so the committed screenshot shows what matters: the
-// estimate, the download result and the preview the page drew by reading
-// its own GeoTIFF back.
-await page.evaluate(() => {
-  const panel = document.getElementById('panel');
-  panel.scrollTop = panel.scrollHeight;
-});
-await page.waitForTimeout(600);
+// No manual scroll here on purpose: `drawPreview`'s own `scrollIntoView`
+// (the fix for the "doesn't show any raster" bug) is what is supposed to put
+// the canvas on screen, and this screenshot is the evidence that it does.
+await page.waitForTimeout(400);
 await page.screenshot({ path: path.join(here, 'screenshot.png') });
-console.log('Screenshot saved.');
+console.log('Screenshot saved (S2 RGB case).');
+
+// --- 4. single-band case: FTW global float32 confidence raster -----------
+// Same preview path, but with no R/G/B band names to find, so every channel
+// falls back to band 0 and the stretch renders grayscale (see the comment
+// above drawPreview in index.html). This is the second case the bug report
+// asked to be verified, because a single-band fallback is exactly the kind
+// of path a band-name-only regression test would miss.
+console.log('\n--- single-band case (FTW float32 confidence) ---');
+await page.selectOption('#source', 'ftw-confidence');
+await page.waitForTimeout(300);
+await page.click('#openBtn');
+await page.waitForFunction(
+  () => /header read in|Error/.test(document.getElementById('sourceInfo').textContent),
+  undefined,
+  { timeout: 60_000 },
+);
+console.log('ftw source:', (await page.textContent('#sourceInfo')).split('\n')[0]);
+await page.click('#useViewBtn');
+await page.click('#estimateBtn');
+await page.waitForFunction(
+  () => /px x|Error/.test(document.getElementById('estimateInfo').textContent),
+  undefined,
+  { timeout: 60_000 },
+);
+await page.click('#downloadBtn');
+await page.waitForFunction(
+  () => /^(Done:|Error|Cancelled)/.test(document.getElementById('downloadInfo').textContent),
+  undefined,
+  { timeout: 180_000 },
+);
+console.log('ftw download:', (await page.textContent('#downloadInfo')).split('\n')[0]);
+
+let ftwPreviewVisible = false;
+for (let i = 0; i < 40; i++) {
+  ftwPreviewVisible = await page.evaluate(() => document.getElementById('preview').style.display === 'block');
+  if (ftwPreviewVisible) break;
+  await new Promise((r) => setTimeout(r, 250));
+}
+const ftwStats = ftwPreviewVisible
+  ? await page.evaluate(() => {
+      const c = document.getElementById('preview');
+      const ctx = c.getContext('2d');
+      const img = ctx.getImageData(0, 0, c.width, c.height);
+      const d = img.data;
+      const n = c.width * c.height;
+      let sum = 0;
+      let sumSq = 0;
+      for (let p = 0; p < n; p++) {
+        const v = d[p * 4]; // grayscale: R==G==B
+        sum += v;
+        sumSq += v * v;
+      }
+      const mean = sum / n;
+      return { variance: sumSq / n - mean * mean, mean };
+    })
+  : null;
+console.log('ftw preview drawn:', ftwPreviewVisible, ftwStats ? `| variance ${ftwStats.variance.toFixed(1)}` : '');
+await page.waitForTimeout(400);
+await page.screenshot({ path: path.join(here, 'screenshot-ftw.png') });
+console.log('Screenshot saved (single-band FTW case).');
+
 await browser.close();
 
 const failures = [];
@@ -198,6 +301,17 @@ if (!result?.readBytes) failures.push('the result reported no bytes read');
 if (partial !== gets.length) failures.push(`${gets.length - partial} GET(s) were not 206 Partial Content`);
 if (result && result.naiveBytes / result.readBytes < 10) failures.push('less than 10x better than a full download');
 if (!previewVisible) failures.push('the written GeoTIFF could not be read back and drawn');
+if (previewVisible && !previewStats) failures.push('preview pixel stats could not be sampled');
+if (previewStats && !previewStats.channels.some((c) => c.variance > 1)) {
+  failures.push(`preview canvas is blank (max channel variance ${Math.max(...previewStats.channels.map((c) => c.variance)).toFixed(2)})`);
+}
+if (previewStats && !previewStats.inView) {
+  failures.push(`preview canvas drawn but not scrolled into view (rect ${JSON.stringify(previewStats.rect)} vs panel ${JSON.stringify(previewStats.panelRect)})`);
+}
+if (!ftwPreviewVisible) failures.push('single-band (FTW) preview was not drawn');
+if (ftwPreviewVisible && (!ftwStats || !(ftwStats.variance > 1))) {
+  failures.push(`single-band (FTW) preview canvas is blank (variance ${ftwStats?.variance})`);
+}
 if (consoleErrors.length > 0) failures.push(`${consoleErrors.length} console error(s)`);
 
 if (failures.length > 0) {
