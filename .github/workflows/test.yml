@@ -49,7 +49,13 @@ jobs:
           sudo unzip -o -q /tmp/duckdb.zip -d /usr/local/bin
           sudo chmod +x /usr/local/bin/duckdb
           ogrinfo --version
-          duckdb -c "select 'duckdb ok'"
+          # Pre-install DuckDB's spatial extension ONCE, here. The format
+          # tests call `INSTALL spatial; LOAD spatial;` inline, which
+          # downloads it from the extension repository on first use -- so on
+          # a cold runner the first test to run races the download and can
+          # fail while later ones pass against the now-cached extension.
+          # Doing it here makes the suite deterministic.
+          duckdb -c "INSTALL spatial; LOAD spatial; select 'duckdb + spatial ok';"
 
       - run: npm ci
       - run: npm test
