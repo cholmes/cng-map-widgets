@@ -1,0 +1,38 @@
+# CI runs ONLY the offline unit test suite (`npm test`, 711/711 passing
+# node --test runs across the workspaces). It deliberately does NOT run the
+# repo's live-data verification scripts:
+#   - docs/verify-snippets.mjs
+#   - examples/*/verify.mjs
+#
+# Those scripts fetch real data from a third-party object store
+# (data.source.coop) to prove the published docs/examples still work against
+# live catalogs. That is valuable, but it is not something CI should gate on:
+# a hiccup, rate limit, or outage on data.source.coop would fail this
+# workflow and report someone else's uptime, not a defect in this repo's
+# code. They are documented in CONTRIBUTING.md as the local verification
+# path -- run them by hand (or in a scheduled/manual job) before a release,
+# not on every push/PR.
+#
+# If you're a contributor (human or agent) looking at this and thinking
+# "we should run those in CI too" -- please don't, for the reason above.
+# This comment exists specifically to stop that well-intentioned fix.
+
+name: test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test
