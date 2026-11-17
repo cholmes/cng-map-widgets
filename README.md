@@ -130,6 +130,81 @@ range read into a full download. `serve.py` implements real partial content.
 
 ---
 
+## Installing
+
+Nothing is on npm yet. Three ways to use it today, best first.
+
+### 1. In a browser, with nothing installed
+
+The packages are plain ESM served as static files, so an import map pointing
+at the published site is the whole setup — no clone, no package manager, no
+build:
+
+```html
+<!-- Map EVERY package you need transitively, not just the ones you import
+     by name: these packages cross-import each other by bare specifier
+     (@cng/spec especially), and an unmapped specifier is a runtime failure
+     with no build step to catch it. An import map is strict JSON -- a //
+     comment in this block stops it parsing and breaks every import. -->
+<script type="importmap">
+{
+  "imports": {
+    "@cng/spec":            "https://cholmes.github.io/cng-map-widgets/packages/spec/src/index.js",
+    "@cng/geocoder-core":   "https://cholmes.github.io/cng-map-widgets/packages/geocoder-core/src/index.js",
+    "@cng/upload-core":     "https://cholmes.github.io/cng-map-widgets/packages/upload-core/src/index.js",
+    "@cng/download-core":   "https://cholmes.github.io/cng-map-widgets/packages/download-core/src/index.js",
+    "@cng/raster-core":     "https://cholmes.github.io/cng-map-widgets/packages/raster-core/src/index.js",
+    "@cng/maplibre":        "https://cholmes.github.io/cng-map-widgets/packages/maplibre/src/index.js",
+    "@cng/openlayers":      "https://cholmes.github.io/cng-map-widgets/packages/openlayers/src/index.js"
+  }
+}
+</script>
+```
+
+Do **not** add `hyparquet` to that map. The packages `import()` it themselves
+from pinned, exact-version CDN URLs (`src/cdn.js` in each).
+
+[The landing page](https://cholmes.github.io/cng-map-widgets/) has a complete
+single-file example built on exactly this.
+
+### 2. Pinned, via jsDelivr
+
+Those URLs track whatever is on `main`. For anything you care about, pin a
+tag — same files, reproducible:
+
+```
+https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.1.0/packages/geocoder-core/src/index.js
+```
+
+### 3. In Node, or inside a bundler — worse, and worth saying so
+
+There is no good path here until this is published. **`npm i` cannot install a
+subdirectory of a git repo**, so `npm i github:cholmes/cng-map-widgets` cannot
+give you `@cng/geocoder-core`; the repo is a workspace monorepo and its
+packages are not separately fetchable. Your options are to clone and
+`npm link` the packages you need, or to vendor `packages/` into your tree.
+
+Either way, inject hyparquet once, before the first `load()`/`estimate()` —
+Node has no network imports, and inside a bundler `import(CDN.hyparquet)` is a
+runtime-computed specifier no bundler can rewrite, so a host app that already
+has hyparquet would otherwise run a second copy off the network:
+
+```js
+import * as hyparquet from 'hyparquet';
+import { compressors } from 'hyparquet-compressors';
+import * as writer from 'hyparquet-writer';
+import { setHyparquetModules as setGeocoderModules } from '@cng/geocoder-core';
+import { setHyparquetModules as setDownloadModules } from '@cng/download-core';
+
+setGeocoderModules({ hyparquet, compressors });
+setDownloadModules({ hyparquet, compressors, writer });   // `writer` only for GeoParquet output
+```
+
+Pinned versions: `hyparquet@1.33.0`, `hyparquet-compressors@1.1.3`,
+`hyparquet-writer@0.18.0`.
+
+---
+
 ## Architecture
 
 ```

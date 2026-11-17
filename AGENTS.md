@@ -63,6 +63,26 @@ when it is, each line becomes
 `https://cdn.jsdelivr.net/npm/@cng/<name>@0.1.0/src/index.js` and no module
 code changes.
 
+**Without a clone**, swap the relative paths for the published site — the
+packages are static files, so this works from any page anywhere:
+
+```
+https://cholmes.github.io/cng-map-widgets/packages/<name>/src/index.js
+```
+
+or, pinned to a tag,
+
+```
+https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.1.0/packages/<name>/src/index.js
+```
+
+Either way, **map every package you need transitively**, not just the ones
+you `import` by name: these packages cross-import each other by bare
+specifier (`@cng/spec` above all), and an unmapped specifier fails at
+runtime with no build step to catch it. And note an import map is strict
+JSON — a `//` comment inside the block stops it parsing and silently
+disables every import in it.
+
 Serve with real HTTP `Range` support. `python3 serve.py` (in this repo) or
 `npx serve`. **`python3 -m http.server` returns 200 + the whole file for a
 range request**, which degrades every range read into a full download with no
