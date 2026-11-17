@@ -14,6 +14,9 @@ import { compareBigIntToNumber } from './predicate.js';
 /** Resolve a `BboxCovering` to the statistics column paths for xmin/ymin/xmax/ymax, or null if `kind: 'none'`. @param {import('./types.js').BboxCovering|undefined} covering */
 export function coveringPaths(covering) {
   if (!covering || covering.kind === 'none') return null;
+  // A GeoParquet 2.0 / Parquet GEOMETRY column carries its own per-row-group
+  // bbox in the footer, so there are no separate statistics columns to name.
+  if (covering.kind === 'native') return { native: covering.column };
   if (covering.kind === 'columns') {
     return { xmin: covering.xmin, ymin: covering.ymin, xmax: covering.xmax, ymax: covering.ymax };
   }
@@ -29,6 +32,11 @@ export function coveringPaths(covering) {
 /** Read a row group's bbox from its covering-column statistics, or null if any stat is missing. @param {import('./parquet-io.js').RowGroupInfo} rg @param {ReturnType<typeof coveringPaths>} paths @returns {BBox|null} */
 export function rowGroupBBoxFromStats(rg, paths) {
   if (!paths) return null;
+  if (paths.native) {
+    const geo = rg.columns.get(paths.native)?.geoStats;
+    if (!geo) return null;
+    return [geo.xmin, geo.ymin, geo.xmax, geo.ymax];
+  }
   const xminCol = rg.columns.get(paths.xmin);
   const yminCol = rg.columns.get(paths.ymin);
   const xmaxCol = rg.columns.get(paths.xmax);
@@ -47,11 +55,30 @@ export function rowGroupBBoxFromStats(rg, paths) {
  * @param {import('./parquet-io.js').RowGroupInfo[]} rowGroups
  * @param {import('./types.js').BboxCovering|undefined} covering
  * @param {BBox[]|null} areaBBoxes -- null means "no area": select everything.
+ * @param {string} [geometryColumn] -- when the descriptor declares no covering,
+ *   fall back to this column's native GeospatialStatistics if the file has
+ *   them. GeoParquet 2.0 writers emit these without any covering column, so a
+ *   dataset that looks un-prunable from its metadata often is not.
  * @returns {{ selected: import('./parquet-io.js').RowGroupInfo[], stage: import('./types.js').PruneStage, rowGroupBBoxes: Map<number, BBox|null> }}
  */
-export function pruneRowGroupsByBBox(rowGroups, covering, areaBBoxes) {
+export function pruneRowGroupsByBBox(rowGroups, covering, areaBBoxes, geometryColumn) {
   const before = rowGroups.length;
-  const paths = coveringPaths(covering);
+  let paths = coveringPaths(covering);
+  let viaNative = Boolean(paths?.native);
+  // Fall back to the geometry column's native GeospatialStatistics when the
+  // descriptor declares no covering, OR when the covering it declares turns
+  // out to be unusable. The second case is not hypothetical: a STAC-GeoParquet
+  // `bbox` column is a LIST ([xmin,ymin,xmax,ymax]), so a `struct` covering
+  // inferred from its name reads `bbox.xmin` and gets nothing back -- which
+  // used to report "covering bbox" while pruning nothing and suppressing the
+  // no-covering warning.
+  const hasNative = Boolean(geometryColumn) && rowGroups.some((rg) => rg.columns.get(geometryColumn)?.geoStats);
+  const coveringUnusable = Boolean(paths) && !paths.native
+    && rowGroups.length > 0 && rowGroups.every((rg) => rowGroupBBoxFromStats(rg, paths) === null);
+  if (hasNative && (!paths || coveringUnusable)) {
+    paths = { native: /** @type {string} */ (geometryColumn) };
+    viaNative = true;
+  }
   const rowGroupBBoxes = new Map();
 
   if (!areaBBoxes || !paths) {
@@ -81,7 +108,7 @@ export function pruneRowGroupsByBBox(rowGroups, covering, areaBBoxes) {
   return {
     selected,
     rowGroupBBoxes,
-    stage: { stage: 'row-group-bbox', before, after: selected.length, basis: 'covering bbox' },
+    stage: { stage: 'row-group-bbox', before, after: selected.length, basis: viaNative ? 'native geometry statistics' : 'covering bbox' },
   };
 }
 

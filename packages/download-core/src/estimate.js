@@ -149,7 +149,7 @@ export async function planRequest(dataset, area, filter, options = {}) {
       covering = table.bbox;
     }
     allRowGroupsTotal += handle.rowGroups.length;
-    const bboxPrune = pruneRowGroupsByBBox(handle.rowGroups, covering, areaBBoxes);
+    const bboxPrune = pruneRowGroupsByBBox(handle.rowGroups, covering, areaBBoxes, geometryColumn);
     const timePrune = pruneRowGroupsByTime(bboxPrune.selected, table.timeColumn ?? null, filter.time);
     // `where[]` pushdown runs last in the row-group cascade: it is the
     // cheapest stage to report honestly (statistics it cannot decide
@@ -179,7 +179,12 @@ export async function planRequest(dataset, area, filter, options = {}) {
     stage: 'row-group-bbox',
     before: perPart.reduce((n, p) => n + p.bboxPrune.stage.before, 0),
     after: perPart.reduce((n, p) => n + p.bboxPrune.stage.after, 0),
-    basis: covering && covering.kind !== 'none' ? 'covering bbox' : !areaBBoxes ? 'no area supplied' : 'no covering — full scan',
+    // Derived from what the parts ACTUALLY pruned on, not from the
+    // descriptor: a file can declare no covering and still carry native
+    // GeospatialStatistics in its footer, which prune.js falls back to.
+    basis: perPart.some((p) => p.bboxPrune.stage.basis === 'native geometry statistics')
+      ? 'native geometry statistics'
+      : covering && covering.kind !== 'none' ? 'covering bbox' : !areaBBoxes ? 'no area supplied' : 'no covering — full scan',
   };
   const rowGroupStatsStage = {
     stage: 'row-group-stats',
@@ -337,7 +342,8 @@ export async function finalizeEstimate(plan, area, filter, options = {}, t0 = pe
 
   /** @type {import('./types.js').EstimateWarning[]} */
   const warnings = [];
-  if (!plan.covering || plan.covering.kind === 'none') {
+  const prunedNatively = plan.rowGroupBboxStage?.basis === 'native geometry statistics';
+  if ((!plan.covering || plan.covering.kind === 'none') && !prunedNatively) {
     warnings.push({ code: 'no-covering', message: 'This dataset has no bbox covering column; row-group pruning cannot narrow the read.' });
   }
   const singleRowGroupFiles = plan.perPart.filter((p) => p.handle.rowGroups.length === 1 && p.selectedRowGroups.length === 1).length;

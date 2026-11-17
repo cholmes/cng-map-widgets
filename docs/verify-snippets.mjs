@@ -1151,8 +1151,13 @@ async function groupAgents() {
     assert.ok(partitionStages.length >= 1, 'the time filter pruned partitions');
     assert.equal(est.files.total, 27);
     assert.equal(est.files.selected, 1, 'one year= partition survives a 1-week window');
-    assert.ok(est.warnings.some((w) => w.code === 'no-covering'));
-    return `27 files -> 1; ${partitionStages.map((s) => `${s.stage} ${s.before}->${s.after}`).join(', ')}`;
+    // FIRMS declares no covering COLUMN, but its GeoParquet 2.0 geometry
+    // carries native per-row-group GeospatialStatistics, which prune hard.
+    const rgStage = est.prune.find((st) => st.stage === 'row-group-bbox');
+    assert.equal(rgStage.basis, 'native geometry statistics');
+    assert.ok(rgStage.after < rgStage.before, 'native stats actually narrowed the read');
+    assert.ok(!est.warnings.some((w) => w.code === 'no-covering'), 'native stats mean this is not a full scan');
+    return `27 files -> 1; row groups ${rgStage.before}->${rgStage.after} via native stats`;
   });
 
   await snippet('AGENTS.md', 'recipe 3c: DownloadRequest for STAC-GeoParquet footprints', async () => {
@@ -1176,9 +1181,14 @@ async function groupAgents() {
     assert.equal(est.files.selected, 1, 'a one-week window selects one year');
     assert.ok(!est.columns.includes('assets'), 'the fat assets column is not in the projection');
     assert.deepEqual(est.columns, ['id', 'datetime', 'eo:cloud_cover', 'geometry']);
-    // This collection declares no bbox covering, so `includeBbox: true` has
-    // nothing to add and row-group bbox pruning cannot narrow the read.
-    assert.ok(est.warnings.some((w) => w.code === 'no-covering'));
+    // This collection's `bbox` column is a LIST, not a struct covering, so
+    // `includeBbox: true` has nothing usable to add -- but the GeoParquet 2.0
+    // geometry carries native per-row-group GeospatialStatistics, and those
+    // prune the read by roughly 30x.
+    const rgStage = est.prune.find((st) => st.stage === 'row-group-bbox');
+    assert.equal(rgStage.basis, 'native geometry statistics');
+    assert.ok(rgStage.after * 5 < rgStage.before, 'native stats prune the footprint read hard');
+    assert.ok(!est.warnings.some((w) => w.code === 'no-covering'));
     // CC-BY-SA-3.0-IGO: the estimate tells you the output carries share-alike.
     assert.ok(est.warnings.some((w) => w.code === 'share-alike'));
     return `${est.files.selected}/${est.files.total} year partitions, ${est.rowGroups.selected}/${est.rowGroups.total} row groups, ${est.requests} requests`;

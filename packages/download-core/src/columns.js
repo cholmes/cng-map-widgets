@@ -100,7 +100,9 @@ export function resolveReadColumns(outputColumns, filter, timeColumn, bboxColumn
  */
 export function geometryNeededForFilter(area, covering, spatial) {
   if (!area) return false;
-  if (!covering || covering.kind === 'none') return true;
+  // `native` means the bbox lives in the footer, per ROW GROUP -- there is no
+  // per-row bbox to compare against, so a row-level test needs the geometry.
+  if (!covering || covering.kind === 'none' || covering.kind === 'native') return true;
   if ((spatial?.mode === 'intersects' || spatial?.mode === 'clip') && area.filterGeometry) return true;
   return false;
 }

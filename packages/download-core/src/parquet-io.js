@@ -46,7 +46,7 @@ function cancellationOf(cause, signal, what) {
  *   rowStart: number,
  *   rowEnd: number,
  *   numRows: number,
- *   columns: Map<string, { statistics?: { min_value?: unknown, max_value?: unknown }, totalCompressedSize: number, totalUncompressedSize: number }>,
+ *   columns: Map<string, { statistics?: { min_value?: unknown, max_value?: unknown }, geoStats?: { xmin: number, ymin: number, xmax: number, ymax: number }, totalCompressedSize: number, totalUncompressedSize: number }>,
  * }} RowGroupInfo
  */
 
@@ -121,8 +121,17 @@ function decodeRowGroups(metadata) {
       const meta = col.meta_data;
       if (!meta) continue;
       const path = meta.path_in_schema.join('.');
+      // Native Parquet GeospatialStatistics (GEOMETRY logical type, i.e.
+      // GeoParquet 2.0). Carried alongside `statistics` because they are a
+      // *separate* thrift field that ordinary min/max stats never populate
+      // for a geometry column -- and because they let us prune files that
+      // publish no covering column at all. See prune.js.
+      const geo = meta.geospatial_statistics?.bbox;
       columns.set(path, {
         statistics: meta.statistics,
+        geoStats: geo && [geo.xmin, geo.ymin, geo.xmax, geo.ymax].every((v) => typeof v === 'number' && Number.isFinite(v))
+          ? { xmin: geo.xmin, ymin: geo.ymin, xmax: geo.xmax, ymax: geo.ymax }
+          : undefined,
         totalCompressedSize: Number(meta.total_compressed_size ?? 0),
         totalUncompressedSize: Number(meta.total_uncompressed_size ?? 0),
       });

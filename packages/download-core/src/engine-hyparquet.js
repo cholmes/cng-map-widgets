@@ -52,7 +52,9 @@ export function createHyparquetEngine() {
 /** Read a row's bbox from the covering columns if present, else decode the geometry. */
 function rowBBox(row, covering, geometryColumn, decodedGeometryCache) {
   const paths = coveringPaths(covering);
-  if (paths) {
+  // `native` covering is row-group-level only (footer GeospatialStatistics);
+  // it exposes no per-row columns, so fall straight through to the geometry.
+  if (paths && !paths.native) {
     const struct = covering.kind === 'struct' ? row[covering.column] : row;
     const fieldNames = covering.kind === 'struct' ? (covering.fields ?? { xmin: 'xmin', ymin: 'ymin', xmax: 'xmax', ymax: 'ymax' }) : covering;
     const xmin = covering.kind === 'struct' ? struct?.[fieldNames.xmin] : row[covering.xmin];

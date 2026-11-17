@@ -300,7 +300,8 @@ dataset.source.strategy;      // 'temporal'
 dataset.source.fileCount;     // 27
 dataset.source.enumeration;   // { kind: 'stac-items', collectionUrl: '…' }
 dataset.table.timeColumn;     // 'acq_datetime'
-dataset.table.bbox;           // { kind: 'none' } -- FIRMS publishes no covering
+dataset.table.bbox;           // { kind: 'none' } -- no covering COLUMN, but see below:
+                              // the geometry carries native GeospatialStatistics
 dataset.table.rowCount;       // 632471436
 
 const filter = {
@@ -314,8 +315,11 @@ const filter = {
 
 const est = await estimate(dataset, area, filter);
 est.files;        // { total: 27, selected: 1 }  <- the time filter alone, zero data requests
-est.prune;        // [{ stage: 'part-time', before: 27, after: 1, basis: '…' }, …]
-est.warnings;     // includes { code: 'no-covering' }
+est.prune;        // [{ stage: 'part-time', before: 27, after: 1, basis: '…' },
+                  //  { stage: 'row-group-bbox', before: 582, after: 6,
+                  //    basis: 'native geometry statistics' }, …]
+est.warnings;     // NO 'no-covering': the GeoParquet 2.0 geometry column
+                  // carries per-row-group bboxes in the footer. ~4 MB read.
 ```
 
 **Never hand-write a hive descriptor from a glob.** Both live catalogs publish
@@ -352,10 +356,11 @@ const filter = {
 
 const est = await estimate(dataset, area, filter);
 est.files;        // { total: 12, selected: 1 }
-est.rowGroups;    // { total: 825, selected: 824 } -- no covering, so almost nothing prunes
-est.requests;     // 838  <- plan for this; reads are sequential today
+est.rowGroups;    // { total: 825, selected: 27 } -- pruned by the geometry's
+                  //    native GeospatialStatistics (see pitfall 10)
+est.requests;     // 28  <- was 838 before native statistics were read
 est.columns;      // ['id', 'datetime', 'eo:cloud_cover', 'geometry']
-est.warnings;     // includes 'no-covering' and 'share-alike'
+est.warnings;     // includes 'share-alike' (no longer 'no-covering')
 ```
 
 The fat `assets` column is excluded unless explicitly included — a footprint
@@ -666,17 +671,41 @@ you write your own reader, pass it.
 `maxConcurrentRequests` defaults to **12**: row groups are fetched in
 parallel, and `onBatch` still delivers them in row-group order, so output
 order is unchanged. Request *depth* is still the latency on this path, so
-`est.requests` is still the number to show a user and to budget against —
-but 825 of those reads now take ~67 s instead of ~737 s (measured, live, on
-the s2 footprints query that plans **838 requests**). Lower the option for a
+`est.requests` is still the number to show a user and to budget against.
+That number also got far smaller: the s2 footprints query planned **838
+requests** before native geometry statistics were read and plans **28**
+after (measured, live, 2026-11-17). Lower the option for a
 file with very large row groups: peak memory is one decoded row group per
 concurrent read.
 
-### 10. `includeBbox: true` is a no-op without a covering
+### 10. `includeBbox: true` is a no-op without a covering — but `{ kind: 'none' }` no longer means "full scan"
 
-The covering columns come from `table.bbox`. On `{ kind: 'none' }` there is
+The covering *columns* come from `table.bbox`. On `{ kind: 'none' }` there is
 nothing to include. (The `geoparquet` *writer* always computes its own from the
 geometry when `writeCovering` is on — that is a different thing.)
+
+**Pruning is now separate from that.** A GeoParquet 2.0 file (native Parquet
+`GEOMETRY` logical type) carries a per-row-group bbox in the footer as
+`GeospatialStatistics`, with no covering column anywhere. `estimate()` falls
+back to those automatically, and the `row-group-bbox` stage then reports
+`basis: 'native geometry statistics'` and no `no-covering` warning. Measured
+live on 2026-11-17, against a Kenya bbox:
+
+| dataset | row groups before | after |
+|---|---|---|
+| s2-stac-geoparquet (2025) | 825 | **27** |
+| FIRMS detections (2025) | 582 | **6** |
+| fieldmaps subnational ADM2 | 68 | **5** |
+
+The fallback also fires when a declared covering turns out to be *unusable* —
+which is not hypothetical: a STAC-GeoParquet `bbox` column is a LIST
+(`[xmin, ymin, xmax, ymax]`), not a struct, so a `struct` covering inferred
+from its name reads `bbox.xmin`, gets nothing, and used to report
+`basis: 'covering bbox'` while pruning nothing *and* suppressing the
+`no-covering` warning.
+
+There is still no per-ROW bbox in a native-stats file, so a row-level test
+decodes geometry exactly as `{ kind: 'none' }` does.
 
 ### 11. `clip` is not implemented
 
