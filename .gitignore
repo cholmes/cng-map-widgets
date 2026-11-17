@@ -3,3 +3,6 @@ dist/
 .DS_Store
 *.local
 data/
+
+# superpowers scratch workspace
+.superpowers/

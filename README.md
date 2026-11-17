@@ -297,7 +297,7 @@ silent wrong answers. Every snippet in it is executed by
 |---|---|
 | [`AGENTS.md`](AGENTS.md) | Recipes for agents and anyone in a hurry. |
 | [`docs/design/widgets-architecture.md`](docs/design/widgets-architecture.md) | **The normative API design**, ~3,000 lines, with dated amendments. If a README and this disagree, the README describes what the code does and the design doc describes what it should do. |
-| [`PLAN.md`](PLAN.md) | The experiment plan, data-source decisions, and current status. |
+| [`docs/PLAN.md`](docs/PLAN.md) | The experiment plan, data-source decisions, and current status. |
 | [`experiments/*/RESULTS.md`](experiments/) | The measurements behind the design calls: data recon, the search-index benchmark, the ADM3/4 licensing survey. |
 | each package's `README.md` | API reference read off the actual exports and checked against them, with per-package gotchas. |
 
