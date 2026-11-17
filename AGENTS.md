@@ -15,6 +15,9 @@ and the design doc is what it should be.
 
 ## Mental model in five lines
 
+**Scope note:** this is place-name/boundary lookup, not address geocoding.
+Queries are place names; results are boundaries. No street addresses, ever.
+
 1. A **cloud-native gazetteer** is published static data: a names-index parquet
    + an `index.json` manifest + per-level boundary parquets, on object storage.
 2. `@cng/geocoder-core` reads it over HTTP range requests and emits an

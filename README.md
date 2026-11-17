@@ -1,6 +1,7 @@
-# Cloud-native map widgets
+# cng-map-widgets
 
-Composable browser widgets for finding an area and acting on it:
+**Cloud-native map widgets.** Composable browser widgets for finding an area
+and acting on it:
 
 - **Search a place** — type "contra costa", get its boundary, in about a
   millisecond warm. Over a *published cloud-native gazetteer*: a names index
@@ -12,6 +13,15 @@ Composable browser widgets for finding an area and acting on it:
   the browser, a real pre-download estimate, and a ceiling you have to
   explicitly override. (Rows that *intersect* the area, not clipped at its
   edge: clipping mutates features, so it is opt-in and not yet built.)
+- **Or clip a raster to it** — read a COG's overviews, pick bands, see the
+  output size before committing.
+
+Those four are what exists today, not the boundary of the idea: anything that
+can consume an `Area` is a widget this library can grow.
+
+> **This is place-name and boundary lookup, not address geocoding.** You ask
+> it for "Contra Costa County" and get a polygon; you do not ask it for
+> "1600 Pennsylvania Ave" and get a point. Different problem, different data.
 
 **Pure static. No API, no server, no build step.** Everything runs in the
 browser against object storage over HTTP range requests. The packages are plain
@@ -25,6 +35,7 @@ consumes one. Nothing else couples.
 > **Status: experimental.** Nothing is published to npm yet. The APIs work and
 > are verified against live data, but they are not frozen, and this is a
 > research repo graduating toward a public widgets library. See
+> [Installing](#installing) for how to use it before it reaches npm, and
 > [Status](#status) and [Known issues](#known-issues) before depending on it.
 
 ---

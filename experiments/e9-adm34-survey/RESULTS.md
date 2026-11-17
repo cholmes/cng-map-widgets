@@ -12,7 +12,7 @@ Tooling: `curl` against the geoBoundaries API
 GeoJSON/parquet files, converted with `ogr2ogr` (GDAL, `-f Parquet -lco
 COMPRESSION=ZSTD`). Scratch data (downloaded GeoJSON/Parquet, the raw API
 JSON) is in
-`/private/tmp/claude-501/-Users-cholmes-repos-cn-geocoding/152f1dd6-107d-474c-9cda-c4f20995e7c6/scratchpad/gbdata/`.
+`<scratchpad>/gbdata/`.
 Reference numbers for the *existing* catalog (`adm0`/`adm1`/`adm2`/`names`)
 are from `/Users/cholmes/repos/geoboundaries-catalog/README.md` (read-only).
 

@@ -93,7 +93,7 @@ wire them up unaided.
   bbox column makes this cheap).
 - **Branches in portolan-browser / firms-catalog:** local only, Chris reviews
   before push.
-- **Workspace:** this repo (`cn-geocoding`), git-initialized; graduates/renames
+- **Workspace:** this repo (`cng-map-widgets`, renamed from `cn-geocoding` 2026-11-17); graduates/renames
   to a public widgets repo when it gels.
 - **Subagents:** use opus (design-heavy) and sonnet (implementation/benchmarks)
   throughout.
@@ -198,7 +198,7 @@ numbers, recommended file recipe (this doubles as the upstream advocacy doc).
 > source.coop. It pulls from geoBoundaries' published releases via a
 > reproducible script, and is an exemplar catalog (full column descriptions,
 > sources linked, great docs). The index/mirror parquet files are data
-> products of that catalog; cn-geocoding consumes their published URLs. The
+> products of that catalog; cng-map-widgets consumes their published URLs. The
 > E1/E2 *benchmarks* still live here; the *builders* live in the catalog repo.
 > This also resolves mirror hosting (open question below) and index/mirror
 > version coupling: one pipeline builds both, keyed by `shapeID`.
@@ -679,7 +679,7 @@ lock the data layer before widget APIs in E3/E5 are finalized.
 ## Repo layout (target)
 
 ```
-cn-geocoding/
+cng-map-widgets/
   PLAN.md
   experiments/        # e0-data-recon/ e1-search-index/ e2-geometry/ ...
   packages/           # geocoder-core/ download-core/ upload-core/

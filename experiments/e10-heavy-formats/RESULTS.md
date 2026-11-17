@@ -13,7 +13,7 @@ extension, Node 22.23.2, `curl` + `gzip -9` for payload measurement
 (matching the design doc §4.5's own methodology: "concatenated, gzip -9"
 for hyparquet/hyparquet-compressors). Scratch downloads and probe scripts:
 `/tmp/terrio-test/`, `/tmp/fgb-test/`,
-`/private/tmp/claude-501/-Users-cholmes-repos-cn-geocoding/152f1dd6-107d-474c-9cda-c4f20995e7c6/scratchpad/`.
+`<scratchpad>/`.
 
 ---
 
@@ -41,7 +41,7 @@ though it functionally works.**
 - **Install/try:** `npm install terrio-js@0.8.0` (the published npm
   package), ran directly in Node (its own documented usage: `init()`,
   `open()`/`fromGeoJSON()`, `.toBytes()`) — see
-  `/private/tmp/claude-501/-Users-cholmes-repos-cn-geocoding/152f1dd6-107d-474c-9cda-c4f20995e7c6/scratchpad/terrio-probe.mjs`.
+  `<scratchpad>/terrio-probe.mjs`.
 - **Functional result** [measured: ran the probe script against a 2-point
   Liechtenstein-town GeoJSON, wrote `.gpkg` and `.shp.zip`, validated
   both]:

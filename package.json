@@ -1,9 +1,9 @@
 {
-  "name": "cn-geocoding",
+  "name": "cng-map-widgets",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Cloud-native map widgets: a zero-build, zero-server geocoder over published cloud-native gazetteers, plus area upload and dataset download, with MapLibre and OpenLayers adapters.",
+  "description": "Composable, zero-build browser widgets for cloud-native geospatial data: find an area - search a published gazetteer, upload a GeoJSON, draw one - then act on it, filtering and downloading datasets or clipping rasters, entirely over HTTP range requests against object storage. MapLibre and OpenLayers adapters.",
   "keywords": [
     "cloud-native",
     "geospatial",
@@ -16,7 +16,11 @@
     "stac",
     "portolan",
     "zero-build",
-    "cnmw"
+    "cnmw",
+    "raster",
+    "cog",
+    "widgets",
+    "range-requests"
   ],
   "license": "MIT",
   "workspaces": [

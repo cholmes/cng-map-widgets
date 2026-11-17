@@ -15,7 +15,7 @@ Tooling: local DuckDB v1.4.1, `INSTALL/LOAD httpfs`, remote parquet via
 No full-file downloads were needed; all facts came from `DESCRIBE`,
 `parquet_metadata()`, and aggregate `SELECT`/`COUNT`/`GROUP BY` queries that
 DuckDB satisfies with range requests. Scratch files (STAC JSON/README copies)
-are in `/private/tmp/claude-501/-Users-cholmes-repos-cn-geocoding/152f1dd6-107d-474c-9cda-c4f20995e7c6/scratchpad/e0/`.
+are in `<scratchpad>/e0/`.
 
 ---
 
@@ -444,7 +444,7 @@ not feed the shipped index at all — at most, local/offline exploration.
 | GISCO | small multilingual set (EN/FR/DE + local), ADM0 only | — | — | **no** (non-commercial) | Exclude. |
 | World Bank Official Boundaries | single-language | ADM0-2 | `ADM1CD_c`/`ADM2CD_c` | **yes** (CC-BY 4.0) | Good **fallback/cross-check** source (fewer rows than CGAZ, same license family); not better than geoBoundaries for levels/coverage, but a clean second opinion with a `bbox` column already in place. |
 
-### Recommended sequencing for cn-geocoding
+### Recommended sequencing for cng-map-widgets
 
 1. **Ship:** geoBoundaries CGAZ (already the plan).
 2. **#2 after geoBoundaries:** fieldmaps COD-AB/subnational, *once the global
