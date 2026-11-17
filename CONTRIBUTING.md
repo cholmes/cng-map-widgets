@@ -94,9 +94,6 @@ Why each one matters:
 If you are tempted to "finish the rename", this table is why it is already
 finished.
 
-Background:
-[the publishing design](docs/superpowers/specs/2026-11-17-cng-map-widgets-publish-design.md).
-
 ## House style
 
 - Plain ESM with JSDoc. No TypeScript, no build step, no bundler — that

@@ -1186,8 +1186,7 @@ is both short and expands to a term with currency in this community, where
 `cnmw` expanded to nothing on sight. Deliberately **not** matched to the repo
 name `cng-map-widgets`: `@cng-map-widgets/download-core` is 31 characters, and
 "map-widgets" is wrong for `spec`, `download-core` and the `format-*`
-packages, which are not map widgets. See
-[the publishing design](../superpowers/specs/2026-11-17-cng-map-widgets-publish-design.md).
+packages, which are not map widgets.
 
 | package | contents | depends on |
 |---|---|---|
