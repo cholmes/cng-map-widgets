@@ -36,7 +36,7 @@ a Blob fallback; zero-build CDN-consumable ESM.**
 
 ```
         ┌──────────────────┐   ┌────────────────┐   ┌─────────────┐
-        │ @cng/geocoder-  │   │ @cng/upload-  │   │ (adapter    │
+        │ @cng/geocoder-   │   │ @cng/upload-   │   │ (adapter    │
         │ core             │   │ core           │   │  draw tool) │
         │ names index →    │   │ GeoJSON file → │   │ map draw →  │
         └────────┬─────────┘   └───────┬────────┘   └──────┬──────┘

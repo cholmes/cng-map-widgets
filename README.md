@@ -219,14 +219,14 @@ Pinned versions: `hyparquet@1.33.0`, `hyparquet-compressors@1.1.3`,
                                     │  HTTP range reads, no server
     THE WIDGETS (plain ESM, zero build)
     ┌───────────────────────────────▼──────────────────────────────────┐
-    │  @cng/geocoder-core    @cng/upload-core    (a draw tool)       │
+    │  @cng/geocoder-core    @cng/upload-core    (a draw tool)         │
     │  names index → ranked   GeoJSON file →       map draw →          │
     │  results → geometry     repair →                                 │
     │          │                      │                    │           │
     │          └──────────►  A r e a  ◄────────────────────┘           │
     │                           │        ← the only coupling           │
     │                           ▼                                      │
-    │               @cng/download-core    ◄── DatasetDescriptor       │
+    │               @cng/download-core    ◄── DatasetDescriptor        │
     │               resolve / prune /          + FilterSpec            │
     │               estimate / download        (plain JSON, also the   │
     │                           │               QGIS-shared artifact)  │
@@ -235,8 +235,8 @@ Pinned versions: `hyparquet@1.33.0`, `hyparquet-compressors@1.1.3`,
     │      geojson writer  geoparquet     format plugins               │
     │        (in core)      (in core)     (lazy, weight shown)         │
     │                                                                  │
-    │  @cng/spec   the Area + error taxonomy + pure geo helpers       │
-    │  @cng/maplibre · @cng/openlayers   thin UI adapters            │
+    │  @cng/spec   the Area + error taxonomy + pure geo helpers        │
+    │  @cng/maplibre · @cng/openlayers   thin UI adapters              │
     └───────────────────────────────┬──────────────────────────────────┘
                                     │
     CONSUMING APPS
