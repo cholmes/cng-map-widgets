@@ -338,7 +338,7 @@ and reported via `'error'` rather than stopping the others.
 | `area:upgrade-cancelled` | `{ result, area }` | `cancelUpgrade()` aborted it; `area` is unchanged. |
 | `index:upgraded` | `{ strategy, loadMs }` | The main index finished loading behind a `prominent_index`. |
 | `warning` | `{ code, message, detail? }` | Tolerated skew, `PROMINENT_INDEX_FAILED`, `GEOMETRY_REF_MISMATCH`. |
-| `error` | `CnmwError` | |
+| `error` | `CngError` | |
 
 `load:progress` is design doc §8: specified, not emitted by this build (nothing
 counts bytes against `content-length`). Subscribing succeeds and the handler

@@ -60,14 +60,24 @@ families, and only the first was renamed to `cng`:
 | Family | Example | Status |
 |---|---|---|
 | npm scope | `@cng/geocoder-core` | renamed from `@cnmw` 2026-11-17 |
-| **wire format** | `cnmw-index/1.0`, `cnmw-dataset/1.0`, `cnmw:catalog_version` | **frozen** |
+| error class | `CngError`, `isCngError` | renamed from `CnmwError` 2026-11-17 |
+| **wire format** | `cnmw-index/1.0`, `cnmw-dataset/1.0`, `cnmw-filter/1.0`, `cnmw-output/1.0`, `cnmw-request/1.0`, `cnmw-raster-dataset/1.0`, `cnmw:catalog_version` | **frozen** |
+| **cross-version registry key** | `Symbol.for('cnmw.spec')` | **frozen** |
 | **DOM / CSS / source ids** | `cnmw-area-display`, `cnmw-geocoder`, `cnmw-attribution` | **frozen** |
+| **demo test hooks** | `window.__cnmwDemo`, `__cnmwLastResult`, … | **frozen** |
 
 The wire-format strings appear in **live published catalogs** on
 `data.source.coop`; `packages/geocoder-core/src/index-loader.js` rejects any
 manifest whose `spec` is not exactly `cnmw-index/1.0`. Renaming them would
-break every published gazetteer on contact. The DOM ids are asserted on by
-`examples/*/verify.mjs` and documented in AGENTS.md.
+break every published gazetteer on contact.
+
+`Symbol.for('cnmw.spec')` is the registry key two copies of `@cng/spec` use
+to recognise each other across versions; changing it makes them stop
+agreeing, silently.
+
+The DOM ids are asserted on by `examples/*/verify.mjs` and documented in
+AGENTS.md, and the `window.__cnmw*` hooks are the private channel between a
+demo page and its own verifier.
 
 Background:
 [the publishing design](docs/superpowers/specs/2026-11-17-cng-map-widgets-publish-design.md).

@@ -106,8 +106,8 @@ export function createShapefileFormat() {
     estimateBytes: estimateShapefileBytes,
     async open(ctx) {
       if (ctx.crs !== 'EPSG:4326' && ctx.crs !== 'OGC:CRS84' && ctx.crs) {
-        const { CnmwError } = await import('@cng/spec');
-        throw new CnmwError(
+        const { CngError } = await import('@cng/spec');
+        throw new CngError(
           `@cng/format-shapefile only writes EPSG:4326/OGC:CRS84 (the .prj this plugin writes is fixed WGS84 WKT); got crs "${ctx.crs}".`,
           'FORMAT_CAPABILITY',
           { context: { crs: ctx.crs } },
@@ -136,8 +136,8 @@ export function createShapefileFormat() {
             const family = shapeFamilyOf(geom.type);
             if (shapeFamily === null) shapeFamily = family;
             else if (family !== shapeFamily) {
-              const { CnmwError } = await import('@cng/spec');
-              throw new CnmwError(
+              const { CngError } = await import('@cng/spec');
+              throw new CngError(
                 `@cng/format-shapefile: a Shapefile has exactly one shape type per file; this result mixes ${shapeFamily} with ${family} geometry, which cannot be written as a single .shp.`,
                 'FORMAT_CAPABILITY',
                 { context: { first: shapeFamily, conflicting: family } },

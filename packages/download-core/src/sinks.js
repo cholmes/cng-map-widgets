@@ -1,6 +1,6 @@
 // @cng/download-core -- sinks (design doc §3.4).
 
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 
 /**
  * One run's writable, with the lifecycle every sink owes its caller
@@ -70,7 +70,7 @@ function managedWritable(underlying) {
 /** The guard against a *second* `open()` on a sink that already has a writable. */
 function refuseSecondOpen(kind, managed) {
   if (!managed) return;
-  throw new CnmwError(
+  throw new CngError(
     `${kind} sink: open() was called twice. A sink backs exactly one run and hands out exactly one writable -- re-opening would start a second, empty write to the same destination (on the File System Access API, a fresh swap file that commits over the bytes just written). Create a new sink per download.`,
     'SINK_UNSUPPORTED',
     { context: { kind, phase: managed.phase } },
@@ -120,7 +120,7 @@ export function blobSink(opts = {}) {
         write(chunk) {
           total += chunk.byteLength;
           if (total > maxBytes) {
-            throw new CnmwError(
+            throw new CngError(
               'Too large to buffer in memory; use a browser that supports direct-to-disk saving.',
               'SINK_QUOTA_EXCEEDED',
               { context: { maxBytes } },
@@ -177,11 +177,11 @@ export function streamSink(stream) {
  */
 export async function fileSystemSink(opts = {}) {
   if (typeof globalThis.showSaveFilePicker !== 'function' && !opts.handle) {
-    throw new CnmwError('The File System Access API is not available in this browser.', 'SINK_UNSUPPORTED');
+    throw new CngError('The File System Access API is not available in this browser.', 'SINK_UNSUPPORTED');
   }
   const handle = opts.handle;
   if (!handle) {
-    throw new CnmwError('fileSystemSink requires a FileSystemFileHandle (call showSaveFilePicker from a user gesture first).', 'SINK_UNSUPPORTED');
+    throw new CngError('fileSystemSink requires a FileSystemFileHandle (call showSaveFilePicker from a user gesture first).', 'SINK_UNSUPPORTED');
   }
   let fsWritable = null;
   let managed = null;
@@ -247,7 +247,7 @@ export async function autoSink(opts = {}) {
       return fileSystemSink({ handle, suggestedName: opts.suggestedName });
     } catch (err) {
       if (err?.name === 'AbortError') {
-        throw new CnmwError('Save dialog was dismissed.', 'SINK_PERMISSION_DENIED', { cause: err });
+        throw new CngError('Save dialog was dismissed.', 'SINK_PERMISSION_DENIED', { cause: err });
       }
       // Any other picker failure: fall through to the Blob fallback.
     }

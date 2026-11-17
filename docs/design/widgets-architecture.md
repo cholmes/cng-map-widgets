@@ -1616,7 +1616,7 @@ export interface GeocoderEvents {
    *  that wants to know "the full index is in now" independent of any
    *  particular query (e.g. flipping an indicator off). */
   'index:upgraded': { strategy: 'full' | 'range'; loadMs: number };
-  'error': CnmwError;
+  'error': CngError;
   /** Emitted when `onVersionSkew: 'warn'` and a skew was tolerated, or when
    *  a declared `prominent_index` fails to load (`code:
    *  'PROMINENT_INDEX_FAILED'`) -- the latter never fails `load()` itself,
@@ -2855,7 +2855,7 @@ export type UploadWarning =
 export declare function areaFromFile(file: File, options?: UploadOptions): Promise<UploadResult>;
 export declare function areaFromGeoJson(json: unknown, meta: { name: string }, options?: UploadOptions): Promise<UploadResult>;
 /** Wires drag/drop + paste on an element. Returns an unsubscribe. */
-export declare function attachDropTarget(el: HTMLElement, onResult: (r: UploadResult) => void, options?: UploadOptions & { onError?: (e: CnmwError) => void }): Unsubscribe;
+export declare function attachDropTarget(el: HTMLElement, onResult: (r: UploadResult) => void, options?: UploadOptions & { onError?: (e: CngError) => void }): Unsubscribe;
 /** For the "more formats" plugin path of E4 (shapefile-js, gdal3.js): a
  *  reader is registered, and `areaFromFile` dispatches on media type /
  *  extension. Core registers GeoJSON only. */
@@ -3042,7 +3042,7 @@ export interface DownloadEvents {
   'progress': Progress;
   'warning': EstimateWarning;
   'done': DownloadResult;
-  'error': CnmwError;
+  'error': CngError;
 }
 
 export interface DownloadResult {
@@ -3560,7 +3560,7 @@ rather than synchronously before planning starts. If the format is lazy
 and not yet loaded, it emits a `{ phase: 'loading-format', format: string
 }` `Progress` event first, so a UI can show "fetching GeoPackage writer,
 ~340KB..." A `load()` that throws is wrapped in a new error code,
-**`FORMAT_LOAD_FAILED`** (§3.5's `CnmwErrorCode` union; retryable by
+**`FORMAT_LOAD_FAILED`** (§3.5's `CngErrorCode` union; retryable by
 default, same as `NETWORK`/`INDEX_FETCH_FAILED` — a CDN fetch failing is
 the same transient-failure shape under a format-specific name).
 
@@ -3634,15 +3634,15 @@ flag. The `code` is the API: messages are for humans and may be reworded,
 codes may not.
 
 ```ts
-export declare class CnmwError extends Error {
+export declare class CngError extends Error {
   readonly code: string;
   readonly retryable: boolean;
   readonly context?: Readonly<Record<string, unknown>>;
   readonly cause?: unknown;
 }
-export declare class CancelledError extends CnmwError {}        // 'CANCELLED'
-export declare class CeilingExceededError extends CnmwError {}  // 'CEILING_EXCEEDED'
-export declare function isCnmwError(e: unknown): e is CnmwError;
+export declare class CancelledError extends CngError {}        // 'CANCELLED'
+export declare class CeilingExceededError extends CngError {}  // 'CEILING_EXCEEDED'
+export declare function isCngError(e: unknown): e is CngError;
 ```
 
 | code | thrown by | retryable | what the UI should say / do |
@@ -3743,7 +3743,7 @@ import { normalizeArea, splitAntimeridian } from 'https://cdn.jsdelivr.net/npm/@
    imports hyparquet from a CDN. If our pinned URL matches theirs, the app pays
    for hyparquet once whether or not it loads our packages. If we inlined, the
    app would carry two.
-3. **`@cng/spec` must be a singleton.** `instanceof CnmwError` and `Area`
+3. **`@cng/spec` must be a singleton.** `instanceof CngError` and `Area`
    validation across package boundaries only behave if there is one `spec`
    module. Externalizing makes that structural rather than hoped-for.
 4. **Security patching is a URL change.** A hyparquet CVE is fixed by republishing

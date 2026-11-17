@@ -368,7 +368,7 @@ download-core `FormatPlugin`: a `FormatPlugin` consumes `FeatureBatch`es (rows
 + WKB) from a parquet engine, and a clip has no rows. It is a second pipeline
 that reuses the *contracts* — `Bounded`, the ceiling/refusal gate, the `Sink`
 interface (`memorySink`/`blobSink`/`fileSystemSink` verbatim), the handle state
-machine, the `CnmwError` taxonomy, the pinned-CDN + host-injection packaging —
+machine, the `CngError` taxonomy, the pinned-CDN + host-injection packaging —
 and publishes the `{ name, approxBytes, load }` deferred-plugin descriptor the
 registry amendment established, so a picker can show "GeoTIFF clip (+~28 KB)"
 before fetching anything. The descriptor model (§2) gains a sibling kind

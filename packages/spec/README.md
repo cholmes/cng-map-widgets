@@ -9,7 +9,7 @@ Three things live here:
 1. **The `Area`** — the object a geocoder selection, a GeoJSON upload or a map
    draw tool all produce, and the only thing `@cng/download-core` consumes.
    This is the seam that makes the widgets composable.
-2. **The error taxonomy** — one `CnmwError` class with a stable string `code`.
+2. **The error taxonomy** — one `CngError` class with a stable string `code`.
 3. **Pure functions** — bbox math with real antimeridian handling, Visvalingam
    simplification (sync and chunked-async), WKB → GeoJSON, and the name
    normalization the gazetteer index builders use.
@@ -141,14 +141,14 @@ area.filterGeometry === area.geometry;   // true -- under the ceiling, same obje
 area.provenance.combine;        // 'single'
 area.provenance.simplification; // undefined -- nothing was simplified
 
-validateArea(area);             // throws CnmwError on a malformed Area
+validateArea(area);             // throws CngError on a malformed Area
 ```
 
 Points and lines are refused structurally, not quietly dropped:
 
 ```js
 buildArea({ name: 'p', geometry: { type: 'Point', coordinates: [0, 0] }, source: 'upload', features: [] });
-// CnmwError { code: 'AREA_UNSUPPORTED_GEOMETRY' }
+// CngError { code: 'AREA_UNSUPPORTED_GEOMETRY' }
 ```
 
 ### Serializing one
@@ -324,10 +324,10 @@ known follow-up.
 
 | export | notes |
 |---|---|
-| `CnmwError` | `new CnmwError(message, code, { retryable?, context?, cause? })`. Fields: `.code`, `.retryable`, `.context`. Extends `Error`. |
+| `CngError` | `new CngError(message, code, { retryable?, context?, cause? })`. Fields: `.code`, `.retryable`, `.context`. Extends `Error`. |
 | `CancelledError` | `code: 'CANCELLED'`. |
 | `CeilingExceededError` | `code: 'CEILING_EXCEEDED'`. |
-| `isCnmwError(e)` | `(unknown) => boolean`. |
+| `isCngError(e)` | `(unknown) => boolean`. |
 
 **The `code` is the API. Messages are for humans and may be reworded; codes may
 not.** `retryable` defaults to `true` for `INDEX_FETCH_FAILED`,
@@ -335,17 +335,17 @@ not.** `retryable` defaults to `true` for `INDEX_FETCH_FAILED`,
 otherwise.
 
 ```js
-import { CnmwError, isCnmwError } from '@cng/spec';
+import { CngError, isCngError } from '@cng/spec';
 
-const err = new CnmwError('Only EPSG:4326 (lon/lat) data is supported.', 'AREA_INVALID_CRS', {
+const err = new CngError('Only EPSG:4326 (lon/lat) data is supported.', 'AREA_INVALID_CRS', {
   context: { crs: 'EPSG:3857' },
 });
 err.code;        // 'AREA_INVALID_CRS'
 err.retryable;   // false
 err.context.crs; // 'EPSG:3857'
-isCnmwError(err);           // true
+isCngError(err);           // true
 err instanceof Error;       // true
-new CnmwError('x', 'INDEX_FETCH_FAILED').retryable;  // true
+new CngError('x', 'INDEX_FETCH_FAILED').retryable;  // true
 ```
 
 The full code table, with what a UI should say for each, is in
@@ -371,7 +371,7 @@ first:
 instanceof checks and Area validation may diverge; the first-loaded version wins.
 ```
 
-This exists because `instanceof CnmwError` and `validateArea` only behave if
+This exists because `instanceof CngError` and `validateArea` only behave if
 there is one `spec` module on the page. In a zero-build page, the way to
 guarantee that is to have every `@cng` package import the **same URL** — which
 is why the packaging design externalizes dependencies to pinned absolute URLs

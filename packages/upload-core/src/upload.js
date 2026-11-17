@@ -8,7 +8,7 @@
 // bbox/antimeridian/simplification, this module only prepares the
 // combined geometry and the provenance it is built from.
 
-import { CnmwError, buildArea, bboxOfGeometry, bboxesIntersect } from '@cng/spec';
+import { CngError, buildArea, bboxOfGeometry, bboxesIntersect } from '@cng/spec';
 import { geoJsonReader } from './geojson-reader.js';
 import { extractRawFeatures, detectDeclaredCrs } from './geojson-parse.js';
 import { repairFeatures } from './repair.js';
@@ -54,7 +54,7 @@ function findReader(file) {
   if (byExt) return byExt;
   const byType = file.type ? readersByMediaType.get(file.type.toLowerCase()) : undefined;
   if (byType) return byType;
-  throw new CnmwError(
+  throw new CngError(
     `No registered reader for "${file.name}" (type "${file.type || 'unknown'}"). Register one with registerReader().`,
     'UPLOAD_UNSUPPORTED_FORMAT',
     { context: { filename: file.name, mediaType: file.type } },
@@ -121,7 +121,7 @@ async function buildUploadResult({ rawFeatures, declaredCrs, name, bytes, mediaT
   const foreign = isForeignCrs(declaredCrs);
   if (foreign) {
     if (onForeignCrs === 'reject') {
-      throw new CnmwError('Only EPSG:4326 (lon/lat) data is supported.', 'AREA_INVALID_CRS', {
+      throw new CngError('Only EPSG:4326 (lon/lat) data is supported.', 'AREA_INVALID_CRS', {
         context: { declaredCrs },
       });
     }
@@ -129,7 +129,7 @@ async function buildUploadResult({ rawFeatures, declaredCrs, name, bytes, mediaT
   }
 
   if (rawFeatures.length === 0) {
-    throw new CnmwError('No usable polygon in that file.', 'AREA_EMPTY');
+    throw new CngError('No usable polygon in that file.', 'AREA_EMPTY');
   }
 
   // Distinguish "nothing areal was ever present" (points/lines only) from
@@ -144,13 +144,13 @@ async function buildUploadResult({ rawFeatures, declaredCrs, name, bytes, mediaT
   const { features: kept, repairs } = repairFeatures(rawFeatures);
   if (kept.length === 0) {
     if (potentiallyAreal === 0) {
-      throw new CnmwError('This file has points/lines; an area needs polygons.', 'AREA_UNSUPPORTED_GEOMETRY');
+      throw new CngError('This file has points/lines; an area needs polygons.', 'AREA_UNSUPPORTED_GEOMETRY');
     }
-    throw new CnmwError('No usable polygon in that file.', 'AREA_EMPTY');
+    throw new CngError('No usable polygon in that file.', 'AREA_EMPTY');
   }
 
   if (kept.length > maxFeatures) {
-    throw new CnmwError(`File has ${kept.length} usable features; the limit is ${maxFeatures}.`, 'UPLOAD_TOO_LARGE', {
+    throw new CngError(`File has ${kept.length} usable features; the limit is ${maxFeatures}.`, 'UPLOAD_TOO_LARGE', {
       context: { limit: 'features', max: maxFeatures, actual: kept.length },
     });
   }
@@ -163,7 +163,7 @@ async function buildUploadResult({ rawFeatures, declaredCrs, name, bytes, mediaT
     geometry = kept[0].geometry;
   } else if (combine === 'dissolve') {
     if (typeof options.dissolver !== 'function') {
-      throw new CnmwError(
+      throw new CngError(
         "unionMode 'dissolve' requires a dissolver function (options.dissolver) -- none was supplied.",
         'INTERNAL',
       );
@@ -224,7 +224,7 @@ async function buildUploadResult({ rawFeatures, declaredCrs, name, bytes, mediaT
 export async function areaFromFile(file, options = {}) {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   if (file.size > maxBytes) {
-    throw new CnmwError(`File is ${file.size} bytes; the limit is ${maxBytes} bytes.`, 'UPLOAD_TOO_LARGE', {
+    throw new CngError(`File is ${file.size} bytes; the limit is ${maxBytes} bytes.`, 'UPLOAD_TOO_LARGE', {
       context: { limit: 'bytes', max: maxBytes, actual: file.size },
     });
   }
@@ -254,7 +254,7 @@ export async function areaFromGeoJson(json, meta, options = {}) {
   })();
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   if (text.length > maxBytes) {
-    throw new CnmwError(`Input is ${text.length} bytes; the limit is ${maxBytes} bytes.`, 'UPLOAD_TOO_LARGE', {
+    throw new CngError(`Input is ${text.length} bytes; the limit is ${maxBytes} bytes.`, 'UPLOAD_TOO_LARGE', {
       context: { limit: 'bytes', max: maxBytes, actual: text.length },
     });
   }
@@ -269,7 +269,7 @@ export async function areaFromGeoJson(json, meta, options = {}) {
  * `areaFromFile`; pasted GeoJSON text goes through `areaFromGeoJson`.
  * @param {HTMLElement} el
  * @param {(result: import('./types.js').UploadResult) => void} onResult
- * @param {import('./types.js').UploadOptions & { onError?: (e: import('@cng/spec').CnmwError) => void }} [options]
+ * @param {import('./types.js').UploadOptions & { onError?: (e: import('@cng/spec').CngError) => void }} [options]
  * @returns {import('./types.js').Unsubscribe}
  */
 export function attachDropTarget(el, onResult, options = {}) {

@@ -696,12 +696,12 @@ rely on the check catching a rebuilt catalog.
 ## Error handling
 
 ```js
-import { isCnmwError } from '@cng/spec';   // or from @cng/download-core
+import { isCngError } from '@cng/spec';   // or from @cng/download-core
 
 try {
   await handle.result;
 } catch (err) {
-  if (!isCnmwError(err)) throw err;
+  if (!isCngError(err)) throw err;
   switch (err.code) {
     case 'CEILING_EXCEEDED': /* show the estimate + a "download anyway" */ break;
     case 'CANCELLED':        /* never surface this */ break;

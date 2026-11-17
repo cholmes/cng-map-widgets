@@ -6,7 +6,7 @@
 // consumer that lacks one refuses... resolveDataset returns a fully-concrete
 // descriptor... with no portolan-collection source left in it").
 
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 
 const RASTER_ZARR_TYPES = /tiff|cog|cloud-optimized|zarr|hdf5|netcdf|pmtiles|mbtiles/i;
 
@@ -22,10 +22,10 @@ export async function resolveDataset(descriptor, options = {}) {
   try {
     res = await fetchImpl(descriptor.source.url, { signal: options.signal });
   } catch (cause) {
-    throw new CnmwError(`Couldn't fetch collection JSON: ${descriptor.source.url}`, 'DATASET_UNRESOLVED', { cause });
+    throw new CngError(`Couldn't fetch collection JSON: ${descriptor.source.url}`, 'DATASET_UNRESOLVED', { cause });
   }
   if (!res.ok) {
-    throw new CnmwError(`Collection fetch failed: HTTP ${res.status}`, 'DATASET_UNRESOLVED', {
+    throw new CngError(`Collection fetch failed: HTTP ${res.status}`, 'DATASET_UNRESOLVED', {
       context: { status: res.status, url: descriptor.source.url },
       retryable: res.status >= 500 || res.status === 429,
     });
@@ -34,7 +34,7 @@ export async function resolveDataset(descriptor, options = {}) {
   try {
     collection = await res.json();
   } catch (cause) {
-    throw new CnmwError('Collection JSON did not parse.', 'DATASET_UNRESOLVED', { cause });
+    throw new CngError('Collection JSON did not parse.', 'DATASET_UNRESOLVED', { cause });
   }
   return deriveFromCollection(collection, descriptor, descriptor.source.url);
 }
@@ -180,7 +180,7 @@ function deriveSource(collection, assets, originalSource, columns) {
 
   if (!parquetAsset) {
     const foundTypes = [...new Set(assets.map((a) => a.type).filter(Boolean))];
-    throw new CnmwError(
+    throw new CngError(
       foundTypes.some((t) => RASTER_ZARR_TYPES.test(t))
         ? `Downloads aren't supported for raster/zarr data. Found: ${foundTypes.join(', ')}`
         : `No parquet data asset found in collection. Found: ${foundTypes.join(', ') || '(no assets)'}`,

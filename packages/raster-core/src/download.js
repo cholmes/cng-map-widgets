@@ -17,7 +17,7 @@
 //      GeoPackage path, which is why the blob-sink ceiling applies.
 //   3. The ceiling that matters is memory, not rows.
 
-import { CnmwError, CancelledError } from '@cng/spec';
+import { CngError, CancelledError } from '@cng/spec';
 import { planRasterClip } from './plan.js';
 import { writeGeoTiff } from './geotiff-writer.js';
 
@@ -168,7 +168,7 @@ export function downloadRaster(descriptor, area, filter = {}, output = {}, optio
       const filename = output.filename ?? defaultFilename(descriptor, plan);
       const sink = options.sink;
       if (!sink) {
-        throw new CnmwError(
+        throw new CngError(
           'downloadRaster needs a sink (autoSink()/blobSink()/memorySink() from @cng/download-core).',
           'SINK_UNSUPPORTED',
         );
@@ -212,7 +212,7 @@ export function downloadRaster(descriptor, area, filter = {}, output = {}, optio
       events.emit('done', result);
       resolveResult(result);
     } catch (err) {
-      const e = err instanceof CnmwError ? err : new CnmwError(err?.message ?? String(err), 'INTERNAL', { cause: err });
+      const e = err instanceof CngError ? err : new CngError(err?.message ?? String(err), 'INTERNAL', { cause: err });
       if (e.code === 'CANCELLED') setState('cancelled');
       else {
         setState('failed');

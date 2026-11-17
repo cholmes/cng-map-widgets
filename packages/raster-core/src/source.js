@@ -4,7 +4,7 @@
 // everything a planner needs to size a clip without reading a pixel. All of
 // it comes from the TIFF header + IFDs, which is one or two range reads.
 
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 import { loadGeoTiff, loadZstdDec } from './cdn.js';
 import { describeCrs } from './crs.js';
 
@@ -161,7 +161,7 @@ export async function openRaster(url, options = {}) {
   try {
     tiff = await gt.fromCustomClient(new CountingClient(url), {}, options.signal);
   } catch (err) {
-    throw new CnmwError(`Could not open ${url}: ${err?.message ?? err}`, 'NETWORK', { cause: err, retryable: true });
+    throw new CngError(`Could not open ${url}: ${err?.message ?? err}`, 'NETWORK', { cause: err, retryable: true });
   }
   const count = await tiff.getImageCount();
   const base = await tiff.getImage(0);
@@ -169,17 +169,17 @@ export async function openRaster(url, options = {}) {
   const keys = base.getGeoKeys() ?? {};
   const epsg = keys.ProjectedCSTypeGeoKey ?? keys.GeographicTypeGeoKey ?? null;
   if (!epsg) {
-    throw new CnmwError(`${url} has no CRS GeoKey; it is not georeferenced.`, 'RASTER_NOT_GEOREFERENCED');
+    throw new CngError(`${url} has no CRS GeoKey; it is not georeferenced.`, 'RASTER_NOT_GEOREFERENCED');
   }
   if (!describeCrs(epsg)) {
-    throw new CnmwError(
+    throw new CngError(
       `EPSG:${epsg} is not one of the CRSs raster-core can transform an area into (4326, 3857, WGS84 UTM zones).`,
       'RASTER_CRS_UNSUPPORTED',
       { context: { epsg } },
     );
   }
   if (!fd.ModelPixelScale || !fd.ModelTiepoint) {
-    throw new CnmwError(`${url} has no affine transform (ModelPixelScale/ModelTiepoint).`, 'RASTER_NOT_GEOREFERENCED');
+    throw new CngError(`${url} has no affine transform (ModelPixelScale/ModelTiepoint).`, 'RASTER_NOT_GEOREFERENCED');
   }
 
   const compression = SUPPORTED_COMPRESSION.get(fd.Compression ?? 1);
@@ -187,7 +187,7 @@ export async function openRaster(url, options = {}) {
     // Refuse in `openRaster`, i.e. before any pixel bytes are paid for.
     // geotiff.js's own failure mode is a throw from inside readRasters,
     // after the tiles have been fetched.
-    throw new CnmwError(
+    throw new CngError(
       `${url} uses TIFF compression ${fd.Compression}, which cannot be decoded in the browser.`,
       'RASTER_COMPRESSION_UNSUPPORTED',
       { context: { compression: fd.Compression } },
@@ -198,11 +198,11 @@ export async function openRaster(url, options = {}) {
   const bits = Array.from(fd.BitsPerSample ?? [8]);
   const formats = Array.from(fd.SampleFormat ?? bits.map(() => 1));
   if (new Set(bits).size > 1 || new Set(formats).size > 1) {
-    throw new CnmwError(`${url} mixes sample types across bands, which is not supported.`, 'RASTER_MIXED_DTYPE');
+    throw new CngError(`${url} mixes sample types across bands, which is not supported.`, 'RASTER_MIXED_DTYPE');
   }
   const dtype = dtypeFrom(bits[0], formats[0]);
   if (!dtype) {
-    throw new CnmwError(`${url} has an unsupported sample type (${bits[0]} bits, format ${formats[0]}).`, 'RASTER_DTYPE_UNSUPPORTED');
+    throw new CngError(`${url} has an unsupported sample type (${bits[0]} bits, format ${formats[0]}).`, 'RASTER_DTYPE_UNSUPPORTED');
   }
 
   const [ox, oy] = base.getOrigin();

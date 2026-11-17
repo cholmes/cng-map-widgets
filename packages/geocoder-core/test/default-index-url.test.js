@@ -13,7 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Geocoder, DEFAULT_INDEX_URL } from '../src/index.js';
-import { isCnmwError } from '@cng/spec';
+import { isCngError } from '@cng/spec';
 
 /** Read back the manifest URL a constructed Geocoder will actually load. */
 function manifestUrlOf(options) {
@@ -49,7 +49,7 @@ test('a multi-source indexUrl array refuses by name instead of silently loading 
   assert.throws(
     () => manifestUrlOf({ indexUrl: ['https://a.test/index.json', 'https://b.test/index.json'] }),
     (err) => {
-      assert.ok(isCnmwError(err));
+      assert.ok(isCngError(err));
       assert.equal(err.code, 'INDEX_MULTI_SOURCE_UNSUPPORTED');
       assert.match(err.message, /not implemented/);
       assert.deepEqual(err.context.indexUrl, ['https://a.test/index.json', 'https://b.test/index.json']);

@@ -6,7 +6,7 @@
 // schema and so are passed through unchecked (we simply index with
 // whatever string/number the path segment is).
 
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 
 /**
  * Resolve a dotted/bracketed path against a row object.
@@ -138,7 +138,7 @@ export function evaluatePredicate(predicate, row) {
     case '>=':
       return cmp >= 0;
     default:
-      throw new CnmwError(`Unsupported predicate operator: ${op}`, 'FILTER_UNSUPPORTED_PREDICATE', {
+      throw new CngError(`Unsupported predicate operator: ${op}`, 'FILTER_UNSUPPORTED_PREDICATE', {
         context: { op },
       });
   }

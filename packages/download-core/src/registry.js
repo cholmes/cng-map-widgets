@@ -194,8 +194,8 @@ export async function resolveFormat(id) {
       lazyLoadState.set(id, 'failed');
       lazyLoadPromises.delete(id);
       emitFormatState(id, 'failed');
-      const { CnmwError } = await import('@cng/spec');
-      throw new CnmwError(
+      const { CngError } = await import('@cng/spec');
+      throw new CngError(
         `Failed to load the "${id}" format plugin: ${err?.message ?? err}`,
         'FORMAT_LOAD_FAILED',
         { context: { format: id, approxBytes: descriptor.approxBytes }, cause: err },

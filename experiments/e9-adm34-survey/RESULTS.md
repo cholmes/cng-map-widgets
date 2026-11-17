@@ -14,7 +14,7 @@ COMPRESSION=ZSTD`). Scratch data (downloaded GeoJSON/Parquet, the raw API
 JSON) is in
 `<scratchpad>/gbdata/`.
 Reference numbers for the *existing* catalog (`adm0`/`adm1`/`adm2`/`names`)
-are from `/Users/cholmes/repos/geoboundaries-catalog/README.md` (read-only).
+are from the `geoboundaries-catalog` repo's README (read-only).
 
 **Headline: the task's licensing assumption is wrong.** gbOpen ADM3+ is
 **not** uniformly CC-BY 4.0 — see §3. That, not file size, is the real

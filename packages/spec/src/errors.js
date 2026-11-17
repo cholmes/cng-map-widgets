@@ -18,7 +18,7 @@
  *   'FORMAT_LOAD_FAILED'|
  *   'SINK_PERMISSION_DENIED'|'SINK_QUOTA_EXCEEDED'|'SINK_UNSUPPORTED'|
  *   'NETWORK'|'CORS'|'HTTP_STATUS'|'CANCELLED'|'INTERNAL'|
- *   'GEOCODER_NOT_LOADED'} CnmwErrorCode
+ *   'GEOCODER_NOT_LOADED'} CngErrorCode
  */
 
 /** Codes that are retryable by default (a consumer may override per-throw). */
@@ -34,15 +34,15 @@ const RETRYABLE_DEFAULTS = new Set([
   'FORMAT_LOAD_FAILED',
 ]);
 
-export class CnmwError extends Error {
+export class CngError extends Error {
   /**
    * @param {string} message
-   * @param {CnmwErrorCode} code
+   * @param {CngErrorCode} code
    * @param {{ retryable?: boolean, context?: Record<string, unknown>, cause?: unknown }} [opts]
    */
   constructor(message, code, opts = {}) {
     super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
-    this.name = 'CnmwError';
+    this.name = 'CngError';
     /** @type {string} */
     this.code = code;
     /** @type {boolean} */
@@ -52,7 +52,7 @@ export class CnmwError extends Error {
   }
 }
 
-export class CancelledError extends CnmwError {
+export class CancelledError extends CngError {
   /** @param {string} [message] @param {{context?: Record<string, unknown>}} [opts] */
   constructor(message = 'Operation cancelled', opts = {}) {
     super(message, 'CANCELLED', { retryable: false, ...opts });
@@ -60,7 +60,7 @@ export class CancelledError extends CnmwError {
   }
 }
 
-export class CeilingExceededError extends CnmwError {
+export class CeilingExceededError extends CngError {
   /** @param {string} [message] @param {{context?: Record<string, unknown>}} [opts] */
   constructor(message = 'Ceiling exceeded', opts = {}) {
     super(message, 'CEILING_EXCEEDED', { retryable: false, ...opts });
@@ -68,7 +68,7 @@ export class CeilingExceededError extends CnmwError {
   }
 }
 
-/** @param {unknown} e @returns {e is CnmwError} */
-export function isCnmwError(e) {
-  return e instanceof CnmwError;
+/** @param {unknown} e @returns {e is CngError} */
+export function isCngError(e) {
+  return e instanceof CngError;
 }

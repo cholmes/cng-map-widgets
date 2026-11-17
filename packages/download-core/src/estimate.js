@@ -2,7 +2,7 @@
 // hyparquet engine also uses (design doc §3.4, §2.6-§2.8's pruning
 // cascades, O12).
 
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 import { resolveDataset } from './dataset-resolve.js';
 import { enumeratePartitions, partitionPruneCascade } from './partitions.js';
 import { openParquetFile } from './parquet-io.js';
@@ -99,14 +99,14 @@ export async function planRequest(dataset, area, filter, options = {}) {
   const requires = requirementsOf(filter, area);
   const engineCapabilities = options.engine?.capabilities ?? ['bbox', 'intersects'];
   if (filter.spatial.mode === 'clip' && area?.crossesAntimeridian) {
-    throw new CnmwError(
+    throw new CngError(
       'Exact clip is not available across the antimeridian. Use intersects.',
       'AREA_ANTIMERIDIAN_CLIP',
     );
   }
   for (const req of requires) {
     if (!engineCapabilities.includes(req)) {
-      throw new CnmwError(`This filter needs an engine with the "${req}" capability.`, 'FILTER_REQUIRES_ENGINE', {
+      throw new CngError(`This filter needs an engine with the "${req}" capability.`, 'FILTER_REQUIRES_ENGINE', {
         context: { requirement: req },
       });
     }

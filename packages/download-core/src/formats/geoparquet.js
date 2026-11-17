@@ -9,7 +9,7 @@
 // `ceiling.blobBytes` for non-streaming formats for exactly this reason
 // (design doc §3.4 FormatPlugin.streaming doc comment).
 
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 import { loadHyparquetWriter } from '../cdn.js';
 import { decodeWkbGeometry, bboxOfAnyGeometry } from '../wkb-geometry.js';
 
@@ -235,7 +235,7 @@ export function createGeoParquetFormat() {
           // silently falling back.
           const compressionOption = ctx.options.compression ?? 'snappy';
           if (compressionOption === 'zstd') {
-            throw new CnmwError(
+            throw new CngError(
               'geoparquet zstd compression is unavailable: hyparquet-writer has no pure-JS zstd compressor among this package\'s dependencies (only a decompressor, for reading). Use { compression: "snappy" } (default) or "none".',
               'FORMAT_CAPABILITY',
               { context: { requested: 'zstd' } },

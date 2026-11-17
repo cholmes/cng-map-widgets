@@ -93,14 +93,20 @@
 </p>
 
 <div class="note">
-  <strong>Serving these:</strong> from the repo root run <code>python3 serve.py</code> and open
+  <strong>Viewing this on the published site?</strong> Every demo below is already live —
+  click one. GitHub Pages serves real HTTP <code>Range</code> requests, which is the whole
+  reason these work as static files.
+  <br /><br />
+  <strong>Working from a clone?</strong> From the repo root run <code>python3 serve.py</code> and open
   <code>http://localhost:8000/examples/</code>. A plain <code>python3 -m http.server</code> will
   <em>not</em> do — it answers HTTP <code>Range</code> requests with the whole file, which quietly
-  turns every range read into a full download. Every demo below fetches live data from
-  <code>data.source.coop</code>, so it needs network access. Add <code>?index=local</code> to any
-  demo to use the provisional offline index in <code>geocoder-demo/data/</code> (gitignored; see
-  that directory's <code>build-data.sql</code>), or <code>?index=overture</code> on
-  <code>geocoder-demo</code> for the 5.6M-name Overture gazetteer.
+  turns every range read into a full download.
+  <br /><br />
+  Either way, every demo fetches live data from <code>data.source.coop</code>, so it needs network
+  access. Add <code>?index=overture</code> on <code>geocoder-demo</code> for the 5.6M-name Overture
+  gazetteer. <code>?index=local</code> uses a provisional offline index in
+  <code>geocoder-demo/data/</code> — that directory is gitignored, so it is a clone-only option and
+  will 404 on the published site.
 </div>
 
 <h2>Start here</h2>

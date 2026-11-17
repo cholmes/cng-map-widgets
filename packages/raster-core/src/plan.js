@@ -14,7 +14,7 @@
 // That is the opposite of the vector case, where rows are the uncertain
 // quantity, and it makes the raster refusal path unusually trustworthy.
 
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 import { projectBbox } from './crs.js';
 import { DTYPE_BYTES, openRaster, tileBytes } from './source.js';
 
@@ -238,13 +238,13 @@ export async function planRasterClip(descriptor, area, filter = {}, options = {}
   const ceiling = { ...defaultRasterCeiling(), ...(options.ceiling ?? {}) };
   const bbox = filter.bbox ?? area?.bbox;
   if (!bbox || bbox.length !== 4) {
-    throw new CnmwError('A raster clip needs an area with a bbox.', 'AREA_EMPTY');
+    throw new CngError('A raster clip needs an area with a bbox.', 'AREA_EMPTY');
   }
   if (area?.bboxes && area.bboxes.length > 1) {
     // An antimeridian-split area is two bboxes in lon/lat; in a projected
     // CRS they are not one rectangle, and a GeoTIFF has exactly one
     // transform. Refusing is honest; the user can clip each side.
-    throw new CnmwError(
+    throw new CngError(
       'This area crosses the antimeridian. Clip each side separately -- one GeoTIFF cannot span the seam.',
       'RASTER_AREA_ANTIMERIDIAN',
       { context: { boxes: area.bboxes.length } },
@@ -257,7 +257,7 @@ export async function planRasterClip(descriptor, area, filter = {}, options = {}
   for (const name of wantedNames) {
     const band = matchBand(descriptor, name);
     if (!band) {
-      throw new CnmwError(
+      throw new CngError(
         `No band named "${name}". Available: ${descriptor.bands.map((b) => b.name).join(', ')}.`,
         'RASTER_BAND_UNKNOWN',
         { context: { band: name, available: descriptor.bands.map((b) => b.name) } },
@@ -265,7 +265,7 @@ export async function planRasterClip(descriptor, area, filter = {}, options = {}
     }
     bands.push(band);
   }
-  if (!bands.length) throw new CnmwError('Select at least one band.', 'RASTER_NO_BANDS');
+  if (!bands.length) throw new CngError('Select at least one band.', 'RASTER_NO_BANDS');
 
   // Open each distinct file once.
   const sources = options.sources ?? descriptor._sources ?? new Map();
@@ -283,7 +283,7 @@ export async function planRasterClip(descriptor, area, filter = {}, options = {}
   for (const b of bands) {
     const s = sources.get(b.url);
     if (s.epsg !== primary.epsg || s.pixelSize[0] !== primary.pixelSize[0] || s.pixelSize[1] !== primary.pixelSize[1]) {
-      throw new CnmwError(
+      throw new CngError(
         `Band "${b.name}" is on a different grid (EPSG:${s.epsg}, ${s.pixelSize.join('x')}) than "${bands[0].name}" ` +
           `(EPSG:${primary.epsg}, ${primary.pixelSize.join('x')}). Resampling is out of scope; pick bands of one resolution.`,
         'RASTER_GRID_MISMATCH',
@@ -291,7 +291,7 @@ export async function planRasterClip(descriptor, area, filter = {}, options = {}
       );
     }
     if (s.dtype !== primary.dtype) {
-      throw new CnmwError(
+      throw new CngError(
         `Band "${b.name}" is ${s.dtype} but "${bands[0].name}" is ${primary.dtype}; one GeoTIFF has one sample type.`,
         'RASTER_MIXED_DTYPE',
         { context: { band: b.name } },
@@ -302,7 +302,7 @@ export async function planRasterClip(descriptor, area, filter = {}, options = {}
   const level = chooseLevel(primary, bbox, filter.resolution);
   const win = windowForBbox(primary, level, bbox);
   if (win.width === 0 || win.height === 0) {
-    throw new CnmwError(
+    throw new CngError(
       'The area does not overlap this raster.',
       'RASTER_AREA_DISJOINT',
       { context: { areaBbox: bbox, rasterBbox: primary.bbox, epsg: primary.epsg } },

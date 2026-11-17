@@ -632,7 +632,7 @@ geo.columns.geometry.covering.bbox.xmin;             // ['bbox_xmin']
 download(dataset, area, filter,
   { spec: 'cnmw-output/1.0', format: 'geoparquet', options: { compression: 'zstd' } },
   { sink: memorySink() }).result;
-// rejects CnmwError { code: 'FORMAT_CAPABILITY' }
+// rejects CngError { code: 'FORMAT_CAPABILITY' }
 ```
 
 `hyparquet-compressors` is decompress-only; there is no pure-JS zstd
@@ -675,7 +675,7 @@ requirementsOf({ spatial: { mode: 'clip' } });                          // ['exa
 requirementsOf({ spatial: { mode: 'intersects' }, whereSql: { dialect: 'duckdb', fragment: 'x > 1' } });  // ['sql']
 
 await estimate(dataset, area, { ...filter, spatial: { mode: 'clip' } });
-// rejects CnmwError { code: 'FILTER_REQUIRES_ENGINE' }
+// rejects CngError { code: 'FILTER_REQUIRES_ENGINE' }
 ```
 
 ### Predicates and spatial tests, standalone
@@ -725,8 +725,8 @@ passed through unchecked.
 `capBounded`, `isEstimateWide`, `enumeratePartitions`,
 `partitionPruneCascade`, `pruneRowGroupsByBBox`, `pruneRowGroupsByTime`,
 `CDN`, `loadHyparquet`, `loadHyparquetWriter`, `setHyparquetModules`,
-`clearHyparquetModules`, `CnmwError`, `CancelledError`,
-`CeilingExceededError`, `isCnmwError`, `VERSION`.
+`clearHyparquetModules`, `CngError`, `CancelledError`,
+`CeilingExceededError`, `isCngError`, `VERSION`.
 
 `decodeWkbGeometry` is `@cng/spec`'s `wkbToGeoJson` extended with Point and
 MultiPoint (which FIRMS needs), and passing an already-decoded GeoJSON object
@@ -737,7 +737,7 @@ produces). Folding that back into `@cng/spec` is a known follow-up.
 
 ## Error codes
 
-Thrown as `CnmwError` with a stable `code`. **The code is the API; messages may
+Thrown as `CngError` with a stable `code`. **The code is the API; messages may
 be reworded.**
 
 | code | retryable | what the UI should say / do |
@@ -779,7 +779,7 @@ const handle = download(
   null, { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } },
   { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink() });
 
-await handle.result;   // rejects; isCnmwError(err) === true, err.code is NETWORK / HTTP_STATUS / DATASET_UNRESOLVED
+await handle.result;   // rejects; isCngError(err) === true, err.code is NETWORK / HTTP_STATUS / DATASET_UNRESOLVED
 handle.state;          // 'failed'
 ```
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildArea, validateArea, toAreaDocument, fromAreaDocument } from '../src/area.js';
-import { CnmwError } from '../src/errors.js';
+import { CngError } from '../src/errors.js';
 
 const contraCostaRing = [[-122.4267, 37.7177], [-121.5347, 37.7177], [-121.5347, 38.0994], [-122.4267, 38.0994], [-122.4267, 37.7177]];
 const contraCosta = { type: 'Polygon', coordinates: [contraCostaRing] };
@@ -31,14 +31,14 @@ test('buildArea produces a structurally valid Area for a single geocoder feature
 test('buildArea rejects non-polygon geometry', () => {
   assert.throws(
     () => buildArea({ name: 'bad', geometry: { type: 'LineString', coordinates: [[0, 0], [1, 1]] }, source: 'upload', features: [] }),
-    (err) => err instanceof CnmwError && err.code === 'AREA_UNSUPPORTED_GEOMETRY',
+    (err) => err instanceof CngError && err.code === 'AREA_UNSUPPORTED_GEOMETRY',
   );
 });
 
 test('validateArea rejects a non-EPSG:4326 crs', () => {
   const area = buildArea({ name: 'x', geometry: contraCosta, source: 'geocoder', features: [] });
   const bad = { ...area, crs: 'EPSG:3857' };
-  assert.throws(() => validateArea(bad), (err) => err instanceof CnmwError && err.code === 'AREA_INVALID_CRS');
+  assert.throws(() => validateArea(bad), (err) => err instanceof CngError && err.code === 'AREA_INVALID_CRS');
 });
 
 test('toAreaDocument / fromAreaDocument round-trip', () => {

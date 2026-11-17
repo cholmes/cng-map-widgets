@@ -4,7 +4,7 @@
 // row group looks like" without each reaching into raw hyparquet metadata
 // shapes.
 
-import { CnmwError, CancelledError } from '@cng/spec';
+import { CngError, CancelledError } from '@cng/spec';
 import { loadHyparquet } from './cdn.js';
 
 /**
@@ -67,7 +67,7 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
       requestInit: { cache: 'no-store', signal: opts.signal },
     });
   } catch (cause) {
-    throw cancellationOf(cause, opts.signal, `fetching ${url}`) ?? new CnmwError(`Couldn't fetch parquet file: ${url}`, 'NETWORK', { cause, context: { url } });
+    throw cancellationOf(cause, opts.signal, `fetching ${url}`) ?? new CngError(`Couldn't fetch parquet file: ${url}`, 'NETWORK', { cause, context: { url } });
   }
   let metadata;
   try {
@@ -99,7 +99,7 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
   } catch (cause) {
     throw (
       cancellationOf(cause, opts.signal, `reading the parquet footer of ${url}`) ??
-      new CnmwError(`Couldn't read parquet metadata: ${url}`, 'DATASET_UNRESOLVED', { cause, context: { url } })
+      new CngError(`Couldn't read parquet metadata: ${url}`, 'DATASET_UNRESOLVED', { cause, context: { url } })
     );
   }
   const rowGroups = decodeRowGroups(metadata);
@@ -180,7 +180,7 @@ export async function readRows(handle, range) {
   } catch (cause) {
     throw (
       cancellationOf(cause, handle.signal, 'reading parquet row data') ??
-      new CnmwError('Failed to read parquet row data.', 'DATASET_UNRESOLVED', { cause })
+      new CngError('Failed to read parquet row data.', 'DATASET_UNRESOLVED', { cause })
     );
   }
 }

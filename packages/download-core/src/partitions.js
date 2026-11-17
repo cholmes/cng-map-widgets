@@ -10,7 +10,7 @@
 // demo's datasets are single-file `parquet` sources); covered instead by a
 // synthetic-listing unit test.
 
-import { CnmwError, bboxesIntersect } from '@cng/spec';
+import { CngError, bboxesIntersect } from '@cng/spec';
 import { loadHyparquet } from './cdn.js';
 
 const STAC_ITEM_CONCURRENCY = 8;
@@ -57,7 +57,7 @@ export async function enumeratePartitions(source, options = {}) {
   if (!enumeration || enumeration.kind === 'declared') {
     const valueLists = keys.map((k) => {
       if (!k.values) {
-        throw new CnmwError(
+        throw new CngError(
           `Partition key "${k.name}" has no declared values and no other enumeration was given.`,
           'DATASET_UNRESOLVED',
           { context: { key: k.name } },
@@ -75,7 +75,7 @@ export async function enumeratePartitions(source, options = {}) {
 
   if (enumeration.kind === 'values') {
     const res = await fetchImpl(enumeration.url, { signal: options.signal });
-    if (!res.ok) throw new CnmwError(`Partition values fetch failed: HTTP ${res.status}`, 'DATASET_UNRESOLVED', { context: { status: res.status } });
+    if (!res.ok) throw new CngError(`Partition values fetch failed: HTTP ${res.status}`, 'DATASET_UNRESOLVED', { context: { status: res.status } });
     const tuples = await res.json();
     const parts = tuples.map((tuple) => {
       const values = Array.isArray(tuple) ? tuple : keys.map((k) => tuple[k.name]);
@@ -109,7 +109,7 @@ export async function enumeratePartitions(source, options = {}) {
     return enumerateBucketListing(enumeration.endpoint, enumeration.prefix, fetchImpl, options.signal);
   }
 
-  throw new CnmwError(`Unsupported partition enumeration kind: ${enumeration.kind}`, 'DATASET_UNRESOLVED');
+  throw new CngError(`Unsupported partition enumeration kind: ${enumeration.kind}`, 'DATASET_UNRESOLVED');
 }
 
 /**
@@ -293,7 +293,7 @@ function keysFromHiveUrl(url, keys) {
 
 async function enumerateStacItems(collectionUrl, keys, fetchImpl, signal) {
   const res = await fetchImpl(collectionUrl, { signal });
-  if (!res.ok) throw new CnmwError(`Collection fetch failed: HTTP ${res.status}`, 'DATASET_UNRESOLVED', { context: { status: res.status, url: collectionUrl } });
+  if (!res.ok) throw new CngError(`Collection fetch failed: HTTP ${res.status}`, 'DATASET_UNRESOLVED', { context: { status: res.status, url: collectionUrl } });
   const collection = await res.json();
   const itemLinks = (collection.links ?? []).filter((l) => l.rel === 'item').slice(0, STAC_ITEM_CAP);
   let requests = 1;
@@ -334,7 +334,7 @@ async function enumerateStacItems(collectionUrl, keys, fetchImpl, signal) {
 async function enumerateBucketListing(endpoint, prefix, fetchImpl, signal) {
   const url = `${endpoint}?list-type=2&prefix=${encodeURIComponent(prefix)}`;
   const res = await fetchImpl(url, { signal });
-  if (!res.ok) throw new CnmwError(`Bucket listing failed: HTTP ${res.status}`, 'DATASET_UNRESOLVED', { context: { status: res.status, url } });
+  if (!res.ok) throw new CngError(`Bucket listing failed: HTTP ${res.status}`, 'DATASET_UNRESOLVED', { context: { status: res.status, url } });
   const xml = await res.text();
   const keys = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
   return { parts: keys.map((key) => ({ url: new URL(key, endpoint).toString() })), requests: 1 };

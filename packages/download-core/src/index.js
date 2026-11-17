@@ -24,7 +24,7 @@ export { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 export { boundedExact, boundedRange, addBounded, sumBounded, scaleBounded, capBounded, isEstimateWide } from './bounded.js';
 export { enumeratePartitions, partitionPruneCascade, resolveMirrorPartUrl } from './partitions.js';
 export { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, predicateExcludesRowGroup, avgColumnBytesPerRow, STATS_PRUNABLE_OPS } from './prune.js';
-export { CnmwError, CancelledError, CeilingExceededError, isCnmwError } from '@cng/spec';
+export { CngError, CancelledError, CeilingExceededError, isCngError } from '@cng/spec';
 
 import { registerFormat, registerEngine, getFormat, getEngine } from './registry.js';
 import { createGeoJsonFormat } from './formats/geojson.js';

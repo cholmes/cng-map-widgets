@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { areaFromGeoJson, areaFromFile, registerReader } from '../src/upload.js';
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 
 const triangle = (dx = 0, dy = 0) => ({
   type: 'Polygon',
@@ -55,7 +55,7 @@ test('areaFromGeoJson: unionMode "dissolve" without a dissolver throws', async (
       { type: 'Feature', properties: {}, geometry: triangle(10, 10) },
     ],
   };
-  await assert.rejects(() => areaFromGeoJson(fc, { name: 'x' }, { unionMode: 'dissolve' }), (err) => err instanceof CnmwError);
+  await assert.rejects(() => areaFromGeoJson(fc, { name: 'x' }, { unionMode: 'dissolve' }), (err) => err instanceof CngError);
 });
 
 test('areaFromGeoJson: unionMode "dissolve" calls the supplied dissolver', async () => {
@@ -85,13 +85,13 @@ test('areaFromGeoJson: repairs surface as a warning and in provenance.upload.rep
 
 test('areaFromGeoJson: a file with only points/lines throws AREA_UNSUPPORTED_GEOMETRY', async () => {
   const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [0, 0] } }] };
-  await assert.rejects(() => areaFromGeoJson(fc, { name: 'pts.geojson' }), (err) => err instanceof CnmwError && err.code === 'AREA_UNSUPPORTED_GEOMETRY');
+  await assert.rejects(() => areaFromGeoJson(fc, { name: 'pts.geojson' }), (err) => err instanceof CngError && err.code === 'AREA_UNSUPPORTED_GEOMETRY');
 });
 
 test('areaFromGeoJson: an empty FeatureCollection throws AREA_EMPTY', async () => {
   await assert.rejects(
     () => areaFromGeoJson({ type: 'FeatureCollection', features: [] }, { name: 'empty.geojson' }),
-    (err) => err instanceof CnmwError && err.code === 'AREA_EMPTY',
+    (err) => err instanceof CngError && err.code === 'AREA_EMPTY',
   );
 });
 
@@ -101,7 +101,7 @@ test('areaFromGeoJson: a foreign declared CRS is rejected by default', async () 
     crs: { type: 'name', properties: { name: 'urn:ogc:def:crs:EPSG::3857' } },
     features: [{ type: 'Feature', properties: {}, geometry: triangle() }],
   };
-  await assert.rejects(() => areaFromGeoJson(fc, { name: 'x' }), (err) => err instanceof CnmwError && err.code === 'AREA_INVALID_CRS');
+  await assert.rejects(() => areaFromGeoJson(fc, { name: 'x' }), (err) => err instanceof CngError && err.code === 'AREA_INVALID_CRS');
 });
 
 test('areaFromGeoJson: onForeignCrs "assume-4326" proceeds and warns', async () => {
@@ -134,7 +134,7 @@ test('areaFromGeoJson: maxFeatures is enforced', async () => {
   };
   await assert.rejects(
     () => areaFromGeoJson(fc, { name: 'x' }, { maxFeatures: 2 }),
-    (err) => err instanceof CnmwError && err.code === 'UPLOAD_TOO_LARGE',
+    (err) => err instanceof CngError && err.code === 'UPLOAD_TOO_LARGE',
   );
 });
 
@@ -151,13 +151,13 @@ test('areaFromFile: enforces maxBytes before even dispatching to a reader', asyn
   const file = new File(['x'.repeat(1000)], 'big.geojson', { type: 'application/geo+json' });
   await assert.rejects(
     () => areaFromFile(file, { maxBytes: 10 }),
-    (err) => err instanceof CnmwError && err.code === 'UPLOAD_TOO_LARGE',
+    (err) => err instanceof CngError && err.code === 'UPLOAD_TOO_LARGE',
   );
 });
 
 test('areaFromFile: an unrecognized extension/media type throws UPLOAD_UNSUPPORTED_FORMAT', async () => {
   const file = new File(['not geo data'], 'data.shp', { type: 'application/octet-stream' });
-  await assert.rejects(() => areaFromFile(file), (err) => err instanceof CnmwError && err.code === 'UPLOAD_UNSUPPORTED_FORMAT');
+  await assert.rejects(() => areaFromFile(file), (err) => err instanceof CngError && err.code === 'UPLOAD_UNSUPPORTED_FORMAT');
 });
 
 test('registerReader: a custom reader is dispatched to by its declared extension', async () => {

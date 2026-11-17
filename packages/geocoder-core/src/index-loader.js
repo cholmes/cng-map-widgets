@@ -6,7 +6,7 @@
 // range-request path (footer-only, then range-read matching row groups).
 // `auto` picks between them per design doc §3.2 / §6.3 item 8.
 
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 import { loadHyparquet } from './cdn.js';
 
 const REQUIRED_COLUMNS = ['name', 'name_norm', 'level', 'country', 'feature_id', 'source', 'bbox'];
@@ -49,16 +49,16 @@ export async function loadManifest(url, fetchImpl) {
   try {
     res = await fetchImpl(url);
   } catch (cause) {
-    throw new CnmwError(`Couldn't load the place index manifest at ${url}.`, 'INDEX_FETCH_FAILED', { cause });
+    throw new CngError(`Couldn't load the place index manifest at ${url}.`, 'INDEX_FETCH_FAILED', { cause });
   }
   if (!res.ok) {
-    throw new CnmwError(`Index manifest fetch failed: HTTP ${res.status}`, 'INDEX_FETCH_FAILED', {
+    throw new CngError(`Index manifest fetch failed: HTTP ${res.status}`, 'INDEX_FETCH_FAILED', {
       context: { status: res.status, url },
     });
   }
   const manifest = await res.json();
   if (manifest.spec !== 'cnmw-index/1.0') {
-    throw new CnmwError('Index manifest has an unrecognized spec version.', 'INDEX_SCHEMA_MISMATCH', {
+    throw new CngError('Index manifest has an unrecognized spec version.', 'INDEX_SCHEMA_MISMATCH', {
       context: { spec: manifest.spec },
     });
   }
@@ -113,7 +113,7 @@ function assertSchema(firstRow, { featureIdColumn, defaultSource } = {}) {
   for (const col of REQUIRED_COLUMNS) {
     if (col === 'feature_id') {
       if (!(idColumn in firstRow)) {
-        throw new CnmwError(`Index parquet is missing required column "${idColumn}" (declared as the feature-id column).`, 'INDEX_SCHEMA_MISMATCH', {
+        throw new CngError(`Index parquet is missing required column "${idColumn}" (declared as the feature-id column).`, 'INDEX_SCHEMA_MISMATCH', {
           context: { column: idColumn },
         });
       }
@@ -121,14 +121,14 @@ function assertSchema(firstRow, { featureIdColumn, defaultSource } = {}) {
     }
     if (col === 'source' && !sourceColumnPresent) {
       if (defaultSource === undefined) {
-        throw new CnmwError('Index parquet has no "source" column, and the manifest has no top-level "source" to default it from.', 'INDEX_SCHEMA_MISMATCH', {
+        throw new CngError('Index parquet has no "source" column, and the manifest has no top-level "source" to default it from.', 'INDEX_SCHEMA_MISMATCH', {
           context: { column: 'source' },
         });
       }
       continue; // synthesized from the manifest's `source` field instead
     }
     if (!(col in firstRow)) {
-      throw new CnmwError(`Index parquet is missing required column "${col}".`, 'INDEX_SCHEMA_MISMATCH', {
+      throw new CngError(`Index parquet is missing required column "${col}".`, 'INDEX_SCHEMA_MISMATCH', {
         context: { column: col },
       });
     }
@@ -149,7 +149,7 @@ export async function loadFullIndex(parquetUrl, fetchImpl, options = {}) {
   const t0 = performance.now();
   const res = await fetchImpl(parquetUrl);
   if (!res.ok) {
-    throw new CnmwError(`Index parquet fetch failed: HTTP ${res.status}`, 'INDEX_FETCH_FAILED', {
+    throw new CngError(`Index parquet fetch failed: HTTP ${res.status}`, 'INDEX_FETCH_FAILED', {
       context: { status: res.status, url: parquetUrl },
     });
   }
@@ -158,7 +158,7 @@ export async function loadFullIndex(parquetUrl, fetchImpl, options = {}) {
   try {
     rows = await hyparquet.parquetReadObjects({ file: buf, compressors });
   } catch (cause) {
-    throw new CnmwError('Failed to decode index parquet.', 'INDEX_SCHEMA_MISMATCH', { cause });
+    throw new CngError('Failed to decode index parquet.', 'INDEX_SCHEMA_MISMATCH', { cause });
   }
   if (rows.length > 0) {
     assertSchema(rows[0], { featureIdColumn, defaultSource });
@@ -168,7 +168,7 @@ export async function loadFullIndex(parquetUrl, fetchImpl, options = {}) {
   // Builder guarantee check (design doc §6.3 item 1): ascending, byte-wise.
   for (let i = 1; i < nameNorms.length; i++) {
     if (nameNorms[i - 1] > nameNorms[i]) {
-      throw new CnmwError('Index parquet is not sorted ascending by name_norm.', 'INDEX_SCHEMA_MISMATCH', {
+      throw new CngError('Index parquet is not sorted ascending by name_norm.', 'INDEX_SCHEMA_MISMATCH', {
         context: { atRow: i },
       });
     }
@@ -236,7 +236,7 @@ export async function openRangeIndex(parquetUrl, fetchImpl, initialFetchSize = 6
     rowStart += numRows;
   }
   if (groups.length === 0) {
-    throw new CnmwError('Index parquet has no row groups.', 'INDEX_SCHEMA_MISMATCH');
+    throw new CngError('Index parquet has no row groups.', 'INDEX_SCHEMA_MISMATCH');
   }
   const loadMs = performance.now() - t0;
   return {

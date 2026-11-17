@@ -16,7 +16,7 @@ import {
   formatLoadState,
   onFormatState,
 } from '../src/registry.js';
-import { isCnmwError } from '@cng/spec';
+import { isCngError } from '@cng/spec';
 
 function uniqueId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2)}`;
@@ -130,7 +130,7 @@ test('resolveFormat: a failing load() throws FORMAT_LOAD_FAILED, not the raw err
   });
 
   await assert.rejects(resolveFormat(id), (err) => {
-    assert.ok(isCnmwError(err));
+    assert.ok(isCngError(err));
     assert.equal(err.code, 'FORMAT_LOAD_FAILED');
     assert.match(err.message, /network says no/);
     assert.equal(err.context.format, id);

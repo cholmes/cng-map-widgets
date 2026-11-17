@@ -65,8 +65,8 @@ export function createFlatGeobufFormat(flatgeobufGeojson) {
     estimateBytes: estimateFlatGeobufBytes,
     async open(ctx) {
       if (ctx.crs !== 'EPSG:4326' && ctx.crs !== 'OGC:CRS84' && ctx.crs) {
-        const { CnmwError } = await import('@cng/spec');
-        throw new CnmwError(
+        const { CngError } = await import('@cng/spec');
+        throw new CngError(
           `@cng/format-flatgeobuf writes EPSG:4326 only; got crs "${ctx.crs}".`,
           'FORMAT_CAPABILITY',
           { context: { crs: ctx.crs } },

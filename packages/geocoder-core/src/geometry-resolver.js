@@ -41,7 +41,7 @@
 // geometry, falling back to the stats-pruning scan (now with bounded
 // concurrency, see `firstMatch`) on any mismatch.
 
-import { CnmwError, wkbToGeoJson, wkbToGeoJsonAsync } from '@cng/spec';
+import { CngError, wkbToGeoJson, wkbToGeoJsonAsync } from '@cng/spec';
 import { loadHyparquet } from './cdn.js';
 
 /** How many candidate row groups the stats-pruning fallback reads at once
@@ -385,7 +385,7 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
   if (expectedCatalogVersion && catalogVersion && catalogVersion !== expectedCatalogVersion) {
     const message = `Boundary file catalog_version (${catalogVersion}) does not match the index's (${expectedCatalogVersion}).`;
     if (onVersionSkew === 'error') {
-      throw new CnmwError(message, 'INDEX_VERSION_MISMATCH', {
+      throw new CngError(message, 'INDEX_VERSION_MISMATCH', {
         context: { indexCatalogVersion: expectedCatalogVersion, boundaryCatalogVersion: catalogVersion },
       });
     }
@@ -496,7 +496,7 @@ export async function resolveGeometry(result, boundaryUrl, expectedCatalogVersio
     return fetchMatchedGeometry({ hyparquet, compressors, file, metadata, absoluteRow: winner.absoluteRow, match: winner.match, boundaryUrl, options });
   }
 
-  throw new CnmwError(`Feature "${joinValue}" not found in boundary file (joined on "${joinColumn}").`, 'GEOMETRY_NOT_FOUND', {
+  throw new CngError(`Feature "${joinValue}" not found in boundary file (joined on "${joinColumn}").`, 'GEOMETRY_NOT_FOUND', {
     context: { featureId: result.featureId, joinColumn, joinValue, boundaryUrl },
   });
 }

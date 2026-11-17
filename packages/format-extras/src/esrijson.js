@@ -90,8 +90,8 @@ export function createEsriJsonFormat() {
     estimateBytes: estimateEsriJsonBytes,
     async open(ctx) {
       if (ctx.crs !== 'EPSG:4326' && ctx.crs !== 'OGC:CRS84' && ctx.crs) {
-        const { CnmwError } = await import('@cng/spec');
-        throw new CnmwError(`@cng/format-extras's esrijson writer only writes EPSG:4326; got crs "${ctx.crs}".`, 'FORMAT_CAPABILITY', { context: { crs: ctx.crs } });
+        const { CngError } = await import('@cng/spec');
+        throw new CngError(`@cng/format-extras's esrijson writer only writes EPSG:4326; got crs "${ctx.crs}".`, 'FORMAT_CAPABILITY', { context: { crs: ctx.crs } });
       }
       const attrColumns = ctx.schema.filter((c) => c.name !== ctx.geometryColumn);
       const features = [];
@@ -107,8 +107,8 @@ export function createEsriJsonFormat() {
               const esriType = ESRI_GEOMETRY_TYPE[geom.type];
               if (geometryType === null) geometryType = esriType;
               else if (esriType !== geometryType) {
-                const { CnmwError } = await import('@cng/spec');
-                throw new CnmwError(
+                const { CngError } = await import('@cng/spec');
+                throw new CngError(
                   `@cng/format-extras's esrijson writer: an Esri FeatureSet has one geometryType for the whole set; this result mixes ${geometryType} with ${esriType}.`,
                   'FORMAT_CAPABILITY',
                   { context: { first: geometryType, conflicting: esriType } },

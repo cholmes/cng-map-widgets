@@ -114,8 +114,8 @@ async function groupSpec() {
     simplifyToVertexCeilingAsync,
     vertexCount,
     wkbToGeoJson,
-    CnmwError,
-    isCnmwError,
+    CngError,
+    isCngError,
     VERSION,
   } = await import('@cng/spec');
 
@@ -263,17 +263,17 @@ async function groupSpec() {
   });
 
   await snippet('spec/README', 'the error taxonomy', async () => {
-    const err = new CnmwError('Only EPSG:4326 (lon/lat) data is supported.', 'AREA_INVALID_CRS', {
+    const err = new CngError('Only EPSG:4326 (lon/lat) data is supported.', 'AREA_INVALID_CRS', {
       context: { crs: 'EPSG:3857' },
     });
     assert.equal(err.code, 'AREA_INVALID_CRS');
     assert.equal(err.retryable, false);
     assert.equal(err.context.crs, 'EPSG:3857');
-    assert.equal(isCnmwError(err), true);
+    assert.equal(isCngError(err), true);
     assert.equal(err instanceof Error, true);
 
     // Network-shaped codes default to retryable.
-    assert.equal(new CnmwError('x', 'INDEX_FETCH_FAILED').retryable, true);
+    assert.equal(new CngError('x', 'INDEX_FETCH_FAILED').retryable, true);
 
     // Points/lines are rejected structurally, not silently dropped.
     assert.throws(
@@ -681,7 +681,7 @@ async function groupDownload() {
     evaluatePredicate,
     getPath,
     rowMatchesArea,
-    isCnmwError,
+    isCngError,
     VERSION,
   } = await import('@cng/download-core');
   const { toAreaDocument } = await import('@cng/spec');
@@ -977,7 +977,7 @@ async function groupDownload() {
       { sink: memorySink() },
     );
     await assert.rejects(handle.result, (err) => {
-      assert.equal(isCnmwError(err), true);
+      assert.equal(isCngError(err), true);
       assert.ok(['NETWORK', 'HTTP_STATUS', 'DATASET_UNRESOLVED'].includes(err.code), `code ${err.code}`);
       return true;
     });

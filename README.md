@@ -271,7 +271,7 @@ Three ideas carry the design:
 
 | package | what it does | size (gz, comments stripped) |
 |---|---|---|
-| [`@cng/spec`](packages/spec/README.md) | The `Area` contract, the `CnmwError` taxonomy, and pure helpers: bbox + antimeridian split, Visvalingam simplify (sync + chunked async), WKB → GeoJSON, name normalization. **No I/O, no dependencies.** | 6.2 KiB |
+| [`@cng/spec`](packages/spec/README.md) | The `Area` contract, the `CngError` taxonomy, and pure helpers: bbox + antimeridian split, Visvalingam simplify (sync + chunked async), WKB → GeoJSON, name normalization. **No I/O, no dependencies.** | 6.2 KiB |
 | [`@cng/geocoder-core`](packages/geocoder-core/README.md) | Manifest + index load (full or HTTP-range), prefix search, ranking with result diversity, geometry resolution → `Area`. No DOM. | 11.0 KiB |
 | [`@cng/upload-core`](packages/upload-core/README.md) | GeoJSON file/drop/paste → the same `Area`, with every repair reported. | 4.3 KiB |
 | [`@cng/download-core`](packages/download-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 19.8 KiB |

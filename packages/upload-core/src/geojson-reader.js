@@ -3,7 +3,7 @@
 // to add shapefile-js / gdal3.js / etc. readers without upload-core
 // depending on them).
 
-import { CnmwError } from '@cng/spec';
+import { CngError } from '@cng/spec';
 import { extractRawFeatures, detectDeclaredCrs } from './geojson-parse.js';
 
 /** @type {import('./types.js').GeometryReader} */
@@ -18,7 +18,7 @@ export const geoJsonReader = {
     try {
       text = await file.text();
     } catch (cause) {
-      throw new CnmwError(`Couldn't read "${file.name}".`, 'UPLOAD_PARSE_ERROR', { cause, context: { filename: file.name } });
+      throw new CngError(`Couldn't read "${file.name}".`, 'UPLOAD_PARSE_ERROR', { cause, context: { filename: file.name } });
     }
     signal?.throwIfAborted();
 
@@ -26,7 +26,7 @@ export const geoJsonReader = {
     try {
       json = JSON.parse(text);
     } catch (cause) {
-      throw new CnmwError(`"${file.name}" is not valid JSON.`, 'UPLOAD_PARSE_ERROR', { cause, context: { filename: file.name } });
+      throw new CngError(`"${file.name}" is not valid JSON.`, 'UPLOAD_PARSE_ERROR', { cause, context: { filename: file.name } });
     }
 
     return { features: extractRawFeatures(json), declaredCrs: detectDeclaredCrs(json) };

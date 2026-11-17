@@ -2,7 +2,7 @@
 
 import { computeBBoxes } from './bbox.js';
 import { simplifyToVertexCeiling } from './simplify.js';
-import { CnmwError } from './errors.js';
+import { CngError } from './errors.js';
 
 /** @typedef {import('./bbox.js').BBox} BBox */
 /** @typedef {GeoJSON.Polygon|GeoJSON.MultiPolygon} AreaGeometry */
@@ -86,7 +86,7 @@ export function buildArea(input) {
   } = input;
 
   if (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon') {
-    throw new CnmwError('An Area needs polygon geometry.', 'AREA_UNSUPPORTED_GEOMETRY', {
+    throw new CngError('An Area needs polygon geometry.', 'AREA_UNSUPPORTED_GEOMETRY', {
       context: { type: geometry.type },
     });
   }
@@ -155,29 +155,29 @@ export function buildArea(input) {
 /**
  * Validate the shape of an `Area` object (not a JSON Schema, but the same
  * checks: required fields, polygon-only geometry, EPSG:4326, consistent
- * bboxes). Throws `CnmwError` on the first violation found.
+ * bboxes). Throws `CngError` on the first violation found.
  * @param {unknown} area
  * @returns {import('./types.js').Area}
  */
 export function validateArea(area) {
   if (typeof area !== 'object' || area === null) {
-    throw new CnmwError('Area must be an object.', 'AREA_INVALID_CRS');
+    throw new CngError('Area must be an object.', 'AREA_INVALID_CRS');
   }
   const a = /** @type {Record<string, unknown>} */ (area);
   if (a.type !== 'Area') {
-    throw new CnmwError('Area.type must be the literal "Area".', 'AREA_EMPTY');
+    throw new CngError('Area.type must be the literal "Area".', 'AREA_EMPTY');
   }
   if (a.crs !== 'EPSG:4326') {
-    throw new CnmwError('Only EPSG:4326 (lon/lat) data is supported.', 'AREA_INVALID_CRS', {
+    throw new CngError('Only EPSG:4326 (lon/lat) data is supported.', 'AREA_INVALID_CRS', {
       context: { crs: a.crs },
     });
   }
   const geometry = /** @type {AreaGeometry|undefined} */ (a.geometry);
   if (!geometry || (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon')) {
-    throw new CnmwError('This file has points/lines; an area needs polygons.', 'AREA_UNSUPPORTED_GEOMETRY');
+    throw new CngError('This file has points/lines; an area needs polygons.', 'AREA_UNSUPPORTED_GEOMETRY');
   }
   if (!Array.isArray(a.bboxes) || a.bboxes.length < 1) {
-    throw new CnmwError('Area.bboxes must have at least one entry.', 'AREA_EMPTY');
+    throw new CngError('Area.bboxes must have at least one entry.', 'AREA_EMPTY');
   }
   return /** @type {import('./types.js').Area} */ (area);
 }

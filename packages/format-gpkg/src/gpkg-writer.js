@@ -120,8 +120,8 @@ export function createGpkgFormat(SQL) {
       const layerName = ctx.options?.layerName || 'features';
       const srsId = (ctx.crs === 'EPSG:4326' || ctx.crs === 'OGC:CRS84' || !ctx.crs) ? 4326 : null;
       if (srsId === null) {
-        const { CnmwError } = await import('@cng/spec');
-        throw new CnmwError(
+        const { CngError } = await import('@cng/spec');
+        throw new CngError(
           `@cng/format-gpkg only writes EPSG:4326/OGC:CRS84 geometry (GeoPackage's gpkg_spatial_ref_sys is written with that single row); got crs "${ctx.crs}".`,
           'FORMAT_CAPABILITY',
           { context: { crs: ctx.crs } },

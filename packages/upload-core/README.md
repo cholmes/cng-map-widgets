@@ -132,7 +132,7 @@ Wires `dragover`, `drop` and `paste` on `el`. A dropped or pasted *file* goes
 through `areaFromFile`; pasted *text* that parses as JSON goes through
 `areaFromGeoJson` with `name: 'Pasted GeoJSON'`. Pasted text that is not JSON
 is ignored silently — this is a passive listener on an element that may also
-be a normal text target. `options.onError` receives every `CnmwError`;
+be a normal text target. `options.onError` receives every `CngError`;
 without it, failures are swallowed.
 
 ### `registerReader(reader) => void`
@@ -172,7 +172,7 @@ const { area } = await areaFromFile(new File(['POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0
 area.vertexCount.display;   // 5
 
 await areaFromFile(new File(['x'], 'thing.shp', { type: '' }));
-// CnmwError { code: 'UPLOAD_UNSUPPORTED_FORMAT' }
+// CngError { code: 'UPLOAD_UNSUPPORTED_FORMAT' }
 ```
 
 ### `repairFeatures(rawFeatures) => { features, repairs }`
@@ -305,7 +305,7 @@ const projected = {
 };
 
 await areaFromGeoJson(projected, { name: 'm.geojson' });
-// CnmwError { code: 'AREA_INVALID_CRS' }
+// CngError { code: 'AREA_INVALID_CRS' }
 
 // ...unless you opt in, which records the assumption rather than hiding it:
 const { area, warnings } = await areaFromGeoJson(projected, { name: 'm.geojson' }, { onForeignCrs: 'assume-4326' });

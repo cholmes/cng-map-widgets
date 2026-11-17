@@ -1,7 +1,7 @@
 // @cng/geocoder-core -- the Geocoder class (design doc §3.2, §6).
 
 import {
-  CnmwError,
+  CngError,
   normalizeName,
   buildArea,
   simplifyToVertexCeilingAsync,
@@ -195,13 +195,13 @@ function resolveIndexUrl(indexUrl) {
   if (Array.isArray(indexUrl)) {
     const urls = indexUrl.filter((u) => typeof u === 'string');
     if (urls.length === 1) return urls[0];
-    throw new CnmwError(
+    throw new CngError(
       `Multi-source search is not implemented: \`indexUrl\` was given ${urls.length} URLs. Construct one Geocoder per index instead.`,
       'INDEX_MULTI_SOURCE_UNSUPPORTED',
       { context: { indexUrl } },
     );
   }
-  throw new CnmwError(
+  throw new CngError(
     `\`indexUrl\` must be a string (the manifest URL); got ${typeof indexUrl}.`,
     'INDEX_MULTI_SOURCE_UNSUPPORTED',
     { context: { indexUrl } },
@@ -955,7 +955,7 @@ export class Geocoder {
    */
   searchSync(prefix, options = {}) {
     if (this._state !== 'ready' || !this._full) {
-      throw new CnmwError(
+      throw new CngError(
         'searchSync requires a fully-loaded index; call load() (or use search()) first.',
         'GEOCODER_NOT_LOADED',
       );
@@ -1189,7 +1189,7 @@ export class Geocoder {
     const manifest = this._manifest;
     const entry = manifest.boundaries?.find((b) => b.level === result.level);
     if (!entry) {
-      throw new CnmwError(`No boundary file declared for level ${result.level}.`, 'GEOMETRY_NOT_FOUND', {
+      throw new CngError(`No boundary file declared for level ${result.level}.`, 'GEOMETRY_NOT_FOUND', {
         context: { level: result.level },
       });
     }

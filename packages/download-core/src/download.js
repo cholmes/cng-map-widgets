@@ -3,7 +3,7 @@
 // could not be cancelled during planning, which is exactly when a user
 // changes their mind."
 
-import { CnmwError, CancelledError, CeilingExceededError, fromAreaDocument } from '@cng/spec';
+import { CngError, CancelledError, CeilingExceededError, fromAreaDocument } from '@cng/spec';
 import { Emitter, LatestWinsStream } from './events.js';
 import { planRequest, finalizeEstimate } from './estimate.js';
 import { createHyparquetEngine } from './engine-hyparquet.js';
@@ -112,7 +112,7 @@ export function download(dataset, area, filter, output, options = {}) {
       let format = getFormat(output.format) ?? builtinFormat(output.format);
       if (!format) {
         if (formatLoadState(output.format) === 'unknown') {
-          throw new CnmwError(`No format plugin registered for "${output.format}".`, 'FORMAT_UNAVAILABLE', {
+          throw new CngError(`No format plugin registered for "${output.format}".`, 'FORMAT_UNAVAILABLE', {
             context: { format: output.format },
           });
         }
@@ -267,7 +267,7 @@ export function download(dataset, area, filter, output, options = {}) {
       emitter.emit('done', result);
       current.resolve(result);
     } catch (err) {
-      const cnmwErr = err instanceof CnmwError ? err : new CnmwError(err?.message ?? String(err), 'INTERNAL', { cause: err });
+      const cnmwErr = err instanceof CngError ? err : new CngError(err?.message ?? String(err), 'INTERNAL', { cause: err });
       if (cnmwErr.code === 'CANCELLED') {
         setState('cancelled');
       } else {
