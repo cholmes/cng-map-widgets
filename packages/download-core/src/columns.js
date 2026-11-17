@@ -1,4 +1,4 @@
-// @cnmw/download-core -- column projection (design doc §2.2 ColumnProjection).
+// @cng/download-core -- column projection (design doc §2.2 ColumnProjection).
 
 import { columnsUsedByWhere } from './predicate.js';
 
@@ -93,7 +93,7 @@ export function resolveReadColumns(outputColumns, filter, timeColumn, bboxColumn
  * - `mode: 'intersects'` with no `filterGeometry` (degraded-to-bbox,
  *   `rowMatchesArea` falls back to the bbox-only answer): no.
  *
- * @param {import('@cnmw/spec').Area|null} area
+ * @param {import('@cng/spec').Area|null} area
  * @param {import('./types.js').BboxCovering|undefined} covering
  * @param {import('./types.js').SpatialFilter|undefined} spatial
  * @returns {boolean}

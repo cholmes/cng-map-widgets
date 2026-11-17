@@ -1,4 +1,4 @@
-// @cnmw/maplibre -- GeocoderControl (design doc §5.1, §5.2).
+// @cng/maplibre -- GeocoderControl (design doc §5.1, §5.2).
 //
 // An accessible combobox (ARIA 1.2 combobox-with-listbox pattern):
 // <input role="combobox" aria-expanded aria-controls aria-activedescendant>
@@ -14,7 +14,7 @@
 // results, simplify geometry, or construct an Area by hand -- all of
 // that stays inside the `Geocoder` instance it holds.
 
-import { normalizeName } from '@cnmw/spec';
+import { normalizeName } from '@cng/spec';
 import { addAreaLayer } from './area-layer.js';
 import { viewportProvider } from './viewport.js';
 import {
@@ -576,7 +576,7 @@ export class GeocoderControl {
   }
 
   /**
-   * @param {import('@cnmw/geocoder-core').SearchResult[]} results
+   * @param {import('@cng/geocoder-core').SearchResult[]} results
    * @param {{ merge?: boolean }} [opts] merge: true is the two-wave path:
    *   preserve aria-activedescendant's target by featureId (not index --
    *   the final wave can reorder), never reset _activeIndex just because
@@ -734,7 +734,7 @@ export class GeocoderControl {
     }
   }
 
-  /** @param {import('@cnmw/spec').Area|null} area */
+  /** @param {import('@cng/spec').Area|null} area */
   setArea(area) {
     this._area = area;
     this._outline?.setArea(area);

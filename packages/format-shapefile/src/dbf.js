@@ -1,4 +1,4 @@
-// @cnmw/format-shapefile -- dBase III (.dbf) attribute-table writer.
+// @cng/format-shapefile -- dBase III (.dbf) attribute-table writer.
 // Zero dependencies: this is ~150 lines of fixed-width binary layout, not
 // worth a package. Surfaces Shapefile's real limits as warnings (design
 // doc's error-taxonomy requirement) instead of mangling data silently:

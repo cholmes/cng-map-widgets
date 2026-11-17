@@ -1,4 +1,4 @@
-# @cnmw/maplibre
+# @cng/maplibre
 
 The MapLibre GL half of the widgets: an accessible search box, an outline
 layer, a viewport provider, an antimeridian-aware camera, a rectangle/
@@ -12,7 +12,7 @@ map.on('load', () => map.addControl(control, 'top-left'));
 **What this adapter deliberately does not do** (design doc §5.1): fetch an
 index, rank results, simplify geometry, construct an `Area` from raw
 coordinates, or hold dataset/filter state. All of that lives in
-`@cnmw/geocoder-core` and `@cnmw/spec`, so it cannot drift between the MapLibre
+`@cng/geocoder-core` and `@cng/spec`, so it cannot drift between the MapLibre
 and OpenLayers adapters. This file is DOM and event wiring.
 
 - **Status:** experimental, pre-npm. See the [root README](../../README.md).
@@ -30,15 +30,15 @@ and OpenLayers adapters. This file is DOM and event wiring.
 <script type="importmap">
 {
   "imports": {
-    "@cnmw/spec": "/packages/spec/src/index.js",
-    "@cnmw/geocoder-core": "/packages/geocoder-core/src/index.js",
-    "@cnmw/maplibre": "/packages/maplibre/src/index.js"
+    "@cng/spec": "/packages/spec/src/index.js",
+    "@cng/geocoder-core": "/packages/geocoder-core/src/index.js",
+    "@cng/maplibre": "/packages/maplibre/src/index.js"
   }
 }
 </script>
 <script type="module">
-  import { Geocoder } from '@cnmw/geocoder-core';
-  import { GeocoderControl, addAreaLayer } from '@cnmw/maplibre';
+  import { Geocoder } from '@cng/geocoder-core';
+  import { GeocoderControl, addAreaLayer } from '@cng/maplibre';
 </script>
 ```
 
@@ -47,13 +47,13 @@ The control's CSS is **inlined as a string** and injected once into
 build step to configure, and nothing to break a zero-build page. Override by
 targeting `.cnmw-geocoder` and its children.
 
-**Coming:** `npm i @cnmw/maplibre`.
+**Coming:** `npm i @cng/maplibre`.
 
 ## Size
 
 | | files | raw | gzip | gzip, comments stripped | design-doc budget (§4.5) |
 |---|---|---|---|---|---|
-| `@cnmw/maplibre` src | 5 | 18.9 KiB | 5.9 KiB | **4.3 KiB** | ≤ 8 KB min+gz |
+| `@cng/maplibre` src | 5 | 18.9 KiB | 5.9 KiB | **4.3 KiB** | ≤ 8 KB min+gz |
 
 (Table above predates `draw-tool.js`/`edit-tool.js`, added 2026-11-13; not
 remeasured here — see the design doc amendment in §5.2 for what they add and
@@ -71,8 +71,8 @@ Complete, runnable, and verified:
 [`examples/quickstart/index.html`](../../examples/quickstart/index.html).
 
 ```js
-import { Geocoder } from '@cnmw/geocoder-core';
-import { GeocoderControl } from '@cnmw/maplibre';
+import { Geocoder } from '@cng/geocoder-core';
+import { GeocoderControl } from '@cng/maplibre';
 
 const map = new maplibregl.Map({
   container: 'map',
@@ -94,7 +94,7 @@ const control = new GeocoderControl({ geocoder, placeholder: 'Search for a place
 map.on('load', () => map.addControl(control, 'top-left'));
 
 control.on('select', ({ result, area }) => {
-  // `area` is ready for @cnmw/download-core. The outline is already drawn
+  // `area` is ready for @cng/download-core. The outline is already drawn
   // and the camera already moved.
 });
 ```
@@ -215,7 +215,7 @@ Renders an `Area` as a fill + a line, and — when `filterGeometry` differs from
 their filter was simplified.
 
 ```js
-import { addAreaLayer } from '@cnmw/maplibre';
+import { addAreaLayer } from '@cng/maplibre';
 
 const outline = addAreaLayer(map, { lineColor: '#e8710a', fillOpacity: 0.12 });
 outline.setArea(area);
@@ -248,7 +248,7 @@ map.getSource('cnmw-area-display')._data.features[0].geometry.type;   // 'Polygo
 ### `viewportProvider(map) => () => BBox`
 
 ```js
-import { viewportProvider } from '@cnmw/maplibre';
+import { viewportProvider } from '@cng/maplibre';
 
 const getViewport = viewportProvider(map);
 const results = await geocoder.search(query, { viewport: getViewport() });
@@ -274,7 +274,7 @@ fitAreaBounds(map, area.bboxes, { padding: 40, maxZoom: 12 });
 ### `createDrawTool(map, options?) => DrawToolHandle`
 
 ```js
-import { createDrawTool } from '@cnmw/maplibre';
+import { createDrawTool } from '@cng/maplibre';
 
 const drawTool = createDrawTool(map, { tools: ['rectangle', 'polygon', 'viewport'] });
 drawTool.on('area', ({ area }) => { /* an Area with provenance.source === 'draw' */ });
@@ -297,13 +297,13 @@ corners placed so far, and `handle.tool` is the armed tool.
 `options.names` overrides the emitted Area's display name — `{ drawn }` for
 the rectangle and the polygon, `{ viewport }` for the viewport tool — which a
 host that has to translate those strings will want. Every emitted `Area` goes
-through `@cnmw/spec`'s `buildArea`, same as every other Area this adapter
+through `@cng/spec`'s `buildArea`, same as every other Area this adapter
 produces, with `provenance.draw.tool` naming which tool drew it.
 
 ### `createEditTool(map, area, options?) => EditToolHandle`
 
 ```js
-import { createEditTool } from '@cnmw/maplibre';
+import { createEditTool } from '@cng/maplibre';
 
 const editTool = createEditTool(map, area);
 editTool.on('change', ({ area: edited }) => { /* Area with provenance.source === 'edited' */ });
@@ -342,7 +342,7 @@ still renders.
 §8, deliberately. With no `geocoder`, the control renders and
 accepts typing but every search is a silent no-op (`_doSearch` returns early)
 and `_onPick` throws on `this.geocoder.select`. This is deliberate — it keeps
-`@cnmw/maplibre` from importing `@cnmw/geocoder-core`, so a page that only
+`@cng/maplibre` from importing `@cng/geocoder-core`, so a page that only
 wants `addAreaLayer` does not pull in a parquet reader — but it means you must
 always pass one. `geocoderOptions` is accepted and ignored for the same reason.
 
@@ -354,7 +354,7 @@ loaded. Adding it too early throws.
 check.** Polygon is click-to-add-corner and nothing more: no holes, no
 multi-part shapes, no vertex snapping, and a ring you cross over yourself is
 emitted as drawn. For anything richer, pass your own draw library's GeoJSON
-to `@cnmw/upload-core`'s `areaFromGeoJson` and you get the same `Area` with
+to `@cng/upload-core`'s `areaFromGeoJson` and you get the same `Area` with
 `source: 'upload'`.
 
 **`createEditTool` edits one ring.** Holes, and every polygon in a
@@ -382,7 +382,7 @@ map instance, which is better verified for real.
 python3 serve.py 8000 &
 node examples/quickstart/verify.mjs 8000       # control renders, loads on focus, selects, draws, attributes
 node examples/geocoder-demo/verify-live.mjs 8000   # ADM0/1/2, progressive upgrade, 0 console errors
-node examples/download-demo/verify.mjs 8000    # the control feeding @cnmw/download-core
+node examples/download-demo/verify.mjs 8000    # the control feeding @cng/download-core
 ```
 
 Those assert on `map.getSource('cnmw-area-display')._data`,

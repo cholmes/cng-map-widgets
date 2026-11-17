@@ -1,12 +1,12 @@
-# @cnmw/raster-core
+# @cng/raster-core
 
 Clip a window out of a remote Cloud-Optimized GeoTIFF **in the browser**, pick
 the bands you want, and save a valid GeoTIFF — no server, no bundler, no full
 download.
 
 ```js
-import { describeRasterDataset, estimateRasterClip, downloadRaster } from '@cnmw/raster-core';
-import { autoSink } from '@cnmw/download-core';
+import { describeRasterDataset, estimateRasterClip, downloadRaster } from '@cng/raster-core';
+import { autoSink } from '@cng/download-core';
 
 const item = await (await fetch(stacItemUrl)).json();      // a STAC Item
 const dataset = describeRasterDataset(item);               // bands from eo:bands / raster:bands
@@ -62,7 +62,7 @@ is ~230 lines of tag layout instead. Evidence:
 
 ## Packaging
 
-Plain ESM + JSDoc, no build step, like the other `@cnmw` packages. geotiff.js
+Plain ESM + JSDoc, no build step, like the other `@cng` packages. geotiff.js
 is loaded lazily from an **exact pinned CDN URL** the first time a raster is
 opened (`src/cdn.js`), never as a bare specifier:
 
@@ -74,7 +74,7 @@ opened (`src/cdn.js`), never as a bare specifier:
   public `addDecoder` seam)
 
 `setGeoTiffModules({ geotiff })` hands in a host's own copy instead — the same
-host-injection seam `@cnmw/download-core`'s `setHyparquetModules` provides, and
+host-injection seam `@cng/download-core`'s `setHyparquetModules` provides, and
 what makes `node --test` possible.
 
 `rasterClipPlugin` exports the `{ name, approxBytes, load }` descriptor shape
@@ -87,7 +87,7 @@ picker can show "GeoTIFF clip (+~28 KB)" before anything is fetched.
 `RASTER_COMPRESSION_UNSUPPORTED` (raised at open time, before any pixel bytes
 are paid for), `RASTER_MIXED_DTYPE`, `RASTER_GRID_MISMATCH`,
 `RASTER_BAND_UNKNOWN`, `RASTER_NO_BANDS`, `RASTER_AREA_DISJOINT`,
-`RASTER_AREA_ANTIMERIDIAN`, plus `@cnmw/spec`'s `CANCELLED`, `AREA_EMPTY`,
+`RASTER_AREA_ANTIMERIDIAN`, plus `@cng/spec`'s `CANCELLED`, `AREA_EMPTY`,
 `SINK_*` and `NETWORK`.
 
 ## Tests

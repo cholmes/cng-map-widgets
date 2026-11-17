@@ -1,4 +1,4 @@
-// @cnmw/maplibre -- antimeridian-aware fitBounds (design doc §5.1 item 4).
+// @cng/maplibre -- antimeridian-aware fitBounds (design doc §5.1 item 4).
 //
 // `Area.bboxes` is the computational form: 1 box for a normal area, 2 for
 // one that crosses the antimeridian. MapLibre's own `fitBounds` cannot be

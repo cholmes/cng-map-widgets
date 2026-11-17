@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Drives the upload-demo with Playwright: search "fiji" and select it
-// (the antimeridian case, through @cnmw/openlayers' projection bridge),
+// (the antimeridian case, through @cng/openlayers' projection bridge),
 // then upload examples/upload-demo/fixtures/needs-repair.geojson (via the
 // demo's hidden file input -- see the note below on why, not actual
 // OS drag-and-drop), assert both produced features on their respective
@@ -59,7 +59,7 @@ await page.waitForFunction(
 console.log('Status:', await page.textContent('#status'));
 
 // --- Part 1: search "fiji" and select it -- the antimeridian case,
-// exercised through @cnmw/openlayers' OL Control + projection bridge.
+// exercised through @cng/openlayers' OL Control + projection bridge.
 await page.type('input[role="combobox"]', 'fiji', { delay: 30 });
 await page.waitForSelector('li[role="option"]', { timeout: 10_000 });
 console.log('First option:', await page.textContent('li[role="option"]'));

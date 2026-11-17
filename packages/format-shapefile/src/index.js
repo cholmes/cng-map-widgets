@@ -1,9 +1,9 @@
-// @cnmw/format-shapefile -- public entry point.
+// @cng/format-shapefile -- public entry point.
 //
 // Zero dependencies, zero wasm: register it eagerly, no CDN fetch needed.
 //
-//   import { registerFormat } from '@cnmw/download-core';
-//   import { createShapefileFormat } from '@cnmw/format-shapefile';
+//   import { registerFormat } from '@cng/download-core';
+//   import { createShapefileFormat } from '@cng/format-shapefile';
 //   registerFormat(createShapefileFormat());
 //
 // A tiny `shapefileFormatDescriptor` (download-core's lazy-registration

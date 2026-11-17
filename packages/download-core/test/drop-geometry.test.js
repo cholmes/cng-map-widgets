@@ -22,7 +22,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import './helpers/hyparquet-setup.js';
 import * as hyparquet from 'hyparquet';
-import { buildArea } from '@cnmw/spec';
+import { buildArea } from '@cng/spec';
 import { createHyparquetEngine } from '../src/engine-hyparquet.js';
 import { createGeoJsonFormat } from '../src/formats/geojson.js';
 import { createGeoParquetFormat } from '../src/formats/geoparquet.js';

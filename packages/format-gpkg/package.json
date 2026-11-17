@@ -1,7 +1,7 @@
 {
-  "name": "@cnmw/format-gpkg",
+  "name": "@cng/format-gpkg",
   "version": "0.1.0",
-  "description": "GeoPackage output for @cnmw/download-core: a hand-written SQLite 'vector features' profile (gpkg_contents/gpkg_spatial_ref_sys/gpkg_geometry_columns + the feature table), built with sql.js. The ~340KB (min+gz) path O5 chose over gdal3.js's 2-8MB wasm build -- see README.md and experiments/e10-heavy-formats/RESULTS.md.",
+  "description": "GeoPackage output for @cng/download-core: a hand-written SQLite 'vector features' profile (gpkg_contents/gpkg_spatial_ref_sys/gpkg_geometry_columns + the feature table), built with sql.js. The ~340KB (min+gz) path O5 chose over gdal3.js's 2-8MB wasm build -- see README.md and experiments/e10-heavy-formats/RESULTS.md.",
   "keywords": [
     "geopackage",
     "gpkg",
@@ -29,11 +29,11 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cnmw/spec": "0.1.0"
+    "@cng/spec": "0.1.0"
   },
   "devDependencies": {
     "sql.js": "1.13.0",
-    "@cnmw/download-core": "0.1.0",
+    "@cng/download-core": "0.1.0",
     "hyparquet": "1.33.0",
     "hyparquet-compressors": "1.1.3"
   }

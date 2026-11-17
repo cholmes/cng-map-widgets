@@ -1,4 +1,4 @@
-// @cnmw/geocoder-core -- index manifest + parquet loading.
+// @cng/geocoder-core -- index manifest + parquet loading.
 //
 // Reuses the proven hyparquet patterns from
 // experiments/e1-search-index/public/lib/{approach-full-load,approach-range-request}.js:
@@ -6,7 +6,7 @@
 // range-request path (footer-only, then range-read matching row groups).
 // `auto` picks between them per design doc §3.2 / §6.3 item 8.
 
-import { CnmwError } from '@cnmw/spec';
+import { CnmwError } from '@cng/spec';
 import { loadHyparquet } from './cdn.js';
 
 const REQUIRED_COLUMNS = ['name', 'name_norm', 'level', 'country', 'feature_id', 'source', 'bbox'];

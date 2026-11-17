@@ -1,7 +1,7 @@
-// @cnmw/openlayers -- the projection bridge (design doc §5.1 item 5).
+// @cng/openlayers -- the projection bridge (design doc §5.1 item 5).
 //
-// Core (@cnmw/spec) is EPSG:4326-only. MapLibre's GeoJSON sources are
-// 4326-native, so @cnmw/maplibre needs no bridge at all. OpenLayers maps
+// Core (@cng/spec) is EPSG:4326-only. MapLibre's GeoJSON sources are
+// 4326-native, so @cng/maplibre needs no bridge at all. OpenLayers maps
 // are frequently EPSG:3857 (or something exotic), so this module is the
 // one real asymmetry between the two adapters: it reprojects on the way
 // *in* (an Area's 4326 geometry -> the view's projection, for rendering)
@@ -21,7 +21,7 @@
 const MERCATOR_RADIUS = 6378137;
 const MAX_MERCATOR_LAT = 85.06; // OL/Google/MapLibre's standard Web Mercator clamp
 
-/** @typedef {import('@cnmw/spec').BBox} BBox */
+/** @typedef {import('@cng/spec').BBox} BBox */
 /** @typedef {GeoJSON.Polygon|GeoJSON.MultiPolygon} AreaGeometry */
 
 /** True for every code string that names Web/Spherical Mercator. */
@@ -71,7 +71,7 @@ export function projectPoint(lonLat, toCode, opts = {}) {
   if (isMercatorCode(toCode)) return lonLatToMercator(lonLat);
   if (opts.transform) return opts.transform(lonLat, 'EPSG:4326', toCode);
   throw new Error(
-    `@cnmw/openlayers: projection "${toCode}" is not EPSG:4326 or EPSG:3857, and no transform() was supplied. ` +
+    `@cng/openlayers: projection "${toCode}" is not EPSG:4326 or EPSG:3857, and no transform() was supplied. ` +
       'Pass the view\'s projection via ol-proj-bridge, or register it with ol/proj before use.',
   );
 }
@@ -89,7 +89,7 @@ export function unprojectPoint(coord, fromCode, opts = {}) {
   if (isMercatorCode(fromCode)) return mercatorToLonLat(coord);
   if (opts.transform) return opts.transform(coord, fromCode, 'EPSG:4326');
   throw new Error(
-    `@cnmw/openlayers: projection "${fromCode}" is not EPSG:4326 or EPSG:3857, and no transform() was supplied.`,
+    `@cng/openlayers: projection "${fromCode}" is not EPSG:4326 or EPSG:3857, and no transform() was supplied.`,
   );
 }
 
@@ -98,7 +98,7 @@ export function unprojectPoint(coord, fromCode, opts = {}) {
  * into `toCode`'s extent form [minX, minY, maxX, maxY]. Corner-projection
  * is correct here because `bboxes[]` entries are always normalized
  * (west <= east) before this is called -- antimeridian splitting already
- * happened in `@cnmw/spec` (design doc §1.5).
+ * happened in `@cng/spec` (design doc §1.5).
  * @param {BBox} bbox
  * @param {string} toCode
  * @param {{ transform?: (coord: [number, number], from: string, to: string) => [number, number] }} [opts]

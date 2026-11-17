@@ -1,15 +1,15 @@
-// @cnmw/maplibre -- the outline layer (design doc §5.1 item 3, §5.2).
+// @cng/maplibre -- the outline layer (design doc §5.1 item 3, §5.2).
 //
 // Renders `Area.geometry`, and optionally a dashed "ghost" of
 // `Area.filterGeometry` when it differs from the display geometry (so a
-// user can see that their filter was simplified). Core (@cnmw/spec) owns
+// user can see that their filter was simplified). Core (@cng/spec) owns
 // simplification; this module only draws what it is given.
 
 import { fitAreaBounds } from './fit-bounds.js';
 
 const SOURCE_ID_PREFIX = 'cnmw-area';
 
-/** @typedef {import('@cnmw/spec').Area} Area */
+/** @typedef {import('@cng/spec').Area} Area */
 
 /**
  * @typedef {{

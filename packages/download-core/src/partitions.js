@@ -1,4 +1,4 @@
-// @cnmw/download-core -- partition enumeration + the partition-level
+// @cng/download-core -- partition enumeration + the partition-level
 // pruning cascade (design doc §2.1 PartitionEnumeration, §2.7 step 1-2,
 // O9).
 //
@@ -10,7 +10,7 @@
 // demo's datasets are single-file `parquet` sources); covered instead by a
 // synthetic-listing unit test.
 
-import { CnmwError, bboxesIntersect } from '@cnmw/spec';
+import { CnmwError, bboxesIntersect } from '@cng/spec';
 import { loadHyparquet } from './cdn.js';
 
 const STAC_ITEM_CONCURRENCY = 8;
@@ -345,7 +345,7 @@ async function enumerateBucketListing(endpoint, prefix, fetchImpl, signal) {
  * `filter.partitions` first, then bbox/time against each part's own
  * declared `bbox`/`interval` (when present).
  * @param {import('./types.js').DatasetPart[]} parts
- * @param {import('@cnmw/spec').BBox[]|null} areaBBoxes
+ * @param {import('@cng/spec').BBox[]|null} areaBBoxes
  * @param {import('./types.js').TimeFilter|undefined} time
  * @param {Readonly<Record<string, import('./types.js').PartitionValueFilter>>|undefined} explicitPartitions
  * @returns {{ selected: import('./types.js').DatasetPart[], stages: import('./types.js').PruneStage[] }}

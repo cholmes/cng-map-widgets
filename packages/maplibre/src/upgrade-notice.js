@@ -1,11 +1,11 @@
-// @cnmw/maplibre -- pure state machine + formatting behind the
+// @cng/maplibre -- pure state machine + formatting behind the
 // "upgradeDisplay" background-fetch notice (design doc §1.3/§3.2
 // amendment, "fetch higher-resolution vectors in the background, tell the
 // user, let them cancel"). No DOM, no timers, no I/O -- unit tested
 // directly in ../test/upgrade-notice.test.js, same split as
 // ./combobox-helpers.js.
 //
-// Duplicated verbatim in @cnmw/openlayers (see geocoder-control.js's
+// Duplicated verbatim in @cng/openlayers (see geocoder-control.js's
 // DUPLICATION NOTE) rather than shared via an unpublished workspace.
 
 /**

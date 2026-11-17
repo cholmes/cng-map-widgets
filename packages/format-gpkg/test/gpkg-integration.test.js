@@ -2,7 +2,7 @@
 // package allows, same policy as download-core/test/integration.test.js):
 // download the FTW Liechtenstein field-boundary slice -- the project's
 // established small-live-fixture -- straight to a .gpkg file through
-// @cnmw/download-core's real `download()` pipeline (resolveDataset ->
+// @cng/download-core's real `download()` pipeline (resolveDataset ->
 // estimate -> hyparquet engine -> this package's `gpkg` FormatWriter),
 // then validate the file with `ogrinfo -al -so` and DuckDB's `ST_Read`,
 // asserting both attributes AND geometry.
@@ -18,10 +18,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
-import { download, registerFormat, setHyparquetModules } from '@cnmw/download-core';
+import { download, registerFormat, setHyparquetModules } from '@cng/download-core';
 import { initializedSqlJs } from './helpers/sqljs-setup.js';
 import { createGpkgFormat } from '../src/gpkg-writer.js';
-import { memorySink } from '@cnmw/download-core';
+import { memorySink } from '@cng/download-core';
 
 setHyparquetModules({ hyparquet, compressors });
 

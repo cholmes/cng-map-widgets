@@ -1,4 +1,4 @@
-// @cnmw/download-core -- `Bounded` arithmetic (design doc §3.4).
+// @cng/download-core -- `Bounded` arithmetic (design doc §3.4).
 //
 // `Bounded.exact: true` means the number came straight from metadata (e.g.
 // a row-group's `num_rows`, or a column chunk's `total_compressed_size`),

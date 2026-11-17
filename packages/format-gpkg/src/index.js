@@ -1,19 +1,19 @@
-// @cnmw/format-gpkg -- public entry point.
+// @cng/format-gpkg -- public entry point.
 //
 // Two ways to use this package, matching download-core's registry seam
 // (design doc §3.4, amended for lazy loading):
 //
 //   // Lazy (recommended for a page that only sometimes needs GeoPackage):
-//   import { registerLazyFormat } from '@cnmw/download-core';
-//   import { gpkgFormatDescriptor } from '@cnmw/format-gpkg';
+//   import { registerLazyFormat } from '@cng/download-core';
+//   import { gpkgFormatDescriptor } from '@cng/format-gpkg';
 //   registerLazyFormat(gpkgFormatDescriptor);
 //   // sql.js's ~340KB (min+gz) wasm fetches only once a `download()` for
 //   // format: 'gpkg' actually runs -- not when this module is imported,
 //   // and not when it's registered.
 //
 //   // Eager (already have sql.js loaded, or want it loaded up front):
-//   import { registerFormat } from '@cnmw/download-core';
-//   import { createGpkgFormat } from '@cnmw/format-gpkg';
+//   import { registerFormat } from '@cng/download-core';
+//   import { createGpkgFormat } from '@cng/format-gpkg';
 //   import initSqlJs from 'sql.js'; // or your own bundler-resolved import
 //   registerFormat(createGpkgFormat(await initSqlJs()));
 

@@ -1,7 +1,7 @@
 {
-  "name": "@cnmw/openlayers",
+  "name": "@cng/openlayers",
   "version": "0.1.0",
-  "description": "OpenLayers adapter for the @cnmw widgets: an accessible search combobox control, an Area outline layer, a viewport provider, antimeridian-aware fit, and the EPSG:4326 <-> view-projection bridge OpenLayers needs that MapLibre's GeoJSON-native sources do not.",
+  "description": "OpenLayers adapter for the @cng widgets: an accessible search combobox control, an Area outline layer, a viewport provider, antimeridian-aware fit, and the EPSG:4326 <-> view-projection bridge OpenLayers needs that MapLibre's GeoJSON-native sources do not.",
   "keywords": [
     "openlayers",
     "ol",
@@ -31,6 +31,6 @@
     "ol": "^10.0.0"
   },
   "dependencies": {
-    "@cnmw/spec": "0.1.0"
+    "@cng/spec": "0.1.0"
   }
 }

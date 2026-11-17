@@ -1,8 +1,8 @@
-// @cnmw/download-core -- `estimate()` and the shared `planRequest()` the
+// @cng/download-core -- `estimate()` and the shared `planRequest()` the
 // hyparquet engine also uses (design doc §3.4, §2.6-§2.8's pruning
 // cascades, O12).
 
-import { CnmwError } from '@cnmw/spec';
+import { CnmwError } from '@cng/spec';
 import { resolveDataset } from './dataset-resolve.js';
 import { enumeratePartitions, partitionPruneCascade } from './partitions.js';
 import { openParquetFile } from './parquet-io.js';
@@ -11,7 +11,7 @@ import { resolveOutputColumns, resolveReadColumns, geometryNeededForFilter } fro
 import { defaultCeiling, requirementsOf } from './ceiling.js';
 import { boundedExact, boundedRange, sumBounded, capBounded, isEstimateWide } from './bounded.js';
 import { sha256Hex } from './digest.js';
-import { bboxesIntersect } from '@cnmw/spec';
+import { bboxesIntersect } from '@cng/spec';
 
 /** Top-level column name(s) a BboxCovering reads statistics from. @param {import('./types.js').BboxCovering|undefined} covering */
 export function bboxColumnNames(covering) {
@@ -85,7 +85,7 @@ export function inferTableFromSchema(metadata) {
  * both `estimate()` and the default hyparquet engine's `plan()`.
  *
  * @param {import('./types.js').DatasetDescriptor} dataset
- * @param {import('@cnmw/spec').Area|null} area
+ * @param {import('@cng/spec').Area|null} area
  * @param {import('./types.js').FilterSpec} filter
  * @param {import('./types.js').DownloadCoreOptions} options
  */
@@ -307,7 +307,7 @@ function genericOutputBytesModel(plan) {
  * ceiling check inside `download()` actually uses.
  *
  * @param {import('./types.js').DatasetDescriptor} dataset
- * @param {import('@cnmw/spec').Area|null} area
+ * @param {import('@cng/spec').Area|null} area
  * @param {import('./types.js').FilterSpec} filter
  * @param {import('./types.js').DownloadCoreOptions & { signal?: AbortSignal, outputBytesOverride?: import('./bounded.js').Bounded }} [options]
  * @returns {Promise<import('./types.js').Estimate>}
@@ -325,7 +325,7 @@ export async function estimate(dataset, area, filter, options = {}) {
  * `estimateBytes` in place of the generic model (see module doc comment).
  *
  * @param {Awaited<ReturnType<typeof planRequest>>} plan
- * @param {import('@cnmw/spec').Area|null} area
+ * @param {import('@cng/spec').Area|null} area
  * @param {import('./types.js').FilterSpec} filter
  * @param {import('./types.js').DownloadCoreOptions & { outputBytesOverride?: import('./bounded.js').Bounded }} options
  * @param {number} [t0]

@@ -1,5 +1,5 @@
-// @cnmw/format-shapefile -- minimal WKB -> GeoJSON decoder, 2D, the same
-// six types `@cnmw/format-gpkg/src/wkb.js` encodes. Duplicated rather than
+// @cng/format-shapefile -- minimal WKB -> GeoJSON decoder, 2D, the same
+// six types `@cng/format-gpkg/src/wkb.js` encodes. Duplicated rather than
 // shared: these are independent plugin packages (design doc §3.4 plugin
 // seam), each with no dependency on the other or on download-core's
 // internals, matching the project's existing precedent
@@ -33,7 +33,7 @@ export function wkbToGeoJson(bytes) {
   const le = view.getUint8(c.offset) === 1; c.offset += 1;
   const type = view.getUint32(c.offset, le); c.offset += 4;
   const name = TYPE_NAME[type];
-  if (!name) throw new Error(`@cnmw/format-shapefile: unsupported WKB geometry type ${type}`);
+  if (!name) throw new Error(`@cng/format-shapefile: unsupported WKB geometry type ${type}`);
 
   if (name === 'Point') return { type: 'Point', coordinates: readPoint(view, c, le) };
   if (name === 'LineString') return { type: 'LineString', coordinates: readLine(view, c, le) };

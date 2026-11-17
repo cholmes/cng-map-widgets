@@ -1,7 +1,7 @@
-// @cnmw/format-flatgeobuf -- public entry point.
+// @cng/format-flatgeobuf -- public entry point.
 //
-//   import { registerLazyFormat } from '@cnmw/download-core';
-//   import { flatGeobufFormatDescriptor } from '@cnmw/format-flatgeobuf';
+//   import { registerLazyFormat } from '@cng/download-core';
+//   import { flatGeobufFormatDescriptor } from '@cng/format-flatgeobuf';
 //   registerLazyFormat(flatGeobufFormatDescriptor);
 //   // ~10KB (min+gz) fetches only on first download() for format: 'flatgeobuf'.
 

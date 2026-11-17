@@ -1,4 +1,4 @@
-// @cnmw/download-core -- sha-256 hex digest via the standard Web Crypto API
+// @cng/download-core -- sha-256 hex digest via the standard Web Crypto API
 // (`globalThis.crypto.subtle`), available in every modern browser and in
 // Node >= 19 with no import. Used for `Estimate.requestDigest`.
 

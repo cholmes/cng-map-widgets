@@ -3,7 +3,7 @@
 **Date:** 2026-11-12
 **Question (Chris):** *"interested if there's raster possibilities, to clip into
 a geotiff and download a subset of bands."*
-**Verdict: yes — and it shipped.** `@cnmw/raster-core` + `examples/raster-demo`.
+**Verdict: yes — and it shipped.** `@cng/raster-core` + `examples/raster-demo`.
 
 Short version:
 
@@ -194,7 +194,7 @@ BROWSER CLIP VALIDATED
 
 `gdalinfo` on the same file reports `PROJCRS["WGS 84 / UTM zone 10N" … ID["EPSG",32610]]`,
 `Pixel Size = (10, -10)`, three `Type=UInt16` bands, `NoData Value=0`,
-`COMPRESSION=DEFLATE`, `TIFFTAG_SOFTWARE=@cnmw/raster-core`, and statistics
+`COMPRESSION=DEFLATE`, `TIFFTAG_SOFTWARE=@cng/raster-core`, and statistics
 identical to those computed from the arrays in JS (band 1 mean 922.4576 both
 sides).
 

@@ -1,4 +1,4 @@
-// @cnmw/maplibre -- createEditTool: drag a displayed outline's vertices,
+// @cng/maplibre -- createEditTool: drag a displayed outline's vertices,
 // insert a vertex at a midpoint, delete a vertex. New adapter file (task:
 // "or edit a boundary that they brought up with the place search").
 //
@@ -42,9 +42,9 @@
 // -- same spirit as this package's other "not implemented, here is the
 // honest boundary" notes (design doc §8).
 
-import { buildArea } from '@cnmw/spec';
+import { buildArea } from '@cng/spec';
 
-/** @typedef {import('@cnmw/spec').Area} Area */
+/** @typedef {import('@cng/spec').Area} Area */
 /** @typedef {[number, number]} LngLat */
 
 const MIN_UNIQUE_VERTICES = 3; // a triangle is the smallest legal polygon ring
@@ -123,7 +123,7 @@ export function withExteriorRing(geometry, polygonIndex, closedRing) {
 }
 
 /**
- * Build the edited `Area` from its parent, through `@cnmw/spec`'s
+ * Build the edited `Area` from its parent, through `@cng/spec`'s
  * `buildArea` (never a hand-built provenance object -- §5.1's rule).
  * `provenance.source` is `'edited'`; `provenance.edited` keeps the parent's
  * lineage (`parentAreaId`/`parentSource`/`parentCreatedAt`) and

@@ -1,4 +1,4 @@
-// @cnmw/geocoder-core -- select()'s geometry fetch (design doc §6.4
+// @cng/geocoder-core -- select()'s geometry fetch (design doc §6.4
 // "select()'s resolution order").
 //
 // The ideal boundary mirror is sorted by (country, feature_id) (§6.4's
@@ -41,7 +41,7 @@
 // geometry, falling back to the stats-pruning scan (now with bounded
 // concurrency, see `firstMatch`) on any mismatch.
 
-import { CnmwError, wkbToGeoJson, wkbToGeoJsonAsync } from '@cnmw/spec';
+import { CnmwError, wkbToGeoJson, wkbToGeoJsonAsync } from '@cng/spec';
 import { loadHyparquet } from './cdn.js';
 
 /** How many candidate row groups the stats-pruning fallback reads at once
@@ -230,7 +230,7 @@ export async function openBoundaryFile(url, fetchImpl, signal, footerBytes) {
   // column with its OWN already-decoded GeoJSON object -- for *every*
   // read of that column, regardless of the `utf8` option. Design doc §6.1
   // is explicit that this is meant to be read as plain WKB bytes, decoded
-  // by `@cnmw/spec`'s own decoder (chunked/yielding on the full-res path,
+  // by `@cng/spec`'s own decoder (chunked/yielding on the full-res path,
   // which hyparquet's built-in decoder is not); `geoparquet: false` keeps
   // it that way instead of two independent decoders fighting over one
   // column.

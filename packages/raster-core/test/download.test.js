@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fromArrayBuffer } from 'geotiff';
-import { memorySink } from '@cnmw/download-core';
+import { memorySink } from '@cng/download-core';
 import { describeRasterDataset, planRasterClip } from '../src/plan.js';
 import { downloadRaster } from '../src/download.js';
 

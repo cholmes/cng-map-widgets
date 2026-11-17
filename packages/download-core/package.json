@@ -1,5 +1,5 @@
 {
-  "name": "@cnmw/download-core",
+  "name": "@cng/download-core",
   "version": "0.1.0",
   "description": "Clip-free, server-free dataset download in the browser: STAC/Portolan collection resolution, a metadata-only pruning cascade (partition -> part bbox/time -> row-group stats -> row), pre-download estimates with a ceiling and an explicit refusal path, streaming sinks, and geojson + geoparquet writers.",
   "keywords": [
@@ -29,7 +29,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cnmw/spec": "0.1.0"
+    "@cng/spec": "0.1.0"
   },
   "devDependencies": {
     "hyparquet": "1.33.0",

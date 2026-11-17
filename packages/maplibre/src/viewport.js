@@ -1,4 +1,4 @@
-// @cnmw/maplibre -- viewport provider (design doc §5.1 item 2, §5.2).
+// @cng/maplibre -- viewport provider (design doc §5.1 item 2, §5.2).
 
 /**
  * @param {import('maplibre-gl').Map} map

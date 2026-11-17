@@ -1,6 +1,6 @@
-// @cnmw/download-core -- sinks (design doc §3.4).
+// @cng/download-core -- sinks (design doc §3.4).
 
-import { CnmwError } from '@cnmw/spec';
+import { CnmwError } from '@cng/spec';
 
 /**
  * One run's writable, with the lifecycle every sink owes its caller

@@ -1,4 +1,4 @@
-// @cnmw/spec -- async, O(m log m) Visvalingam-Whyatt simplification for
+// @cng/spec -- async, O(m log m) Visvalingam-Whyatt simplification for
 // the geocoder-core background-upgrade path (design doc §1: "fetch/attach
 // the full-res [filterGeometry] in the background").
 //

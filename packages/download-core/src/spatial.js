@@ -1,4 +1,4 @@
-// @cnmw/download-core -- spatial filtering (design doc §2.2 SpatialFilter,
+// @cng/download-core -- spatial filtering (design doc §2.2 SpatialFilter,
 // §1.5 antimeridian).
 //
 // Pruning is bbox-first, always: a row's own bbox (from the covering
@@ -9,7 +9,7 @@
 // directly, unsplit, because the geometry's own coordinates never wrapped
 // across the antimeridian (§1.5 rule 5).
 
-/** @typedef {import('@cnmw/spec').BBox} BBox */
+/** @typedef {import('@cng/spec').BBox} BBox */
 
 /**
  * True when a normalized feature bbox touches/overlaps any of the Area's
@@ -153,7 +153,7 @@ export function geometriesIntersect(a, b) {
  * (above) assumes both sides are Polygon/MultiPolygon, which breaks for a
  * point dataset (NASA FIRMS -- every row's geometry is a WKB Point; see
  * `./wkb-geometry.js`'s module doc for why that decode isn't in
- * `@cnmw/spec`). A point "intersects" a polygon area exactly when it falls
+ * `@cng/spec`). A point "intersects" a polygon area exactly when it falls
  * inside it, which `pointInGeometry` already answers directly -- no
  * ring/edge intersection test needed for a feature with no edges.
  * @param {GeoJSON.Point|GeoJSON.MultiPoint|GeoJSON.Polygon|GeoJSON.MultiPolygon} featureGeometry

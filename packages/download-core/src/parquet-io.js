@@ -1,10 +1,10 @@
-// @cnmw/download-core -- thin wrapper over hyparquet: footer metadata,
+// @cng/download-core -- thin wrapper over hyparquet: footer metadata,
 // row-group byte/stat extraction, and row reads. Isolated here so
 // estimate.js, prune.js and engine-hyparquet.js share one notion of "what a
 // row group looks like" without each reaching into raw hyparquet metadata
 // shapes.
 
-import { CnmwError, CancelledError } from '@cnmw/spec';
+import { CnmwError, CancelledError } from '@cng/spec';
 import { loadHyparquet } from './cdn.js';
 
 /**
@@ -80,9 +80,9 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
     // `geoparquet: false` here (once, at metadata-fetch time -- the flag
     // lives on the returned `metadata`'s schema, not on each read call)
     // keeps every column, geometry included, as raw bytes, so
-    // `@cnmw/spec`'s `wkbToGeoJson` is the single, uniform decode path
+    // `@cng/spec`'s `wkbToGeoJson` is the single, uniform decode path
     // for every dataset regardless of whether it carries `geo` metadata.
-    // Same fix, same reasoning, as `@cnmw/geocoder-core`'s
+    // Same fix, same reasoning, as `@cng/geocoder-core`'s
     // geometry-resolver.js/index-loader.js (commit c3cd2ea).
     //
     // NOTE: passing a bare number here previously (before this fix) was

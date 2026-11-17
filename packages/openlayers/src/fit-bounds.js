@@ -1,5 +1,5 @@
-// @cnmw/openlayers -- antimeridian-aware fitBounds (design doc §5.1 item
-// 4), the OL-calling half. Mirrors @cnmw/maplibre/src/fit-bounds.js's
+// @cng/openlayers -- antimeridian-aware fitBounds (design doc §5.1 item
+// 4), the OL-calling half. Mirrors @cng/maplibre/src/fit-bounds.js's
 // behavior (fit the bbox nearer the map's current center when an Area
 // crosses the antimeridian) but must additionally project the chosen
 // 4326 bbox into the view's projection before calling `view.fit()` --

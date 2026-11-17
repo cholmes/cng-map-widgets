@@ -169,7 +169,7 @@ export async function writeGeoTiff(opts) {
     { tag: TAGS.RowsPerStrip, type: TYPE.LONG, values: [rowsPerStrip] },
     { tag: TAGS.StripByteCounts, type: TYPE.LONG, values: strips.map((s) => s.byteLength) },
     { tag: TAGS.PlanarConfiguration, type: TYPE.SHORT, values: [1] },
-    { tag: TAGS.Software, type: TYPE.ASCII, values: `${opts.software ?? '@cnmw/raster-core'}\0` },
+    { tag: TAGS.Software, type: TYPE.ASCII, values: `${opts.software ?? '@cng/raster-core'}\0` },
     { tag: TAGS.SampleFormat, type: TYPE.SHORT, values: Array(samples).fill(spec.format) },
     { tag: TAGS.ModelPixelScale, type: TYPE.DOUBLE, values: [pixelSize[0], pixelSize[1], 0] },
     { tag: TAGS.ModelTiepoint, type: TYPE.DOUBLE, values: [0, 0, 0, origin[0], origin[1], 0] },

@@ -1,4 +1,4 @@
-// @cnmw/openlayers -- unit tests for the pure combobox UX-polish helpers
+// @cng/openlayers -- unit tests for the pure combobox UX-polish helpers
 // (no DOM required: see combobox-helpers.js's own header for why these
 // are factored out as pure functions).
 

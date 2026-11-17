@@ -1,7 +1,7 @@
-# @cnmw/openlayers
+# @cng/openlayers
 
 The OpenLayers half of the widgets: the same five things
-[`@cnmw/maplibre`](../maplibre/README.md) provides — search control, `Area`
+[`@cng/maplibre`](../maplibre/README.md) provides — search control, `Area`
 outline layer, viewport provider, antimeridian-aware fit — **plus the one real
 asymmetry between the two adapters: a projection bridge.**
 
@@ -31,10 +31,10 @@ specifier, so a zero-build page needs an import-map **prefix** entry:
 <script type="importmap">
 {
   "imports": {
-    "@cnmw/spec": "/packages/spec/src/index.js",
-    "@cnmw/geocoder-core": "/packages/geocoder-core/src/index.js",
-    "@cnmw/upload-core": "/packages/upload-core/src/index.js",
-    "@cnmw/openlayers": "/packages/openlayers/src/index.js",
+    "@cng/spec": "/packages/spec/src/index.js",
+    "@cng/geocoder-core": "/packages/geocoder-core/src/index.js",
+    "@cng/upload-core": "/packages/upload-core/src/index.js",
+    "@cng/openlayers": "/packages/openlayers/src/index.js",
     "ol/": "https://cdn.jsdelivr.net/npm/ol@10.11.0/",
     "rbush": "https://cdn.jsdelivr.net/npm/rbush@4.0.1/+esm"
   }
@@ -56,13 +56,13 @@ about it are easy to get wrong:
 CSS is inlined as a string and injected once under
 `id="cnmw-ol-geocoder-style"`. Override via `.cnmw-geocoder-ol`.
 
-**Coming:** `npm i @cnmw/openlayers`.
+**Coming:** `npm i @cng/openlayers`.
 
 ## Size
 
 | | files | raw | gzip | gzip, comments stripped | design-doc budget (§4.5) |
 |---|---|---|---|---|---|
-| `@cnmw/openlayers` src | 8 | 27.8 KiB | 8.6 KiB | **5.1 KiB** | ≤ 9 KB min+gz |
+| `@cng/openlayers` src | 8 | 27.8 KiB | 8.6 KiB | **5.1 KiB** | ≤ 9 KB min+gz |
 
 `ol` is a peer and not counted. Note `src/projection.js` has **no `ol`
 dependency at all** — the Web Mercator transform is closed-form — so those
@@ -84,8 +84,8 @@ import TileLayer from 'ol/layer/Tile.js';
 import OSM from 'ol/source/OSM.js';
 import { fromLonLat } from 'ol/proj.js';
 
-import { Geocoder } from '@cnmw/geocoder-core';
-import { GeocoderControl, addAreaLayer } from '@cnmw/openlayers';
+import { Geocoder } from '@cng/geocoder-core';
+import { GeocoderControl, addAreaLayer } from '@cng/openlayers';
 
 const map = new Map({
   target: 'map',
@@ -122,11 +122,11 @@ verified by Playwright.
 Extends `ol/control/Control`. Added with `map.addControl(control)`; OL calls
 `setMap(map)` then, and `setMap(null)` on removal.
 
-Every [`@cnmw/maplibre` option](../maplibre/README.md#new-geocodercontroloptions)
+Every [`@cng/maplibre` option](../maplibre/README.md#new-geocodercontroloptions)
 applies identically — `geocoder` (**required in practice, no default**),
 `placeholder`, `debounceMs` (80), `useViewport` (true), `limit`, `fitBounds`
 (true), `outline`, `showAttribution` (true — the compact bottom-left ⓘ
-attribution widget, same UX as `@cnmw/maplibre`'s; here it mounts in the
+attribution widget, same UX as `@cng/maplibre`'s; here it mounts in the
 map's stop-event overlay container and is torn down on `setMap(null)`),
 `renderItem`, `upgradeNoticeStrings` — plus:
 
@@ -148,7 +148,7 @@ keyboard handling, the same lazy `geocoder.load()` on first focus, and the
 [same default option renderer](../maplibre/README.md#the-combobox).
 
 > The ~150 lines of combobox DOM are **duplicated** between this package and
-> `@cnmw/maplibre` rather than shared. Design doc §5.2 puts them in an
+> `@cng/maplibre` rather than shared. Design doc §5.2 puts them in an
 > unpublished internal `packages/_ui` workspace that both adapters inline at
 > build time; with no build step, that is not available yet. The duplication is
 > known, flagged in both files, and the predictable drift risk. Pure helpers
@@ -224,7 +224,7 @@ injectable `transform` (which the adapter wires to `ol/proj`'s `transform`).
 `(coord, from, to) => [x, y]`.
 
 ```js
-import { lonLatToMercator, mercatorToLonLat, projectExtent, projectGeometry } from '@cnmw/openlayers';
+import { lonLatToMercator, mercatorToLonLat, projectExtent, projectGeometry } from '@cng/openlayers';
 
 const [x, y] = lonLatToMercator([9.5, 47.14]);   // ≈ [1057535, 5964956]
 mercatorToLonLat([x, y]);                        // [9.5, 47.14] -- round trips exactly
@@ -235,7 +235,7 @@ projectGeometry(area.geometry, 'EPSG:3857').coordinates[0][0];  // metres, not d
 
 **Corner projection is correct here** only because `bboxes[]` entries are
 always normalized (`west <= east`) before this is called — the antimeridian
-split already happened in `@cnmw/spec`. Do not feed it a signed
+split already happened in `@cng/spec`. Do not feed it a signed
 `Area.bbox`.
 
 ---
@@ -277,7 +277,7 @@ and re-adding many controls on one page leaks a listener each time.
 **Everything crossing this boundary is 4326.** `Area.geometry`,
 `Area.bboxes`, the `viewport` you pass to `search()` — all lon/lat, always.
 The projection happens inside this package, at the last possible moment. If
-you find yourself projecting an `Area` before handing it to anything `@cnmw`,
+you find yourself projecting an `Area` before handing it to anything `@cng`,
 something is wrong.
 
 **Non-Mercator views go through `ol/proj`.** The closed-form path covers 4326

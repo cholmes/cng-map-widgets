@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { areaFromGeoJson, areaFromFile, registerReader } from '../src/upload.js';
-import { CnmwError } from '@cnmw/spec';
+import { CnmwError } from '@cng/spec';
 
 const triangle = (dx = 0, dy = 0) => ({
   type: 'Polygon',

@@ -35,7 +35,7 @@
 > gpq null-geometry panic · geoBoundaries mojibake/invalid-geoms/ADM1-drift
 > · FIRMS extent vs newest partition + row-group stats · fieldmaps STAC
 > license field · sort-on-filtered-column advocacy.
-> **Chris's queue:** @cnmw scope · gbOpen ADM3/4 (rec: skip) · browser-card
+> **Chris's queue:** @cng scope (resolved 2026-11-17) · gbOpen ADM3/4 (rec: skip) · browser-card
 > decisions (date-window ≥2yr default, "More formats" grouping, CDN writers)
 > · tge-labs deletion after cutover. (WOF source.coop repo + MIT: done —
 > catalog LIVE 2026-11-13 with prominent index; demo ?index=wof points at
@@ -45,7 +45,7 @@
 > gazetteers** — the names indexes and the catalogs that publish them
 > (geoboundaries-catalog, cn-gazetteer-overture — renamed from
 > cn-geocoder-overture — whosonfirst-catalog). The client widget keeps
-> **geocoder** naming (@cnmw/geocoder-core etc.) because that's the term
+> **geocoder** naming (@cng/geocoder-core etc.) because that's the term
 > developers search for; docs state it's place-name/boundary lookup over
 > gazetteer data, not address geocoding. A future public umbrella repo name
 > should prefer "gazetteer" over "geocoding".
@@ -208,7 +208,7 @@ numbers, recommended file recipe (this doubles as the upstream advocacy doc).
 > **Design DONE 2026-11-12** — `docs/design/widgets-architecture.md`: Area
 > contract (display vs filter geometry, antimeridian via bboxes[]),
 > declarative DownloadRequest spec shared with the Python QGIS plugin,
-> `@cnmw/*` package design, zero-build CDN packaging (geocoder ~139KB min+gz
+> `@cng/*` package design, zero-build CDN packaging (geocoder ~139KB min+gz
 > incl. hyparquet), index interface (plain parquet, byte-wise UTF-8 sort,
 > catalog_version pinning). 13 open items each with a shipping default; two
 > flagged for Chris: (1) one pinned hyparquet version per release train must
@@ -283,7 +283,7 @@ at same feature), plus unicode normalization/transliteration in `name_norm`.
 - **PENDING Chris:** gbOpen ADM3/4 (survey says: license-mixed — only
   17–25% strict CC-BY, 25% ODbL incl. CAN/CHN/IND — and 35% country
   coverage; recommendation: skip, let Overture carry cities) · source-coop
-  login · npm scope (@cnmw?).
+  login · npm scope (@cng, resolved).
 - **NEXT:** E6 example explorers (firms, s2) · E7 portolan-browser branch ·
   demo index-source toggle (geoBoundaries ↔ Overture) once both publish.
 
@@ -326,8 +326,8 @@ every documented snippet now runs against real published data, not fixtures.
   - **Consistency pass:** `0.1.0` everywhere (package.json, dependency pins,
     exported `VERSION`), MIT `LICENSE` in the root and every package,
     real `description`/`keywords`/`license`/`files`, `exports["./package.json"]`.
-    `npm install` relinked the workspace, picking up `@cnmw/upload-core` and
-    `@cnmw/openlayers`, which had never been symlinked into `node_modules`.
+    `npm install` relinked the workspace, picking up `@cng/upload-core` and
+    `@cng/openlayers`, which had never been symlinked into `node_modules`.
 - **MEASURED tonight (live, over the public path):** index load
   **3.8s from Node; 5.3s in a browser genuinely cold, 1.9s with a warm CDN**
   for the 3.9MB geoBoundaries index
@@ -351,7 +351,7 @@ every documented snippet now runs against real published data, not fixtures.
      the manifest's `snake_case` (`share_alike`), download-core's derived
      attribution uses `shareAlike`. Checking only `shareAlike` **silently
      reports no share-alike obligation on ODbL data.** Wants one
-     normalization in `@cnmw/spec`.
+     normalization in `@cng/spec`.
   3. `indexUrl` as an array (multi-source) is unimplemented and *silently*
      falls back to `DEFAULT_INDEX_URL`, which is itself the relative dev path
      `'./data/index.json'`, not the published URL §10 specifies.
@@ -372,9 +372,9 @@ every documented snippet now runs against real published data, not fixtures.
   placeholder in the root and all six packages; Apache-2.0 (patent grant) or
   BSD-3-Clause are the plausible alternatives and it is a one-line change in
   seven files. Also still open from before: source.coop login · npm scope
-  (`@cnmw`) · gbOpen ADM3/4.
+  (`@cng`, resolved) · gbOpen ADM3/4.
 - **NEXT (recommended order before any npm publish):** (1) one normalization
-  of attribution casing in `@cnmw/spec`; (2) make a blocked handle's `result`
+  of attribution casing in `@cng/spec`; (2) make a blocked handle's `result`
   reject as specified, or rename the promise; (3) parallel row-group reads —
   838 requests for one S2 query is the biggest remaining performance lever;
   (4) a prebundled hyparquet to collapse the 27-file cold-load waterfall;

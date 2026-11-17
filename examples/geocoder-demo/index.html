@@ -17,19 +17,19 @@
   .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
 </style>
 <!--
-  Zero-build ESM, no bundler. @cnmw/* packages resolve via this import
+  Zero-build ESM, no bundler. @cng/* packages resolve via this import
   map's bare specifiers to their relative source files (design doc §4.3's
   "published import map" pattern, here pointed at this repo's own
   packages/ instead of a CDN, since nothing has been published yet).
   hyparquet itself is still pulled from a pinned, exact CDN URL --
-  @cnmw/geocoder-core/src/cdn.js does that internally, not this map.
+  @cng/geocoder-core/src/cdn.js does that internally, not this map.
 -->
 <script type="importmap">
 {
   "imports": {
-    "@cnmw/spec": "../../packages/spec/src/index.js",
-    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cnmw/maplibre": "../../packages/maplibre/src/index.js"
+    "@cng/spec": "../../packages/spec/src/index.js",
+    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cng/maplibre": "../../packages/maplibre/src/index.js"
   }
 }
 </script>
@@ -39,8 +39,8 @@
 <div id="status">Loading map…</div>
 
 <script type="module">
-import { Geocoder } from '@cnmw/geocoder-core';
-import { GeocoderControl } from '@cnmw/maplibre';
+import { Geocoder } from '@cng/geocoder-core';
+import { GeocoderControl } from '@cng/maplibre';
 // The ⚙ gazetteer picker (top-right): switches the ?index= param between
 // the three published gazetteers or a custom manifest URL, then reloads.
 // A copyable zero-dependency snippet -- see ../shared/gazetteer-picker.js.
@@ -97,7 +97,7 @@ const geocoder = new Geocoder({
   // "Loading full detail… ~N vertices" notice with a Cancel button while
   // it's in flight (geocoder.cancelUpgrade() keeps the simplified outline
   // if clicked), and defers the outline swap itself to an idle callback --
-  // see @cnmw/maplibre's README for why (MapLibre's GeoJSONSource#setData()
+  // see @cng/maplibre's README for why (MapLibre's GeoJSONSource#setData()
   // structured-clone cost at Canada-ADM0 scale) and this file's own
   // long-task measurement notes below.
   geometry: { resolution: 'both', upgradeDisplay: true },

@@ -1,4 +1,4 @@
-// @cnmw/spec -- bbox math and antimeridian handling (design doc §1.5).
+// @cng/spec -- bbox math and antimeridian handling (design doc §1.5).
 //
 // `BBox` is `[west, south, east, north]` in EPSG:4326 degrees. `west > east`
 // means the box crosses the antimeridian (the *signed* form, for display).

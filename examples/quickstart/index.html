@@ -10,22 +10,22 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
 <!--
-  The @cnmw packages are plain ESM with no build step, so an import map is
+  The @cng packages are plain ESM with no build step, so an import map is
   all the wiring there is. Nothing is on npm yet, so these point at this
   repo's own packages/ directory. When the packages publish, this block is
   the ONLY thing that changes -- swap each line for
-  https://cdn.jsdelivr.net/npm/@cnmw/<name>@0.1.0/src/index.js
+  https://cdn.jsdelivr.net/npm/@cng/<name>@0.1.0/src/index.js
   and the module code below is untouched.
 
-  hyparquet is NOT in this map: @cnmw/geocoder-core imports it itself from
+  hyparquet is NOT in this map: @cng/geocoder-core imports it itself from
   a pinned, exact CDN URL (packages/geocoder-core/src/cdn.js).
 -->
 <script type="importmap">
 {
   "imports": {
-    "@cnmw/spec": "../../packages/spec/src/index.js",
-    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cnmw/maplibre": "../../packages/maplibre/src/index.js"
+    "@cng/spec": "../../packages/spec/src/index.js",
+    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cng/maplibre": "../../packages/maplibre/src/index.js"
   }
 }
 </script>
@@ -48,8 +48,8 @@
 <div id="status">Loading…</div>
 
 <script type="module">
-import { Geocoder } from '@cnmw/geocoder-core';
-import { GeocoderControl } from '@cnmw/maplibre';
+import { Geocoder } from '@cng/geocoder-core';
+import { GeocoderControl } from '@cng/maplibre';
 import { mountGazetteerPicker } from '../shared/gazetteer-picker.js';
 
 const status = document.getElementById('status');
@@ -88,7 +88,7 @@ geocoder.on('load', (info) => {
   status.textContent = `Index ready: ${info.rows.toLocaleString()} places, levels ${info.levels.join('/')}, ${info.strategy}-load in ${info.loadMs.toFixed(0)} ms. Try "contra costa".`;
 });
 geocoder.on('select', ({ result, area }) => {
-  status.textContent = `${result.name} (${result.country}, ADM${result.level}) — bbox [${area.bbox.map((n) => n.toFixed(2)).join(', ')}], ${area.vertexCount.display} vertices. area.filterGeometry is ready for @cnmw/download-core.`;
+  status.textContent = `${result.name} (${result.country}, ADM${result.level}) — bbox [${area.bbox.map((n) => n.toFixed(2)).join(', ')}], ${area.vertexCount.display} vertices. area.filterGeometry is ready for @cng/download-core.`;
 });
 geocoder.on('error', (err) => { status.textContent = `${err.code}: ${err.message}`; });
 

@@ -1,9 +1,9 @@
-// @cnmw/upload-core -- the built-in GeoJSON reader (design doc §3.3: "Core
+// @cng/upload-core -- the built-in GeoJSON reader (design doc §3.3: "Core
 // registers GeoJSON only"; `registerReader()` is the seam a host app uses
 // to add shapefile-js / gdal3.js / etc. readers without upload-core
 // depending on them).
 
-import { CnmwError } from '@cnmw/spec';
+import { CnmwError } from '@cng/spec';
 import { extractRawFeatures, detectDeclaredCrs } from './geojson-parse.js';
 
 /** @type {import('./types.js').GeometryReader} */

@@ -1,10 +1,10 @@
-// @cnmw/maplibre -- unit tests for createEditTool's pure parts: the ring
+// @cng/maplibre -- unit tests for createEditTool's pure parts: the ring
 // geometry math (no DOM/map) and buildEditedArea's provenance (built
-// through @cnmw/spec's buildArea, no DOM at all).
+// through @cng/spec's buildArea, no DOM at all).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildArea } from '@cnmw/spec';
+import { buildArea } from '@cng/spec';
 import {
   openRingOf,
   closeRing,

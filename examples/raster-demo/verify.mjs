@@ -4,7 +4,7 @@
 //   * a real Sentinel-2 L2A COG on AWS Open Data (sentinel-cogs, CORS *,
 //     Accept-Ranges: bytes) for the pixels, via its Earth Search STAC Item.
 // No mocking, no local fixtures: geotiff.js is loaded from its pinned CDN
-// URL by @cnmw/raster-core at runtime, exactly as a zero-build consumer
+// URL by @cng/raster-core at runtime, exactly as a zero-build consumer
 // would get it.
 //
 // What it proves, in the browser:

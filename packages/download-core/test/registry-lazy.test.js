@@ -16,7 +16,7 @@ import {
   formatLoadState,
   onFormatState,
 } from '../src/registry.js';
-import { isCnmwError } from '@cnmw/spec';
+import { isCnmwError } from '@cng/spec';
 
 function uniqueId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2)}`;

@@ -1,4 +1,4 @@
-// @cnmw/upload-core -- shared GeoJSON-value extraction, used by both the
+// @cng/upload-core -- shared GeoJSON-value extraction, used by both the
 // built-in `geojson-reader.js` (File -> text -> JSON) and `areaFromGeoJson`
 // (an already-parsed JS value, e.g. pasted into `attachDropTarget`).
 

@@ -1,22 +1,22 @@
-// @cnmw/openlayers -- GeocoderControl (design doc §5.1, §5.2), the OL
+// @cng/openlayers -- GeocoderControl (design doc §5.1, §5.2), the OL
 // flavour.
 //
-// Same accessible combobox contract as @cnmw/maplibre's GeocoderControl
+// Same accessible combobox contract as @cng/maplibre's GeocoderControl
 // (ARIA 1.2 combobox-with-listbox, debounce, loading/empty/error states,
 // the design-call-#11 attribution line, matched highlighting, friendly
 // level labels, two-wave merge, IME gating, dark-mode CSS tokens) and the
 // same "no index fetch/ranking/simplification/Area-building here" rule.
 //
 // DUPLICATION NOTE: per the design doc (§5.2), the shared combobox lines
-// between this and @cnmw/maplibre's control live in an unpublished
+// between this and @cng/maplibre's control live in an unpublished
 // `packages/_ui` workspace "for later", not forced now -- this file
 // duplicates that logic (incl. ./combobox-helpers.js) rather than
-// reaching into @cnmw/maplibre. Real differences: OL's `Control` base
+// reaching into @cng/maplibre. Real differences: OL's `Control` base
 // class / `setMap` lifecycle instead of `onAdd`/`onRemove`, and the
 // projection bridge threaded through addAreaLayer/viewportProvider.
 
 import Control from 'ol/control/Control.js';
-import { normalizeName } from '@cnmw/spec';
+import { normalizeName } from '@cng/spec';
 
 import { addAreaLayer } from './area-layer.js';
 import { viewportProvider } from './viewport.js';
@@ -31,9 +31,9 @@ import { upgradeNoticeReducer, describeUpgradeNotice, HIDDEN_NOTICE_STATE } from
 
 let instanceCounter = 0;
 
-// See @cnmw/maplibre's geocoder-control.js for the rationale -- identical
+// See @cng/maplibre's geocoder-control.js for the rationale -- identical
 // here, duplicated rather than imported (this package doesn't depend on
-// @cnmw/maplibre's internals, only its public events).
+// @cng/maplibre's internals, only its public events).
 const UPGRADE_NOTICE_AUTO_HIDE_MS = 2600;
 
 function scheduleIdle(fn) {
@@ -44,7 +44,7 @@ function scheduleIdle(fn) {
   }
 }
 
-// Dark mode: see @cnmw/maplibre's geocoder-control.js for the override
+// Dark mode: see @cng/maplibre's geocoder-control.js for the override
 // hook rationale; identical token set here under the `-ol` class names.
 const CSS = `
 .cnmw-geocoder-ol, .cnmw-attribution-ctrl-ol {
@@ -198,7 +198,7 @@ function escapeHtml(s) {
 }
 
 // Default dropdown-option rendering; line-for-line the same as
-// @cnmw/maplibre's renderDefaultOption (see the DUPLICATION NOTE above).
+// @cng/maplibre's renderDefaultOption (see the DUPLICATION NOTE above).
 function renderDefaultOption(li, r, queryNorm) {
   const nameEl = document.createElement('span');
   nameEl.className = 'cnmw-option-name';
@@ -260,7 +260,7 @@ export class GeocoderControl extends Control {
     super({ element: container, target: options.target });
 
     this._options = options;
-    this.geocoder = options.geocoder; // host supplies it, same reasoning as @cnmw/maplibre
+    this.geocoder = options.geocoder; // host supplies it, same reasoning as @cng/maplibre
     this._area = null;
     this._listeners = new Map();
     this._results = [];
@@ -301,7 +301,7 @@ export class GeocoderControl extends Control {
 
     // Compact attribution (2026-11-13): ⓘ toggle + pill, mounted on the
     // map (bottom-left; OL's own attribution is bottom-right) in setMap,
-    // not inside this control's container -- same UX as @cnmw/maplibre.
+    // not inside this control's container -- same UX as @cng/maplibre.
     const attribution = document.createElement('div');
     attribution.className = 'cnmw-attribution';
     attribution.id = `${this._instanceId}-attribution`;
@@ -368,7 +368,7 @@ export class GeocoderControl extends Control {
   // Click-outside listener + geocoder event subscriptions are
   // registered/torn down here (not in _buildDom, which runs once in the
   // constructor) so discarding the control never leaves a document-level
-  // listener pinning it alive forever -- the leak @cnmw/maplibre's
+  // listener pinning it alive forever -- the leak @cng/maplibre's
   // onRemove already fixed; this adapter never had the fix at all.
   setMap(map) {
     super.setMap(map);
@@ -406,7 +406,7 @@ export class GeocoderControl extends Control {
     document.addEventListener('click', this._onDocumentClick);
 
     // Progressive select() + two-wave smoothness: identical wiring to
-    // @cnmw/maplibre's `onAdd` -- see that file's comments for the full
+    // @cng/maplibre's `onAdd` -- see that file's comments for the full
     // rationale. Previously missing entirely from this control (OL
     // selections never reflected a background geometry upgrade, and a
     // second search wave never reached the DOM here).
@@ -426,7 +426,7 @@ export class GeocoderControl extends Control {
       if (this._area && area.id === this._area.id) {
         this._area = area;
         this._dispatchUpgradeNotice({ type: 'upgraded' });
-        // Deferred jank mitigation -- see @cnmw/maplibre's identical
+        // Deferred jank mitigation -- see @cng/maplibre's identical
         // handler for the full rationale (GeoJSONSource#setData() /
         // structured-clone cost at `upgradeDisplay`-scale geometry).
         scheduleIdle(() => {
@@ -436,7 +436,7 @@ export class GeocoderControl extends Control {
         });
       }
     });
-    // See @cnmw/maplibre's onAdd for why `_lastRenderedQuery` is required
+    // See @cng/maplibre's onAdd for why `_lastRenderedQuery` is required
     // here: geocoder-core's Emitter is synchronous, so a single-wave
     // search's own 'results' event fires *during* the search() call this
     // control is awaiting, before _doSearch's direct render has run --
@@ -665,7 +665,7 @@ export class GeocoderControl extends Control {
     }
   }
 
-  /** @param {import('@cnmw/spec').Area|null} area */
+  /** @param {import('@cng/spec').Area|null} area */
   setArea(area) {
     this._area = area;
     this._outline?.setArea(area);
@@ -679,7 +679,7 @@ export class GeocoderControl extends Control {
   /**
    * Mount the compact attribution widget into the map's stop-event
    * overlay container (so clicks on it never reach the map). Mirrors
-   * @cnmw/maplibre's _mountAttribution; torn down in setMap.
+   * @cng/maplibre's _mountAttribution; torn down in setMap.
    * @param {import('ol/Map').default} map
    */
   _mountAttribution(map) {
@@ -736,7 +736,7 @@ export class GeocoderControl extends Control {
           : escapeHtml(a.text);
         // a.shareAlike (documented) vs a.share_alike (what a manifest's
         // raw JSON actually carries through today, unconverted) -- see
-        // @cnmw/maplibre's _renderAttribution and this package's
+        // @cng/maplibre's _renderAttribution and this package's
         // UX-polish report.
         const tag = a.shareAlike ?? a.share_alike
           ? ` <span class="cnmw-sharealike" title="Share-alike license: data derived from this source must be republished under the same terms">ODbL</span>`
@@ -755,7 +755,7 @@ export class GeocoderControl extends Control {
     this.setArea(null);
   }
 
-  // "upgradeDisplay" notice -- identical to @cnmw/maplibre's
+  // "upgradeDisplay" notice -- identical to @cng/maplibre's
   // geocoder-control.js; see that file for the full rationale.
   _dispatchUpgradeNotice(event) {
     this._upgradeNoticeState = upgradeNoticeReducer(this._upgradeNoticeState, event);

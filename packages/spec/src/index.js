@@ -1,4 +1,4 @@
-// @cnmw/spec -- public entry point.
+// @cng/spec -- public entry point.
 //
 // Deviation from the design doc's three-build-artifact packaging (§4.1):
 // this experiment phase ships plain ESM + JSDoc with NO build step at all
@@ -29,7 +29,7 @@ export { visvalingamRingAsync, simplifyToVertexCeilingAsync } from './simplify-a
 export { yieldToMain, forEachChunked } from './yield.js';
 export { CnmwError, CancelledError, CeilingExceededError, isCnmwError } from './errors.js';
 
-// §O11: a runtime singleton guard so two different `@cnmw/spec` versions
+// §O11: a runtime singleton guard so two different `@cng/spec` versions
 // loaded on one zero-build page don't silently diverge on `instanceof`
 // checks. A second, different version logs one loud warning.
 (function registerSingleton() {
@@ -39,7 +39,7 @@ export { CnmwError, CancelledError, CeilingExceededError, isCnmwError } from './
   if (existing && existing.version !== VERSION) {
     // eslint-disable-next-line no-console
     console.warn(
-      `@cnmw/spec: multiple versions loaded on this page (${existing.version} and ${VERSION}). ` +
+      `@cng/spec: multiple versions loaded on this page (${existing.version} and ${VERSION}). ` +
         'instanceof checks and Area validation may diverge; the first-loaded version wins.',
     );
     return;

@@ -1,7 +1,7 @@
-// @cnmw/download-core -- public entry point.
+// @cng/download-core -- public entry point.
 //
 // Deviation from the design doc's three-build-artifact packaging (§4.1),
-// matching @cnmw/spec and @cnmw/geocoder-core: this experiment phase ships
+// matching @cng/spec and @cng/geocoder-core: this experiment phase ships
 // plain ESM + JSDoc with NO build step. A consumer imports this file
 // directly; dependencies on hyparquet/hyparquet-writer are loaded lazily
 // from pinned CDN URLs (see src/cdn.js), never bundled in.
@@ -24,7 +24,7 @@ export { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 export { boundedExact, boundedRange, addBounded, sumBounded, scaleBounded, capBounded, isEstimateWide } from './bounded.js';
 export { enumeratePartitions, partitionPruneCascade, resolveMirrorPartUrl } from './partitions.js';
 export { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, predicateExcludesRowGroup, avgColumnBytesPerRow, STATS_PRUNABLE_OPS } from './prune.js';
-export { CnmwError, CancelledError, CeilingExceededError, isCnmwError } from '@cnmw/spec';
+export { CnmwError, CancelledError, CeilingExceededError, isCnmwError } from '@cng/spec';
 
 import { registerFormat, registerEngine, getFormat, getEngine } from './registry.js';
 import { createGeoJsonFormat } from './formats/geojson.js';

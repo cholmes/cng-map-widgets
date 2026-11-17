@@ -1,5 +1,5 @@
-// @cnmw/format-flatgeobuf -- pinned CDN URL + test-injection seam, the
-// same pattern as @cnmw/format-gpkg/src/cdn.js and download-core's own
+// @cng/format-flatgeobuf -- pinned CDN URL + test-injection seam, the
+// same pattern as @cng/format-gpkg/src/cdn.js and download-core's own
 // cdn.js. flatgeobuf's `geojson` submodule (not its full `.` export,
 // which also pulls in the generic Arrow-adjacent machinery this plugin
 // never touches) is what actually serializes a FeatureCollection; jsdelivr's

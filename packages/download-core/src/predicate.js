@@ -1,4 +1,4 @@
-// @cnmw/download-core -- `where[]` structured predicate evaluation
+// @cng/download-core -- `where[]` structured predicate evaluation
 // (design doc §2.2 Predicate).
 //
 // `col` may be a dotted path into a struct (`names.primary`) with a `[n]`
@@ -6,7 +6,7 @@
 // schema and so are passed through unchecked (we simply index with
 // whatever string/number the path segment is).
 
-import { CnmwError } from '@cnmw/spec';
+import { CnmwError } from '@cng/spec';
 
 /**
  * Resolve a dotted/bracketed path against a row object.

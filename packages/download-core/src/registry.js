@@ -1,4 +1,4 @@
-// @cnmw/download-core -- `registerFormat`/`registerEngine` seams (design
+// @cng/download-core -- `registerFormat`/`registerEngine` seams (design
 // doc §3.4, §4.4 rule 2: "registered, not lazily imported").
 //
 // Amendment, 2026-11-12 -- reason: Chris's requirement that a heavy format
@@ -194,7 +194,7 @@ export async function resolveFormat(id) {
       lazyLoadState.set(id, 'failed');
       lazyLoadPromises.delete(id);
       emitFormatState(id, 'failed');
-      const { CnmwError } = await import('@cnmw/spec');
+      const { CnmwError } = await import('@cng/spec');
       throw new CnmwError(
         `Failed to load the "${id}" format plugin: ${err?.message ?? err}`,
         'FORMAT_LOAD_FAILED',
@@ -214,7 +214,7 @@ export async function resolveFormat(id) {
  * A `load()` may resolve to the plugin itself, an ESM module whose
  * `default` export is the plugin or a zero-arg factory for it, or a
  * zero-arg factory directly -- every shape this repo's own lazy plugin
- * packages (`@cnmw/format-gpkg`, `@cnmw/format-flatgeobuf`) use. Normalized
+ * packages (`@cng/format-gpkg`, `@cng/format-flatgeobuf`) use. Normalized
  * here once so every descriptor's `load()` can return whichever is most
  * natural for how its heavy dependency's module is shaped.
  * @param {unknown} loaded

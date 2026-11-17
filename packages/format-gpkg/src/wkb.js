@@ -1,4 +1,4 @@
-// @cnmw/format-gpkg -- GeoJSON <-> WKB, and the GeoPackage binary geometry
+// @cng/format-gpkg -- GeoJSON <-> WKB, and the GeoPackage binary geometry
 // header (OGC GeoPackage spec, clause "GeoPackage Binary Header"). No
 // dependency: hyparquet-writer (which download-core's own geoparquet
 // plugin uses for the same job) is a CDN-loaded, parquet-specific
@@ -35,7 +35,7 @@ function wkbByteLength(geometry) {
     case 'MultiPolygon':
       return 1 + 4 + 4 + geometry.coordinates.reduce((sum, poly) => sum + 1 + 4 + ringsByteLength(poly), 0);
     default:
-      throw new Error(`@cnmw/format-gpkg: unsupported geometry type "${geometry.type}" (supports Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon)`);
+      throw new Error(`@cng/format-gpkg: unsupported geometry type "${geometry.type}" (supports Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon)`);
   }
 }
 
@@ -107,7 +107,7 @@ function writeGeometry(view, c, geometry) {
       }
       return;
     default:
-      throw new Error(`@cnmw/format-gpkg: unsupported geometry type "${geometry.type}"`);
+      throw new Error(`@cng/format-gpkg: unsupported geometry type "${geometry.type}"`);
   }
 }
 
@@ -251,7 +251,7 @@ export function bboxOfWkb(bytes) {
         readRings(c, le);
       }
     } else {
-      throw new Error(`@cnmw/format-gpkg: bboxOfWkb: unsupported geometry type ${type}`);
+      throw new Error(`@cng/format-gpkg: bboxOfWkb: unsupported geometry type ${type}`);
     }
   }
   readGeom({ offset: 0 });

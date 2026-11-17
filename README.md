@@ -54,13 +54,13 @@ renders the attribution line, with zero console errors.
 <!-- Plain ESM, no bundler. Nothing is on npm yet, so these point at this
      repo's own packages/. When they publish, this block is the only thing
      that changes: swap each line for
-     https://cdn.jsdelivr.net/npm/@cnmw/<name>@0.1.0/src/index.js -->
+     https://cdn.jsdelivr.net/npm/@cng/<name>@0.1.0/src/index.js -->
 <script type="importmap">
 {
   "imports": {
-    "@cnmw/spec": "../../packages/spec/src/index.js",
-    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cnmw/maplibre": "../../packages/maplibre/src/index.js"
+    "@cng/spec": "../../packages/spec/src/index.js",
+    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cng/maplibre": "../../packages/maplibre/src/index.js"
   }
 }
 </script>
@@ -69,8 +69,8 @@ renders the attribution line, with zero console errors.
 <body>
 <div id="map"></div>
 <script type="module">
-import { Geocoder } from '@cnmw/geocoder-core';
-import { GeocoderControl } from '@cnmw/maplibre';
+import { Geocoder } from '@cng/geocoder-core';
+import { GeocoderControl } from '@cng/maplibre';
 
 const map = new maplibregl.Map({
   container: 'map',
@@ -92,7 +92,7 @@ const geocoder = new Geocoder({
 
 geocoder.on('select', ({ result, area }) => {
   console.log(result.name, area.bbox, area.vertexCount.display);
-  // `area` is now ready to hand to @cnmw/download-core.
+  // `area` is now ready to hand to @cng/download-core.
 });
 
 // The control owns the combobox, the outline layer, fitBounds and the
@@ -133,14 +133,14 @@ range read into a full download. `serve.py` implements real partial content.
                                     │  HTTP range reads, no server
     THE WIDGETS (plain ESM, zero build)
     ┌───────────────────────────────▼──────────────────────────────────┐
-    │  @cnmw/geocoder-core    @cnmw/upload-core    (a draw tool)       │
+    │  @cng/geocoder-core    @cng/upload-core    (a draw tool)       │
     │  names index → ranked   GeoJSON file →       map draw →          │
     │  results → geometry     repair →                                 │
     │          │                      │                    │           │
     │          └──────────►  A r e a  ◄────────────────────┘           │
     │                           │        ← the only coupling           │
     │                           ▼                                      │
-    │               @cnmw/download-core    ◄── DatasetDescriptor       │
+    │               @cng/download-core    ◄── DatasetDescriptor       │
     │               resolve / prune /          + FilterSpec            │
     │               estimate / download        (plain JSON, also the   │
     │                           │               QGIS-shared artifact)  │
@@ -149,8 +149,8 @@ range read into a full download. `serve.py` implements real partial content.
     │      geojson writer  geoparquet     format plugins               │
     │        (in core)      (in core)     (lazy, weight shown)         │
     │                                                                  │
-    │  @cnmw/spec   the Area + error taxonomy + pure geo helpers       │
-    │  @cnmw/maplibre · @cnmw/openlayers   thin UI adapters            │
+    │  @cng/spec   the Area + error taxonomy + pure geo helpers       │
+    │  @cng/maplibre · @cng/openlayers   thin UI adapters            │
     └───────────────────────────────┬──────────────────────────────────┘
                                     │
     CONSUMING APPS
@@ -185,12 +185,12 @@ Three ideas carry the design:
 
 | package | what it does | size (gz, comments stripped) |
 |---|---|---|
-| [`@cnmw/spec`](packages/spec/README.md) | The `Area` contract, the `CnmwError` taxonomy, and pure helpers: bbox + antimeridian split, Visvalingam simplify (sync + chunked async), WKB → GeoJSON, name normalization. **No I/O, no dependencies.** | 6.2 KiB |
-| [`@cnmw/geocoder-core`](packages/geocoder-core/README.md) | Manifest + index load (full or HTTP-range), prefix search, ranking with result diversity, geometry resolution → `Area`. No DOM. | 11.0 KiB |
-| [`@cnmw/upload-core`](packages/upload-core/README.md) | GeoJSON file/drop/paste → the same `Area`, with every repair reported. | 4.3 KiB |
-| [`@cnmw/download-core`](packages/download-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 19.8 KiB |
-| [`@cnmw/maplibre`](packages/maplibre/README.md) | MapLibre adapter: search combobox control, `Area` outline layer, viewport provider, antimeridian-aware fitBounds. | 4.3 KiB |
-| [`@cnmw/openlayers`](packages/openlayers/README.md) | The same five things in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. | 5.1 KiB |
+| [`@cng/spec`](packages/spec/README.md) | The `Area` contract, the `CnmwError` taxonomy, and pure helpers: bbox + antimeridian split, Visvalingam simplify (sync + chunked async), WKB → GeoJSON, name normalization. **No I/O, no dependencies.** | 6.2 KiB |
+| [`@cng/geocoder-core`](packages/geocoder-core/README.md) | Manifest + index load (full or HTTP-range), prefix search, ranking with result diversity, geometry resolution → `Area`. No DOM. | 11.0 KiB |
+| [`@cng/upload-core`](packages/upload-core/README.md) | GeoJSON file/drop/paste → the same `Area`, with every repair reported. | 4.3 KiB |
+| [`@cng/download-core`](packages/download-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 19.8 KiB |
+| [`@cng/maplibre`](packages/maplibre/README.md) | MapLibre adapter: search combobox control, `Area` outline layer, viewport provider, antimeridian-aware fitBounds. | 4.3 KiB |
+| [`@cng/openlayers`](packages/openlayers/README.md) | The same five things in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. | 5.1 KiB |
 
 Output-format plugins. Each registers itself with its **weight declared up
 front**, and only fetches its implementation if a user actually picks that
@@ -199,16 +199,16 @@ charge nothing until then.
 
 | package | format | its own weight |
 |---|---|---|
-| [`@cnmw/format-gpkg`](packages/format-gpkg/README.md) | GeoPackage (a hand-written SQLite vector-features profile over sql.js) | 4.7 KiB + ~340 KB sql.js on first use |
-| [`@cnmw/format-shapefile`](packages/format-shapefile/README.md) | Shapefile `.shp.zip` — zero dependencies, no wasm, with Shapefile's real limits enforced | 6.4 KiB |
-| [`@cnmw/format-flatgeobuf`](packages/format-flatgeobuf/README.md) | FlatGeobuf, via the official package's GeoJSON serializer | 1.8 KiB + ~10 KB on first use |
-| [`@cnmw/format-extras`](packages/format-extras/README.md) | CSV (attributes + WKT) and Esri JSON — cheap enough to register eagerly | 3.3 KiB |
+| [`@cng/format-gpkg`](packages/format-gpkg/README.md) | GeoPackage (a hand-written SQLite vector-features profile over sql.js) | 4.7 KiB + ~340 KB sql.js on first use |
+| [`@cng/format-shapefile`](packages/format-shapefile/README.md) | Shapefile `.shp.zip` — zero dependencies, no wasm, with Shapefile's real limits enforced | 6.4 KiB |
+| [`@cng/format-flatgeobuf`](packages/format-flatgeobuf/README.md) | FlatGeobuf, via the official package's GeoJSON serializer | 1.8 KiB + ~10 KB on first use |
+| [`@cng/format-extras`](packages/format-extras/README.md) | CSV (attributes + WKT) and Esri JSON — cheap enough to register eagerly | 3.3 KiB |
 
 And one package that is not about vectors at all:
 
 | package | what it does | size |
 |---|---|---|
-| [`@cnmw/raster-core`](packages/raster-core/README.md) | Clip a window out of a remote Cloud-Optimized GeoTIFF in the browser, band-subset it from STAC metadata, and save a valid GeoTIFF — windowed range reads, an exact pre-download size estimate, a memory ceiling. | 11.8 KiB |
+| [`@cng/raster-core`](packages/raster-core/README.md) | Clip a window out of a remote Cloud-Optimized GeoTIFF in the browser, band-subset it from STAC metadata, and save a valid GeoTIFF — windowed range reads, an exact pre-download size estimate, a memory ceiling. | 11.8 KiB |
 
 Sizes are `cat src/*.js | gzip -9` with comments stripped — the honest stand-in
 for the minified build that does not exist yet. Every core package is inside
@@ -336,27 +336,27 @@ zero-build consumption (design doc §4.4):
 
 Verified working, against live published data, as of 2026-11-12:
 
-- **`@cnmw/spec`** — `Area` build/validate/round-trip, antimeridian split,
+- **`@cng/spec`** — `Area` build/validate/round-trip, antimeridian split,
   sync and async simplification, WKB decode.
-- **`@cnmw/geocoder-core`** — full-load and range index paths, ranking with
+- **`@cng/geocoder-core`** — full-load and range index paths, ranking with
   dedupe and viewport boost, `select()` at ADM0/1/2 including the
   `geometry_ref` fast path and the ADM0 join-on-country special case,
   progressive display→full upgrade, two-wave search against a
   `prominent_index`.
-- **`@cnmw/upload-core`** — GeoJSON read, the full repair pipeline,
+- **`@cng/upload-core`** — GeoJSON read, the full repair pipeline,
   multi-feature collect, every refusal path.
-- **`@cnmw/download-core`** — single-file, hive-partitioned and
+- **`@cng/download-core`** — single-file, hive-partitioned and
   STAC-GeoParquet sources resolved from collection JSON; the pruning cascade
   (27 FIRMS files → 1 on a time filter); estimates; the ceiling refusal and
   `acceptCeiling()`; GeoJSON and GeoParquet output with a GeoParquet 1.1
   covering; real downloads from FTW, FIRMS and Sentinel-2.
-- **`@cnmw/maplibre` / `@cnmw/openlayers`** — the combobox control, outline
+- **`@cng/maplibre` / `@cng/openlayers`** — the combobox control, outline
   layer with a filter-geometry ghost, antimeridian fit, and (OpenLayers) the
   4326 ⇄ 3857 bridge.
 
 Also landed and documented in their own READMEs: the four output-format
 plugins (GeoPackage, Shapefile, FlatGeobuf, CSV/Esri JSON) and
-`@cnmw/raster-core`'s COG clip-and-download.
+`@cng/raster-core`'s COG clip-and-download.
 
 Not built: exact `clip`, a DuckDB engine, multi-source search, the published
 JSON Schemas, and any build step at all (no `dist/`, no minification, no

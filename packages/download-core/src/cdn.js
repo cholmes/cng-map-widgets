@@ -1,11 +1,11 @@
-// @cnmw/download-core -- pinned CDN dependency URLs + a test-only injection
+// @cng/download-core -- pinned CDN dependency URLs + a test-only injection
 // seam.
 //
 // Design doc §4.2 requires externalizing hyparquet (and friends) to a
 // pinned, *exact* CDN URL rather than inlining them, loaded via dynamic
 // `import()` of the absolute URL (never a bare specifier -- design doc §4.4
 // rule 2). This package pins the same hyparquet/hyparquet-compressors
-// versions `@cnmw/geocoder-core` pins (1.33.0 / 1.1.3), per §4.2's
+// versions `@cng/geocoder-core` pins (1.33.0 / 1.1.3), per §4.2's
 // version-unification obligation: one hyparquet version per release train.
 //
 // hyparquet-writer's own `src/index.js` has a bare `import 'hyparquet'`

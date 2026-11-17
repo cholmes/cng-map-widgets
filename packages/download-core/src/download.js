@@ -1,9 +1,9 @@
-// @cnmw/download-core -- `download()` / `DownloadHandle` (design doc §3.4,
+// @cng/download-core -- `download()` / `DownloadHandle` (design doc §3.4,
 // §3.5). Returns synchronously: "A handle that only existed after an await
 // could not be cancelled during planning, which is exactly when a user
 // changes their mind."
 
-import { CnmwError, CancelledError, CeilingExceededError, fromAreaDocument } from '@cnmw/spec';
+import { CnmwError, CancelledError, CeilingExceededError, fromAreaDocument } from '@cng/spec';
 import { Emitter, LatestWinsStream } from './events.js';
 import { planRequest, finalizeEstimate } from './estimate.js';
 import { createHyparquetEngine } from './engine-hyparquet.js';
@@ -32,7 +32,7 @@ function schemaFor(plan) {
 
 /**
  * @param {import('./types.js').DatasetDescriptor} dataset
- * @param {import('@cnmw/spec').Area|null} area
+ * @param {import('@cng/spec').Area|null} area
  * @param {import('./types.js').FilterSpec} filter
  * @param {import('./types.js').OutputRequest} output
  * @param {import('./types.js').DownloadCoreOptions & { sink?: import('./types.js').Sink, acceptCeiling?: boolean }} [options]
@@ -104,7 +104,7 @@ export function download(dataset, area, filter, output, options = {}) {
       // Design doc §3.4 amendment (lazy format loading): resolve the
       // format *inside* run(), not synchronously before the handle is
       // returned, so a lazy format's CDN fetch (e.g. the ~340KB sql.js
-      // wasm @cnmw/format-gpkg loads on demand) only starts once a
+      // wasm @cng/format-gpkg loads on demand) only starts once a
       // download for that format id actually begins -- never merely
       // because the format was registered or listed. `getFormat` first:
       // avoids the 'loading-format' progress event and its emitter
@@ -217,7 +217,7 @@ export function download(dataset, area, filter, output, options = {}) {
             limit: filter.limit,
             // design doc §3.4's `DownloadCoreOptions.maxConcurrentRequests`,
             // handed to the engine rather than read by it off the options
-            // object, because an alternative engine (`@cnmw/engine-duckdb`)
+            // object, because an alternative engine (`@cng/engine-duckdb`)
             // gets the same budget through the same `run()` ctx. Left
             // `undefined` when the caller said nothing, so the engine's own
             // default (12, see engine-hyparquet.js) applies.
@@ -240,7 +240,7 @@ export function download(dataset, area, filter, output, options = {}) {
       // `warnings` is an additive, optional field on `FormatWriter.close()`'s
       // result (design doc §3.4 amendment): a format plugin's own
       // honesty mechanism for the limits only it knows about (e.g.
-      // @cnmw/format-shapefile's 10-char field name truncation, one
+      // @cng/format-shapefile's 10-char field name truncation, one
       // shape type per file, ~2GiB size ceiling -- see that package's
       // README). Re-emitted through the same 'warning' event
       // EstimateWarning already uses, and carried on the DownloadResult,
@@ -399,7 +399,7 @@ function sinkResultOf(sink) {
  * (design doc §2.3/§3.4). `request.filter.area` is honored when it is an
  * inline `AreaDocument`; `{ ref: 'area' }` defers to the `area` argument.
  * @param {import('./types.js').DownloadRequest} request
- * @param {import('@cnmw/spec').Area|null} area
+ * @param {import('@cng/spec').Area|null} area
  * @param {import('./types.js').DownloadCoreOptions & { sink?: import('./types.js').Sink, acceptCeiling?: boolean }} [options]
  */
 export function downloadRequest(request, area, options = {}) {

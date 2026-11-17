@@ -49,20 +49,20 @@
   Zero-build ESM, no bundler (design doc §4.3's "published import map"
   pattern, pointed at this repo's own packages/ instead of a CDN since
   nothing has been published yet). hyparquet/hyparquet-writer themselves
-  are pulled from pinned, exact CDN URLs by @cnmw/download-core's
+  are pulled from pinned, exact CDN URLs by @cng/download-core's
   src/cdn.js internally, not by this map.
 -->
 <script type="importmap">
 {
   "imports": {
-    "@cnmw/spec": "../../packages/spec/src/index.js",
-    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cnmw/maplibre": "../../packages/maplibre/src/index.js",
-    "@cnmw/download-core": "../../packages/download-core/src/index.js",
-    "@cnmw/format-gpkg": "../../packages/format-gpkg/src/index.js",
-    "@cnmw/format-shapefile": "../../packages/format-shapefile/src/index.js",
-    "@cnmw/format-flatgeobuf": "../../packages/format-flatgeobuf/src/index.js",
-    "@cnmw/format-extras": "../../packages/format-extras/src/index.js"
+    "@cng/spec": "../../packages/spec/src/index.js",
+    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cng/maplibre": "../../packages/maplibre/src/index.js",
+    "@cng/download-core": "../../packages/download-core/src/index.js",
+    "@cng/format-gpkg": "../../packages/format-gpkg/src/index.js",
+    "@cng/format-shapefile": "../../packages/format-shapefile/src/index.js",
+    "@cng/format-flatgeobuf": "../../packages/format-flatgeobuf/src/index.js",
+    "@cng/format-extras": "../../packages/format-extras/src/index.js"
   }
 }
 </script>
@@ -104,8 +104,8 @@
 </div>
 
 <script type="module">
-import { Geocoder, DEFAULT_INDEX_URL } from '@cnmw/geocoder-core';
-import { GeocoderControl, createDrawTool, createEditTool } from '@cnmw/maplibre';
+import { Geocoder, DEFAULT_INDEX_URL } from '@cng/geocoder-core';
+import { GeocoderControl, createDrawTool, createEditTool } from '@cng/maplibre';
 import {
   estimate,
   download,
@@ -113,14 +113,14 @@ import {
   CeilingExceededError,
   registerLazyFormat,
   formats as listFormats,
-} from '@cnmw/download-core';
+} from '@cng/download-core';
 
 // Heavy/lazy output formats (design doc §3.4 amendment,
 // experiments/e10-heavy-formats/RESULTS.md §8: "the lazy-loading registry
 // amendment"). `registerLazyFormat` only lists the id/label/weight -- none
 // of these fetch anything over the network until a `download()` for that
 // format id actually runs. GeoJSON and GeoParquet need no registration
-// here: they're @cnmw/download-core's own eager built-ins (registered as a
+// here: they're @cng/download-core's own eager built-ins (registered as a
 // side effect of importing that package).
 //
 // `format-gpkg` is the heavy one (sql.js, ~340KB min+gz) and
@@ -131,10 +131,10 @@ import {
 // picker can list and weight every non-built-in format through one
 // uniform code path -- exactly the thing RESULTS.md §8 says the registry
 // was designed to demonstrate.
-import { gpkgFormatDescriptor } from '@cnmw/format-gpkg';
-import { shapefileFormatDescriptor } from '@cnmw/format-shapefile';
-import { flatGeobufFormatDescriptor } from '@cnmw/format-flatgeobuf';
-import { csvFormatDescriptor, esriJsonFormatDescriptor } from '@cnmw/format-extras';
+import { gpkgFormatDescriptor } from '@cng/format-gpkg';
+import { shapefileFormatDescriptor } from '@cng/format-shapefile';
+import { flatGeobufFormatDescriptor } from '@cng/format-flatgeobuf';
+import { csvFormatDescriptor, esriJsonFormatDescriptor } from '@cng/format-extras';
 
 registerLazyFormat(gpkgFormatDescriptor);
 registerLazyFormat(shapefileFormatDescriptor);
@@ -240,7 +240,7 @@ function currentEntry() {
   return DATASETS.find((d) => d.key === datasetSelect.value);
 }
 
-// --- Area (search reuses @cnmw/geocoder-core + @cnmw/maplibre, pointed at
+// --- Area (search reuses @cng/geocoder-core + @cng/maplibre, pointed at
 // the LIVE published geoBoundaries gazetteer) --------------------------
 //
 // Default: the published portolan-mirrors/geoboundaries-catalog manifest

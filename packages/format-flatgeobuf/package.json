@@ -1,7 +1,7 @@
 {
-  "name": "@cnmw/format-flatgeobuf",
+  "name": "@cng/format-flatgeobuf",
   "version": "0.1.0",
-  "description": "FlatGeobuf output for @cnmw/download-core, wrapping the official flatgeobuf package's GeoJSON serializer. Measured ~10KB (min+gz) for the geojson submodule this plugin actually loads -- lighter than the design doc's original ~25KB estimate.",
+  "description": "FlatGeobuf output for @cng/download-core, wrapping the official flatgeobuf package's GeoJSON serializer. Measured ~10KB (min+gz) for the geojson submodule this plugin actually loads -- lighter than the design doc's original ~25KB estimate.",
   "keywords": [
     "flatgeobuf",
     "fgb",
@@ -26,7 +26,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cnmw/spec": "0.1.0"
+    "@cng/spec": "0.1.0"
   },
   "devDependencies": {
     "flatgeobuf": "4.6.1"

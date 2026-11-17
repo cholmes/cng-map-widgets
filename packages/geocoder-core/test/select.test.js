@@ -97,7 +97,7 @@ const RESULT_B = { featureId: 'B', name: 'Beta', level: 0, country: 'ZZZ', bbox:
  * `makeDeps()`, the boundary fetch returns a geometry big enough
  * (`vertexCount`) to trip `buildArea`'s `maxSyncInputVertices` guard --
  * geocoder-core's default filterVertexCeiling is 10,000, so anything over
- * @cnmw/spec's `MAX_SYNC_SIMPLIFY_VERTICES` (1,500) but under 10,000 is
+ * @cng/spec's `MAX_SYNC_SIMPLIFY_VERTICES` (1,500) but under 10,000 is
  * enough to force a real (non-early-return) attempt that the guard then
  * intercepts. `simplifyToVertexCeilingAsync` here is a *working* fake
  * (not the always-'none' one `makeDeps` uses): it actually reports a

@@ -42,10 +42,10 @@
 <script type="importmap">
 {
   "imports": {
-    "@cnmw/spec": "../../packages/spec/src/index.js",
-    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cnmw/maplibre": "../../packages/maplibre/src/index.js",
-    "@cnmw/download-core": "../../packages/download-core/src/index.js"
+    "@cng/spec": "../../packages/spec/src/index.js",
+    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cng/maplibre": "../../packages/maplibre/src/index.js",
+    "@cng/download-core": "../../packages/download-core/src/index.js"
   }
 }
 </script>
@@ -59,7 +59,7 @@
     "Type in the country and go" — Sentinel-2 Collection-1 L2A scene
     footprints, republished as STAC-GeoParquet by tge-labs/s2-stac-geoparquet:
     30.4M item rows. The ceiling/refusal stress test for
-    <code>@cnmw/download-core</code>.
+    <code>@cng/download-core</code>.
   </p>
   <div id="status" style="font-size:12px;color:#555;">Loading dataset descriptor…</div>
 
@@ -107,14 +107,14 @@
 </div>
 
 <script type="module">
-import { Geocoder } from '@cnmw/geocoder-core';
-import { GeocoderControl } from '@cnmw/maplibre';
+import { Geocoder } from '@cng/geocoder-core';
+import { GeocoderControl } from '@cng/maplibre';
 import {
   resolveDataset,
   estimate,
   download,
   memorySink,
-} from '@cnmw/download-core';
+} from '@cng/download-core';
 
 const statusEl = document.getElementById('status');
 const setStatus = (text) => { statusEl.textContent = text; };

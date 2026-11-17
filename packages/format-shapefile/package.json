@@ -1,7 +1,7 @@
 {
-  "name": "@cnmw/format-shapefile",
+  "name": "@cng/format-shapefile",
   "version": "0.1.0",
-  "description": "Shapefile output for @cnmw/download-core: a zero-dependency, zero-wasm .shp/.shx/.dbf/.prj/.cpg writer bundled into one .shp.zip, with Shapefile's real limits (10-char field names, one shape type per file, ~2GiB size) surfaced as warnings instead of silent mangling.",
+  "description": "Shapefile output for @cng/download-core: a zero-dependency, zero-wasm .shp/.shx/.dbf/.prj/.cpg writer bundled into one .shp.zip, with Shapefile's real limits (10-char field names, one shape type per file, ~2GiB size) surfaced as warnings instead of silent mangling.",
   "keywords": [
     "shapefile",
     "shp",
@@ -27,6 +27,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cnmw/spec": "0.1.0"
+    "@cng/spec": "0.1.0"
   }
 }

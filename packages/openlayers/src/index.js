@@ -1,6 +1,6 @@
-// @cnmw/openlayers -- public entry point.
+// @cng/openlayers -- public entry point.
 //
-// Same packaging deviation as @cnmw/spec/@cnmw/maplibre (see their
+// Same packaging deviation as @cng/spec/@cng/maplibre (see their
 // index.js files): plain ESM + JSDoc, no build step, for this experiment
 // phase. `ol` is a peer dependency, loaded by the host page -- in a
 // bundled app from node_modules, in a zero-build page via an import-map

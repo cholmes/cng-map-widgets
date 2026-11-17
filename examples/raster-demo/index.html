@@ -34,17 +34,17 @@
 </style>
 <!--
   Zero-build ESM (design doc §4.3), pointed at this repo's packages/.
-  geotiff.js itself is pulled by @cnmw/raster-core's src/cdn.js from an
+  geotiff.js itself is pulled by @cng/raster-core's src/cdn.js from an
   exact pinned CDN URL, lazily, the first time a raster is opened.
 -->
 <script type="importmap">
 {
   "imports": {
-    "@cnmw/spec": "../../packages/spec/src/index.js",
-    "@cnmw/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cnmw/maplibre": "../../packages/maplibre/src/index.js",
-    "@cnmw/download-core": "../../packages/download-core/src/index.js",
-    "@cnmw/raster-core": "../../packages/raster-core/src/index.js"
+    "@cng/spec": "../../packages/spec/src/index.js",
+    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cng/maplibre": "../../packages/maplibre/src/index.js",
+    "@cng/download-core": "../../packages/download-core/src/index.js",
+    "@cng/raster-core": "../../packages/raster-core/src/index.js"
   }
 }
 </script>
@@ -93,9 +93,9 @@
 </div>
 
 <script type="module">
-import { Geocoder } from '@cnmw/geocoder-core';
-import { GeocoderControl } from '@cnmw/maplibre';
-import { memorySink, fileSystemSink } from '@cnmw/download-core';
+import { Geocoder } from '@cng/geocoder-core';
+import { GeocoderControl } from '@cng/maplibre';
+import { memorySink, fileSystemSink } from '@cng/download-core';
 import {
   openRaster,
   describeRasterDataset,
@@ -104,7 +104,7 @@ import {
   downloadRaster,
   loadGeoTiff,
   APPROX_BYTES,
-} from '@cnmw/raster-core';
+} from '@cng/raster-core';
 
 const el = (id) => document.getElementById(id);
 const setStatus = (t) => { el('status').textContent = t; };

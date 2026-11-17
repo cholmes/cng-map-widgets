@@ -1,4 +1,4 @@
-// @cnmw/geocoder-core -- the one event mechanism (design doc §3.5):
+// @cng/geocoder-core -- the one event mechanism (design doc §3.5):
 // `on(event, handler) => unsubscribe`. Handlers run synchronously in
 // registration order; a throwing handler is caught and reported via the
 // 'error' event rather than stopping the others (unless the throwing

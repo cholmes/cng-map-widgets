@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { geojsonToWkb, bboxOfWkb, peekWkbType, wkbTypeName, gpkgGeometryBlob, isDecodedGeometry, bboxOf } from '../src/wkb.js';
-import { wkbToGeoJson } from '@cnmw/spec';
+import { wkbToGeoJson } from '@cng/spec';
 
-test('geojsonToWkb: Polygon round-trips through @cnmw/spec\'s wkbToGeoJson', () => {
+test('geojsonToWkb: Polygon round-trips through @cng/spec\'s wkbToGeoJson', () => {
   const geom = { type: 'Polygon', coordinates: [[[9.5, 47.1], [9.55, 47.1], [9.55, 47.15], [9.5, 47.15], [9.5, 47.1]]] };
   const wkb = geojsonToWkb(geom);
   assert.deepEqual(wkbToGeoJson(wkb), geom);
@@ -11,7 +11,7 @@ test('geojsonToWkb: Polygon round-trips through @cnmw/spec\'s wkbToGeoJson', () 
   assert.equal(wkbTypeName(3), 'POLYGON');
 });
 
-test('geojsonToWkb: MultiPolygon round-trips through @cnmw/spec\'s wkbToGeoJson', () => {
+test('geojsonToWkb: MultiPolygon round-trips through @cng/spec\'s wkbToGeoJson', () => {
   const geom = {
     type: 'MultiPolygon',
     coordinates: [

@@ -1,4 +1,4 @@
-// @cnmw/openlayers -- the generic (non-3857) half of the projection
+// @cng/openlayers -- the generic (non-3857) half of the projection
 // bridge. Isolated into its own file so that every OTHER module in this
 // package can be imported, and unit tested, without the `ol` peer
 // dependency installed; only this file (and the modules that import it)

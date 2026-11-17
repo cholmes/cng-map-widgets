@@ -1,5 +1,5 @@
 // Regression test for a latent hyparquet@1.33.0 behavior (same root cause
-// @cnmw/geocoder-core hit and fixed in commit c3cd2ea): a parquet file
+// @cng/geocoder-core hit and fixed in commit c3cd2ea): a parquet file
 // whose footer carries GeoParquet `geo` key-value metadata (which DuckDB
 // writes by default for a native GEOMETRY column) makes hyparquet
 // auto-decode that column straight to a GeoJSON object -- independent of
@@ -137,7 +137,7 @@ test('end-to-end estimate()+download() produce correct, matching GeoJSON output 
 });
 
 test('engine-hyparquet.js\'s decode path (wkbToGeoJson) produces the same correct geometry for both fixture kinds', async () => {
-  const { wkbToGeoJson } = await import('@cnmw/spec');
+  const { wkbToGeoJson } = await import('@cng/spec');
   for (const name of ['geo-metadata.parquet', 'bare.parquet']) {
     const handle = await openParquetFile(`file://${FIXTURES}${name}`, fetchFromFile(`${FIXTURES}${name}`));
     const rows = await readRows(handle, { rowStart: 0, rowEnd: handle.rowGroups[0].numRows, columns: ['id', 'geometry'] });

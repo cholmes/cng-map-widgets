@@ -1,10 +1,10 @@
-// @cnmw/raster-core -- opening a remote COG and describing it.
+// @cng/raster-core -- opening a remote COG and describing it.
 //
 // A `RasterSource` is the raster analog of download-core's `DatasetTable`:
 // everything a planner needs to size a clip without reading a pixel. All of
 // it comes from the TIFF header + IFDs, which is one or two range reads.
 
-import { CnmwError } from '@cnmw/spec';
+import { CnmwError } from '@cng/spec';
 import { loadGeoTiff, loadZstdDec } from './cdn.js';
 import { describeCrs } from './crs.js';
 

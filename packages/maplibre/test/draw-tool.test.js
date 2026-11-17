@@ -1,4 +1,4 @@
-// @cnmw/maplibre -- unit tests for createDrawTool's pure geometry math
+// @cng/maplibre -- unit tests for createDrawTool's pure geometry math
 // (no DOM/map required: see draw-tool.js's header for why createDrawTool
 // itself needs a real `map`, but these helpers do not).
 

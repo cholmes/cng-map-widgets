@@ -1,4 +1,4 @@
-// @cnmw/spec -- cooperative yielding for long-running main-thread work.
+// @cng/spec -- cooperative yielding for long-running main-thread work.
 //
 // Added for the geocoder-core background-upgrade path (design doc §1/§3.2:
 // `select({ resolution: 'both' })` fetches the small display-simplified

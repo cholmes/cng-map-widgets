@@ -1,5 +1,5 @@
 {
-  "name": "@cnmw/format-extras",
+  "name": "@cng/format-extras",
   "version": "0.1.0",
   "description": "The 'nearly free' download-core output formats: CSV (attributes + WKT geometry) and Esri JSON (FeatureSet), both zero-dependency, zero-wasm writers.",
   "keywords": [
@@ -27,6 +27,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cnmw/spec": "0.1.0"
+    "@cng/spec": "0.1.0"
   }
 }

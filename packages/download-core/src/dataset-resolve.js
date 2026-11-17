@@ -1,4 +1,4 @@
-// @cnmw/download-core -- `resolveDataset()`: collection JSON -> concrete
+// @cng/download-core -- `resolveDataset()`: collection JSON -> concrete
 // descriptor (design doc §2.4's fixed, documented mapping).
 //
 // Only `portolan-collection` sources need resolving; every other source
@@ -6,7 +6,7 @@
 // consumer that lacks one refuses... resolveDataset returns a fully-concrete
 // descriptor... with no portolan-collection source left in it").
 
-import { CnmwError } from '@cnmw/spec';
+import { CnmwError } from '@cng/spec';
 
 const RASTER_ZARR_TYPES = /tiff|cog|cloud-optimized|zarr|hdf5|netcdf|pmtiles|mbtiles/i;
 
@@ -47,7 +47,7 @@ export async function resolveDataset(descriptor, options = {}) {
  * whether a download is even possible. Re-fetching the collection through
  * `resolveDataset()` just to learn that would be a second request for data
  * already on the page, and a `condition` cannot await. The design doc put
- * this derivation in a notional `@cnmw/stac` package; it has always lived
+ * this derivation in a notional `@cng/stac` package; it has always lived
  * here, in the package that owns §2.4, so this exports it rather than
  * duplicating the mapping in host glue (the thing §5.4 says keeps a
  * stac-browser widget a small diff).

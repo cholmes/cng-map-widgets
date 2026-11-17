@@ -1,6 +1,6 @@
-# @cnmw/format-extras
+# @cng/format-extras
 
-The "nearly free" `@cnmw/download-core` output formats: **CSV** (attributes
+The "nearly free" `@cng/download-core` output formats: **CSV** (attributes
 + WKT geometry) and **Esri JSON** (a REST `FeatureSet` document). Both
 zero-dependency, zero-wasm, and cheap enough to register eagerly.
 
@@ -12,8 +12,8 @@ are exported anyway, for a page that lists every format uniformly through
 `registerLazyFormat` — their `load()` resolves immediately.
 
 ```js
-import { registerFormat } from '@cnmw/download-core';
-import { createCsvFormat, createEsriJsonFormat } from '@cnmw/format-extras';
+import { registerFormat } from '@cng/download-core';
+import { createCsvFormat, createEsriJsonFormat } from '@cng/format-extras';
 registerFormat(createCsvFormat());
 registerFormat(createEsriJsonFormat());
 ```
@@ -103,7 +103,7 @@ file's 4,470 B/row average.
   `experiments/e10-heavy-formats/RESULTS.md`. There is no lightweight,
   zero-wasm path to File Geodatabase the way there is to GeoPackage (a
   documented SQLite schema) or Shapefile (a documented flat-file format);
-  it stays future work under the `gdal3.js`-backed `@cnmw/format-gdal`
+  it stays future work under the `gdal3.js`-backed `@cng/format-gdal`
   package note in the design doc, not something this package could do
   cheaply.
 - **KML.** Dropped from this round's scope under time pressure, not

@@ -1,4 +1,4 @@
-// @cnmw/format-gpkg -- the `gpkg` FormatPlugin (download-core's registry
+// @cng/format-gpkg -- the `gpkg` FormatPlugin (download-core's registry
 // contract, design doc §3.4/§2.3). Hand-writes the GeoPackage "vector
 // features" profile's required tables with sql.js (a SQLite-to-wasm
 // build), rather than driving a full GDAL build -- the O5 decision this
@@ -120,9 +120,9 @@ export function createGpkgFormat(SQL) {
       const layerName = ctx.options?.layerName || 'features';
       const srsId = (ctx.crs === 'EPSG:4326' || ctx.crs === 'OGC:CRS84' || !ctx.crs) ? 4326 : null;
       if (srsId === null) {
-        const { CnmwError } = await import('@cnmw/spec');
+        const { CnmwError } = await import('@cng/spec');
         throw new CnmwError(
-          `@cnmw/format-gpkg only writes EPSG:4326/OGC:CRS84 geometry (GeoPackage's gpkg_spatial_ref_sys is written with that single row); got crs "${ctx.crs}".`,
+          `@cng/format-gpkg only writes EPSG:4326/OGC:CRS84 geometry (GeoPackage's gpkg_spatial_ref_sys is written with that single row); got crs "${ctx.crs}".`,
           'FORMAT_CAPABILITY',
           { context: { crs: ctx.crs } },
         );

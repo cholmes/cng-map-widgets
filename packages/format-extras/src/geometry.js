@@ -1,10 +1,10 @@
-// @cnmw/format-extras -- shared geometry helpers for the CSV/EsriJSON
+// @cng/format-extras -- shared geometry helpers for the CSV/EsriJSON
 // writers in this package: WKB -> GeoJSON decode (the same six 2D types
 // every other format plugin in this project handles -- see
-// @cnmw/format-gpkg/src/wkb.js's module doc for why this is duplicated
+// @cng/format-gpkg/src/wkb.js's module doc for why this is duplicated
 // per plugin package rather than shared), GeoJSON -> WKT text, and the
 // Esri ring-winding convention (identical to Shapefile's: outer rings
-// clockwise, holes counter-clockwise -- @cnmw/format-shapefile/src/shp.js
+// clockwise, holes counter-clockwise -- @cng/format-shapefile/src/shp.js
 // has the same logic for that package).
 
 const TYPE_NAME = { 1: 'Point', 2: 'LineString', 3: 'Polygon', 4: 'MultiPoint', 5: 'MultiLineString', 6: 'MultiPolygon' };
@@ -34,7 +34,7 @@ export function wkbToGeoJson(bytes) {
   const le = view.getUint8(c.offset) === 1; c.offset += 1;
   const type = view.getUint32(c.offset, le); c.offset += 4;
   const name = TYPE_NAME[type];
-  if (!name) throw new Error(`@cnmw/format-extras: unsupported WKB geometry type ${type}`);
+  if (!name) throw new Error(`@cng/format-extras: unsupported WKB geometry type ${type}`);
   if (name === 'Point') return { type: 'Point', coordinates: readPoint(view, c, le) };
   if (name === 'LineString') return { type: 'LineString', coordinates: readLine(view, c, le) };
   if (name === 'Polygon') return { type: 'Polygon', coordinates: readRings(view, c, le) };
@@ -87,7 +87,7 @@ export function geometryToWkt(geometry) {
     case 'MultiPolygon':
       return `MULTIPOLYGON (${geometry.coordinates.map((p) => `(${rings(p)})`).join(', ')})`;
     default:
-      throw new Error(`@cnmw/format-extras: unsupported geometry type "${geometry.type}" for WKT`);
+      throw new Error(`@cng/format-extras: unsupported geometry type "${geometry.type}" for WKT`);
   }
 }
 

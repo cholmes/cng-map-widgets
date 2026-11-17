@@ -1,8 +1,8 @@
-// @cnmw/download-core -- the default (built-in) hyparquet engine (design
+// @cng/download-core -- the default (built-in) hyparquet engine (design
 // doc §3.4 Engine, design call #2: hyparquet-first, DuckDB strictly
 // opt-in).
 
-import { CancelledError } from '@cnmw/spec';
+import { CancelledError } from '@cng/spec';
 import { planRequest } from './estimate.js';
 import { readRows } from './parquet-io.js';
 import { rowMatchesArea } from './spatial.js';
@@ -71,7 +71,7 @@ function rowBBox(row, covering, geometryColumn, decodedGeometryCache) {
  * because `parquet-io.js`'s `openParquetFile` fetches metadata with
  * `geoparquet: false` specifically so that this package's one, uniform
  * decode path (`./wkb-geometry.js`'s `decodeWkbGeometry`, which delegates
- * to `@cnmw/spec`'s `wkbToGeoJson` for everything but Point/MultiPoint --
+ * to `@cng/spec`'s `wkbToGeoJson` for everything but Point/MultiPoint --
  * see that module's doc comment) is used for every dataset, whether or not
  * it carries GeoParquet `geo` key-value metadata (both the FTW and
  * tge-labs/CGAZ files this package targets do carry it; a bare/non-geo
@@ -123,7 +123,7 @@ function latch() {
  *
  * **Reads go in parallel; delivery stays ordered.** Row groups are fetched
  * by `maxConcurrentRequests` workers pulling from one shared cursor (the
- * same worker-pool shape as `@cnmw/geocoder-core`'s `searchRangeIndex` and
+ * same worker-pool shape as `@cng/geocoder-core`'s `searchRangeIndex` and
  * `geometry-resolver.js`'s `firstMatch`, commit 8c1308c -- N workers over
  * a cursor and one `Promise.all`, never concurrency-sized waves, so a slow
  * read never idles the other N-1 workers). `onBatch` is still invoked in
@@ -162,7 +162,7 @@ function latch() {
  * reports the row groups that actually contributed to the output and ends
  * on exactly the totals the sequential implementation reported.
  *
- * @param {{ dataset: any, area: import('@cnmw/spec').Area|null, filter: any, plan: Awaited<ReturnType<typeof planRequest>> }} enginePlan
+ * @param {{ dataset: any, area: import('@cng/spec').Area|null, filter: any, plan: Awaited<ReturnType<typeof planRequest>> }} enginePlan
  * @param {(batch: import('./types.js').FeatureBatch) => Promise<void>} onBatch
  * @param {{ signal?: AbortSignal, onProgress?: (p: object) => void|Promise<void>, limit?: number, maxConcurrentRequests?: number }} ctx
  */
