@@ -44,18 +44,21 @@ export const RAW_FORMAT_ID = 'parquet-raw';
  * `LazyFormatDescriptor` shape, trimmed to the fields this plugin needs):
  * no decode happens, so it is `streaming` with `memoryFactor: 0` --
  * `effectiveCeiling` then derives `outputBytes` from the sink, not from any
- * buffering this plugin itself does (it does none). Registering it with
- * `registerFormat`/`registerLazyFormat` is a later task's job; this module
- * only defines the shape.
+ * buffering this plugin itself does (it does none). Registered via
+ * `registerFormat` in `index.js`'s module-side-effect block, same as
+ * geojson/geoparquet -- listed by `formats()`, but never resolved into the
+ * normal decode pipeline: it has no `estimateBytes`/`open`, and
+ * `download()` branches to the raw path on `output.format === RAW_FORMAT_ID`
+ * before `getFormat()`/`resolveFormat()` would ever be asked for it.
  */
 export const rawFormatDescriptor = {
   id: RAW_FORMAT_ID,
   label: 'GeoParquet — original files',
   extension: 'parquet',
   // The single-file case (the common one) really is this media type; the
-  // multi-file zip case overrides it per-run in `download()`, same as the
-  // extension would need to become `.zip` there. This static value is only
-  // for `formats()`'s listing, never read by `runRaw` itself.
+  // multi-file zip case overrides it per-run in `download()`'s own
+  // `mediaType` derivation, which reads this field rather than duplicating
+  // the string.
   mediaType: 'application/vnd.apache.parquet',
   streaming: true,
   capabilities: { memoryFactor: 0 },

@@ -146,6 +146,46 @@ test('CeilingExceededError names formats whose own ceiling would fit', async () 
   );
 });
 
+// Task 7 fix round 1: `suggestedFormatsFor`'s loop iterates every
+// registered format, and `index.js` now registers `rawFormatDescriptor`
+// under `RAW_FORMAT_ID` as a side effect of being imported -- a
+// descriptor with no `estimateBytes` (it has no schema/rows model; its
+// size comes from part metadata instead). Without `download.js`'s guard
+// (`if (typeof candidate.estimateBytes !== 'function') continue;`), this
+// exact scenario -- some OTHER format breaching its ceiling, with the raw
+// descriptor merely registered alongside it -- throws a TypeError out of
+// the suggestion loop instead of producing the `CeilingExceededError` the
+// breach itself should surface. This test pins that: it imports
+// `index.js` for its registration side effect (this file otherwise only
+// ever imports `registry.js`/`download.js` directly, so that side effect
+// has never run in this process before this line), then breaches the
+// ceiling on an unrelated fake format so the loop actually runs over the
+// raw descriptor.
+//
+// Verified to discriminate: temporarily removing the guard line in
+// download.js and re-running this file reproduces the TypeError
+// ("candidate.estimateBytes is not a function") as an unhandled rejection
+// of `handle.result`, failing this test; restoring the guard makes it
+// pass again.
+test('suggestedFormatsFor does not crash on a registered format with no estimateBytes (the raw-passthrough descriptor)', async () => {
+  await import('../src/index.js'); // registers rawFormatDescriptor (and geojson/geoparquet) as a side effect
+
+  registerFormat(fakeFormat({ id: 'wiring-raw-guard-5', streaming: false, memoryFactor: 3.5, bytes: 500 * MiB }));
+
+  const handle = download(
+    DATASET, null, FILTER, { spec: 'cng-output/1.0', format: 'wiring-raw-guard-5' },
+    { engine: fakeEngine(minimalPlan()), sink: memorySink() },
+  );
+  const err = await handle.result.then(() => null, (e) => e);
+  assert.ok(err instanceof CeilingExceededError, `expected CeilingExceededError, got ${err}`);
+  assert.ok(Array.isArray(err.context.suggestedFormats), 'the suggestion loop ran to completion without throwing');
+  assert.equal(
+    err.context.suggestedFormats.includes('parquet-raw'),
+    false,
+    'raw passthrough has no schema/rows model and must never appear as a suggested alternative',
+  );
+});
+
 test('est.ceiling.limits reports the derived outputBytes, not the flat default', async () => {
   registerFormat(fakeFormat({ id: 'wiring-gpkg-like-4', streaming: false, memoryFactor: 3.5, bytes: 10 }));
   const handle = download(

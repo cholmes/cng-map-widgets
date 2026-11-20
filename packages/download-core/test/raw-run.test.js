@@ -329,6 +329,27 @@ test('actual bytes differing from the declared size are what the descriptor and 
   assert.equal(result.bytes > 150, true, 'the archive holds the real 150 bytes plus zip overhead');
 });
 
+// Single-file variant of the above: no zip overhead to inflate `bytes`
+// past the declared size, so here `bytes` and `readBytes` are both the
+// real, actual byte count -- the declared (wrong) size never surfaces
+// anywhere in the result, same `copyBody`/`onBytes` mechanism exercised
+// by the never-zipped tests above, now also checked against a declared
+// size that disagrees with reality.
+test('a single file whose actual size differs from its declared size still reports the real byte count (never zipped)', async () => {
+  const url = 'https://example.test/mismatch-solo/big.parquet';
+  const actualBytes = fakeParquetBytes(150);
+  const dataset = partsDataset([{ url, bytes: 100 }]); // declares 100, serves 150
+  const sink = memorySink();
+
+  const handle = download(dataset, null, FILTER, OUTPUT, { sink, fetch: fetchMock(new Map([[url, { bytes: actualBytes }]])) });
+  const result = await handle.result;
+
+  const written = concatChunks(sink.chunks);
+  assert.deepEqual(written, actualBytes, 'the real 150 bytes are what got written, not the declared 100');
+  assert.equal(result.readBytes, 150);
+  assert.equal(result.bytes, 150, 'no zip overhead on the single-file path: bytes === readBytes exactly');
+});
+
 // Review Focus 3: cancelling mid-copy aborts the in-flight fetch (via the
 // handle's own AbortController/signal) and the sink, with no partial file
 // left committed.

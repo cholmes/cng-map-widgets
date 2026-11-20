@@ -12,7 +12,7 @@ import { createGeoJsonFormat } from './formats/geojson.js';
 import { createGeoParquetFormat } from './formats/geoparquet.js';
 import { autoSink } from './sinks.js';
 import { effectiveCeiling } from './ceiling.js';
-import { RAW_FORMAT_ID, planRaw, rawEstimate, runRaw, rawSuggestedFilename } from './raw.js';
+import { RAW_FORMAT_ID, rawFormatDescriptor, planRaw, rawEstimate, runRaw, rawSuggestedFilename } from './raw.js';
 
 /** Fallback when a caller imports download.js directly without index.js's default registration. */
 function builtinFormat(id) {
@@ -195,7 +195,7 @@ export function download(dataset, area, filter, output, options = {}) {
     emitter.emit('progress', { phase: 'planning' });
 
     const filename = output.filename ?? rawSuggestedFilename(rawPlan);
-    const mediaType = rawPlan.selected.length > 1 ? 'application/zip' : 'application/vnd.apache.parquet';
+    const mediaType = rawPlan.selected.length > 1 ? 'application/zip' : rawFormatDescriptor.mediaType;
     const writer = await sink.open({ filename, mediaType, estimatedBytes: est.outputBytes.estimate });
 
     const runResult = await runRaw(rawPlan, writer, {
