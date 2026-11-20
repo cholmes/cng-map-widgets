@@ -61,7 +61,7 @@ function baseCeiling() {
  * default is 0 for a streaming format (it writes bytes as they arrive,
  * holding nothing beyond one batch) and 3 for a buffering one (the
  * generic "accumulates the whole output, plus working copies" case --
- * `format-gpkg`'s measured 3.5 is why this is a per-format override, not
+ * `format-gpkg`'s measured 2.9 is why this is a per-format override, not
  * a constant).
  *
  * @param {{ streaming?: boolean, capabilities?: { memoryFactor?: number } }} format

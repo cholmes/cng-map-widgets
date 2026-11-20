@@ -254,12 +254,10 @@ Warning codes: `no-covering`, `no-statistics`, `single-row-group`,
 `share-alike`, `large-download` (`{ bytes, estimatedSeconds }`, fires over
 `largeDownloadBytes`, 1 GiB by default), `slow-download` (`{ estimatedSeconds
 }`, fires over `SLOW_DOWNLOAD_SECONDS`, 120 s, at an assumed
-`DEFAULT_THROUGHPUT_BYTES_PER_SECOND`, 10 MB/s). **Every field above is FLAT
-on the warning object** — `w.bytes`, never `w.context.bytes` — all eleven
-codes agree on this shape.
+`DEFAULT_THROUGHPUT_BYTES_PER_SECOND`, 10 MB/s) — nine codes so far.
 
-Raw passthrough (`output.format: 'parquet-raw'`, below) adds three more, with
-the same flat-field rule: `raw-passthrough-unfiltered` (`{ dropped }` — which
+Raw passthrough (`output.format: 'parquet-raw'`, below) adds three more:
+`raw-passthrough-unfiltered` (`{ dropped }` — which
 of `where` / `columns` / `spatial-row-level` this path did NOT apply, since
 nothing is decoded to apply them to), `raw-size-unknown` (`{
 partsWithoutSize, partsTotal }` — at least one selected file's size could not
@@ -271,6 +269,9 @@ on a dataset where some files genuinely matched a declared bbox/interval and
 others passed only because they declare none, neither this warning nor any
 other signal fires for the second group — a known gap, not a correctness
 bug.
+
+**All twelve codes above — the nine first, plus these three raw-only ones —
+are FLAT on the warning object**: `w.bytes`, never `w.context.bytes`.
 
 Prune stages, in order: `partition` (explicit `filter.partitions`), `part-time`,
 `part-bbox`, `row-group-bbox`, `row-group-stats` (the time column),

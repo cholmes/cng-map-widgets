@@ -547,12 +547,9 @@ full scan), `single-row-group` (a file that cannot be pruned at all),
 — say "between X and Y", do not pretend to know), `share-alike` (the output
 inherits a share-alike license), `large-download` (`{ bytes, estimatedSeconds
 }`, fires over 1 GiB), `slow-download` (`{ estimatedSeconds }`, fires over
-120 s at an assumed 10 MB/s). **Every field above is FLAT on the warning
-object** (`w.bytes`, never `w.context.bytes`) — all eleven codes agree on
-this shape, so a consumer can switch on `w.code` without special-casing any
-of them.
+120 s at an assumed 10 MB/s) — nine codes so far.
 
-Raw-passthrough only (recipe 3e), same flat-field rule: `raw-passthrough-unfiltered`
+Raw-passthrough only (recipe 3e) adds three more: `raw-passthrough-unfiltered`
 (`{ dropped }` — which of `where` / `columns` / `spatial-row-level` this path
 did NOT apply, because nothing is decoded to apply them to),
 `raw-size-unknown` (`{ partsWithoutSize, partsTotal }` — at least one
@@ -567,6 +564,10 @@ declared bbox/interval and others passed only because they declare none,
 neither this warning nor any other signal fires for the second group — a
 known gap, not a correctness bug (`basis` itself is never wrong; there is
 just no way yet to say "some of these").
+
+**All twelve codes above — the nine first, plus these three raw-only ones —
+are FLAT on the warning object** (`w.bytes`, never `w.context.bytes`), so a
+consumer can switch on `w.code` without special-casing any of them.
 
 Output formats: `geojson` (`memoryFactor: 0` — streams; options `precision`,
 `newlineDelimited`, `featureIdColumn`), `geoparquet` (`memoryFactor: 2` —
