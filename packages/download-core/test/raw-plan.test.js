@@ -86,6 +86,35 @@ test('planRaw leaves a sizeless part null when its HEAD fails or omits content-l
   assert.equal(plan.requests, 2);
 });
 
+// Regression: a `collection-mirror`-enumerated part's `bytes`/`rowCount`
+// are read straight off a hyparquet-decoded row (`partFromMirrorRow` in
+// partitions.js), and an INT64 parquet column decodes as `BigInt` --
+// exactly the shape FIRMS/s2-stac-geoparquet (this feature's own target
+// catalogs) publish. Before this fix, `typeof part.bytes === 'number'`
+// in resolvePartSizes treated a declared BigInt size as absent (an
+// avoidable extra HEAD), and `JSON.stringify({ parts, filter })` in
+// rawEstimate's digest threw outright on a BigInt rowCount/bytes
+// anywhere in the unpruned `parts` array.
+test('planRaw and rawEstimate handle BigInt-valued bytes/rowCount without throwing or re-fetching a declared size (regression)', async () => {
+  const parts = [{ url: 'https://example.test/a.parquet', bytes: 1234n, rowCount: 5678n }];
+  const fetchImpl = async () => {
+    throw new Error('must not HEAD a part that already declared its size');
+  };
+
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: fetchImpl });
+  assert.equal(plan.requests, 0, 'a declared BigInt size must be honored, not treated as absent');
+  assert.equal(plan.sizes.get('https://example.test/a.parquet'), 1234);
+
+  const est = await rawEstimate(plan, {}, {}); // must not throw TypeError on BigInt serialization
+
+  assert.equal(est.outputBytes.exact, true);
+  assert.equal(est.outputBytes.estimate, 1234);
+  assert.equal(est.rows.exact, true);
+  assert.equal(est.rows.estimate, 5678);
+  assert.equal(typeof est.requestDigest, 'string');
+  assert.ok(est.requestDigest.length > 0);
+});
+
 test('rawEstimate sums declared part sizes and is exact', async () => {
   const parts = [
     { url: 'https://example.test/a.parquet', bytes: 100 },

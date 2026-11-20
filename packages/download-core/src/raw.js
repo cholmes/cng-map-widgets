@@ -159,7 +159,15 @@ function zipOverheadBytes(selectedParts) {
  * real sources (an `enumerateStacItems`-built part, for one) carry no size
  * at all. Every attempted `HEAD` counts toward `requests`, successful or
  * not.
- * @param {{ url: string, bytes?: number }[]} selectedParts
+ * A declared `bytes` may be a `bigint` -- a `collection-mirror` row's
+ * `file:size`/`bytes` column is read straight off a hyparquet-decoded
+ * row (`partFromMirrorRow`, `partitions.js`), and an `INT64` parquet
+ * column decodes as `BigInt` (this codebase's own documented pitfall:
+ * "coerce `number|bigint` rather than testing for `number`"). `toNumber`
+ * handles that before the presence check, so a declared `BigInt` size is
+ * honored here rather than silently falling through to an unnecessary
+ * `HEAD`.
+ * @param {{ url: string, bytes?: number|bigint }[]} selectedParts
  * @param {typeof fetch} fetchImpl
  * @param {AbortSignal|undefined} signal
  * @returns {Promise<{ sizes: Map<string, number|null>, requests: number }>}
@@ -169,8 +177,9 @@ async function resolvePartSizes(selectedParts, fetchImpl, signal) {
   const sizes = new Map();
   let requests = 0;
   for (const part of selectedParts) {
-    if (typeof part.bytes === 'number') {
-      sizes.set(part.url, part.bytes);
+    const declaredBytes = toNumber(part.bytes);
+    if (typeof declaredBytes === 'number') {
+      sizes.set(part.url, declaredBytes);
       continue;
     }
     requests += 1;
@@ -338,7 +347,22 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
   if (sumKnownBytes > ceiling.readBytes) breaches.push('readBytes');
   if (selected.length > ceiling.files) breaches.push('files');
 
-  const requestDigest = await sha256Hex(JSON.stringify({ parts, filter }));
+  // `parts` is the full, unpruned list straight off `enumeratePartitions`
+  // (or a `collection-mirror`'s decoded rows, for stac-geoparquet/hive),
+  // and its `bytes`/`rowCount` may be `bigint` for the same reason
+  // `resolvePartSizes` above has to coerce them: `JSON.stringify` throws
+  // on a `BigInt` anywhere in the object graph. Projecting to this small,
+  // explicit, coerced shape fixes that and also means a future field
+  // added to `DatasetPart` can't change this digest or reintroduce an
+  // unserializable value.
+  const digestParts = parts.map((p) => ({
+    url: p.url,
+    bytes: toNumber(p.bytes) ?? null,
+    rowCount: toNumber(p.rowCount) ?? null,
+    bbox: p.bbox ?? null,
+    interval: p.interval ?? null,
+  }));
+  const requestDigest = await sha256Hex(JSON.stringify({ parts: digestParts, filter }));
 
   return {
     requestDigest,
