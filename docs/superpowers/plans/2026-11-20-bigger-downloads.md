@@ -15,7 +15,7 @@
 - No new runtime dependency, and no bare-specifier imports. Any third-party code loads from a pinned absolute CDN URL via a package's `src/cdn.js` (AGENTS.md §Setup).
 - Error **codes** are the public API; messages are not. No existing code may change meaning. New codes only.
 - `download()`'s existing contract is unchanged and all additions are additive: synchronous return, `handle.estimate`, `handle.result`, `CEILING_EXCEEDED` + `acceptCeiling()`, the event names.
-- `blobSink`'s 256 MiB cap stays. `memorySink` is exempt from `memoryBudget` entirely.
+- `blobSink`'s 256 MiB cap stays. `memorySink` is exempt from the *sink-side* cap — but ONLY for a format with `memoryFactor === 0`. A buffering format is `memoryBudget / memoryFactor` **regardless of sink**, memorySink included, because the format's buffering cost is spent inside the writer and is the same wherever the bytes land. (Corrected 2026-11-20, pre-flight ruling R5: the original wording said "exempt from `memoryBudget` entirely", which made gpkg unbounded on a memorySink — spec anti-goal §4.1.)
 - `memoryBudget` default is **1 GiB**. `largeDownloadBytes` default is **1 GiB**. `slow-download` threshold is **120 seconds**. Default assumed throughput is **10 MB/s** (`options.throughputBytesPerSecond`).
 - Flat ceiling defaults become: `rows` 50,000,000; `readBytes` 64 GiB; `files` 10,000. `blobBytes` stays 256 MiB.
 - `memoryFactor` defaults: `0` when `streaming === true`, `3` otherwise. Declared: `geojson` 0, `parquet-raw` 0, `geoparquet` 2, `gpkg` **measured, not guessed**.
@@ -215,9 +215,14 @@ test('memorySink is exempt from the memory budget', () => {
   assert.equal(c.outputBytes, 1024 ** 4);
 });
 
-test('gpkg declares the measured 3.5, not the default 3', async () => {
-  const { gpkgFormatDescriptor } = await import('@cng/format-gpkg');
-  assert.equal(memoryFactorOf(gpkgFormatDescriptor), 3.5);
+// Ruling R6: this assertion lives in packages/format-gpkg's OWN test suite,
+// not here -- download-core does not depend on format-gpkg, so a cross-package
+// import resolves only via workspace hoisting. ceiling.test.js asserts
+// memoryFactorOf against literal descriptor shapes instead.
+
+test('a buffering format stays memoryBudget / memoryFactor even on a memory sink', () => {
+  const c = effectiveCeiling({ format: gpkgLike, sink: { kind: 'memory' } });
+  assert.equal(c.outputBytes, Math.floor(GiB / 3.5));
 });
 
 test('a buffering format is memoryBudget / memoryFactor regardless of sink', () => {
