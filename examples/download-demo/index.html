@@ -534,13 +534,10 @@ document.getElementById('estimateBtn').addEventListener('click', async () => {
   document.getElementById('confirmBox').style.display = 'none';
   try {
     const filter = buildFilter(entry);
-    // See confirmAndDownload's own comment: the public estimate() has no
-    // raw-passthrough fast path (rawFormatDescriptor has no
-    // estimateBytes), so `output` is omitted for that format id rather
-    // than passed and crashing.
-    const est = selectedFormat === RAW_FORMAT_ID
-      ? await estimate(entry.dataset, area, filter, { sink: { kind: 'memory' }, ...sizeWarningOptions() })
-      : await estimate(entry.dataset, area, filter, { output: outputFor(entry, selectedFormat), sink: { kind: 'memory' }, ...sizeWarningOptions() });
+    // `@cng/download-core`'s public `estimate()` routes `output.format ===
+    // RAW_FORMAT_ID` to the decode-free raw path internally (index.js) --
+    // no special-casing needed here for any format, including parquet-raw.
+    const est = await estimate(entry.dataset, area, filter, { output: outputFor(entry, selectedFormat), sink: { kind: 'memory' }, ...sizeWarningOptions() });
     lastEstimate = est;
     renderEstimateInfo(est);
   } catch (err) {
@@ -860,23 +857,15 @@ async function confirmAndDownload(formatId) {
   let preflight;
   try {
     infoEl.style.display = 'block';
-    infoEl.textContent = 'Checking estimated size before starting… (reads parquet footer metadata only, no row data)';
-    preflight = formatId === RAW_FORMAT_ID
-      // The public estimate() has no raw-passthrough fast path:
-      // rawFormatDescriptor (raw.js) has no estimateBytes/schema model at
-      // all -- it is decode-free by design -- so finalizeEstimate's
-      // `format.estimateBytes(...)` call would throw TypeError if `output`
-      // named this format id. Omitting `output` falls back to
-      // estimate.js's generic per-row model instead, which is a reasonable
-      // (if anything, conservative -- it assumes decoded/expanded text
-      // output, not raw compressed bytes) stand-in for THIS pre-flight
-      // size check. The real, raw-specific estimate (raw-passthrough-
-      // unfiltered, raw-size-unknown, raw-no-pruning, and the real byte
-      // count) is computed by download()'s own internal rawEstimate() once
-      // the confirmed run actually starts, and rendered the same way below
-      // via handle.estimate.
-      ? await estimate(entry.dataset, area, filter, { sink: { kind: 'memory' }, ...sizeWarningOptions() })
-      : await estimate(entry.dataset, area, filter, { output: outputFor(entry, formatId), sink: { kind: 'memory' }, ...sizeWarningOptions() });
+    infoEl.textContent = formatId === RAW_FORMAT_ID
+      ? 'Checking estimated size before starting… (reads part metadata/HEAD only, no footer, no row data)'
+      : 'Checking estimated size before starting… (reads parquet footer metadata only, no row data)';
+    // `@cng/download-core`'s public `estimate()` routes `output.format ===
+    // RAW_FORMAT_ID` to raw.js's decode-free `planRaw`/`rawEstimate`
+    // internally (index.js), so this one call is correct -- and gets the
+    // real raw-specific warnings (raw-passthrough-unfiltered etc.) -- for
+    // every format, with no special-casing needed here.
+    preflight = await estimate(entry.dataset, area, filter, { output: outputFor(entry, formatId), sink: { kind: 'memory' }, ...sizeWarningOptions() });
   } catch (err) {
     infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
     downloadBtn.disabled = false;
