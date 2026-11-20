@@ -44,7 +44,7 @@ import { buildArea, normalizeName } from '@cng/spec';
 ```
 
 **Coming:** `npm i @cng/spec`, and a CDN form —
-`import { buildArea } from 'https://cdn.jsdelivr.net/npm/@cng/spec@0.1.0/src/index.js'`.
+`import { buildArea } from 'https://cdn.jsdelivr.net/npm/@cng/spec@0.2.0/src/index.js'`.
 The module code never changes between those; only the specifier does.
 
 ## Size
@@ -356,7 +356,7 @@ it is the package that can throw most of them.
 
 | export | notes |
 |---|---|
-| `VERSION` | `'0.1.0'`. |
+| `VERSION` | `'0.2.0'`. |
 
 ---
 

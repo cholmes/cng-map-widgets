@@ -199,7 +199,7 @@ repairs;           // [{ kind: 'dropped-non-areal', count: 1, types: ['Point'] }
 | `geoJsonReader` | The built-in reader, in case you want to wrap or inspect it. |
 | `extractRawFeatures(json)` | Any top-level GeoJSON value → a flat `{ geometry, properties }[]`. |
 | `detectDeclaredCrs(json)` | The legacy pre-RFC-7946 top-level `crs` member, or `null`. |
-| `VERSION` | `'0.1.0'`. |
+| `VERSION` | `'0.2.0'`. |
 
 ### `UploadOptions`
 

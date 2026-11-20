@@ -120,7 +120,7 @@ async function groupSpec() {
   } = await import('@cng/spec');
 
   await snippet('spec/README', 'VERSION', async () => {
-    assert.equal(VERSION, '0.1.0');
+    assert.equal(VERSION, '0.2.0');
     return VERSION;
   });
 
@@ -295,7 +295,7 @@ async function groupGeocoder() {
   setHyparquetModules({ hyparquet, compressors });
 
   await snippet('geocoder-core/README', 'VERSION', async () => {
-    assert.equal(VERSION, '0.1.0');
+    assert.equal(VERSION, '0.2.0');
   });
 
   await snippet('geocoder-core/README', 'DEFAULT_INDEX_URL is the published geoBoundaries manifest, and it serves', async () => {
@@ -523,7 +523,7 @@ async function groupUpload() {
   const { areaFromGeoJson, areaFromFile, registerReader, repairFeatures, VERSION } = await import('@cng/upload-core');
 
   await snippet('upload-core/README', 'VERSION', async () => {
-    assert.equal(VERSION, '0.1.0');
+    assert.equal(VERSION, '0.2.0');
   });
 
   await snippet('upload-core/README', 'areaFromFile() -> { area, warnings }', async () => {
@@ -689,7 +689,7 @@ async function groupDownload() {
   setHyparquetModules({ hyparquet, compressors, writer: hyparquetWriter });
 
   await snippet('download-core/README', 'VERSION + the built-in registries', async () => {
-    assert.equal(VERSION, '0.1.0');
+    assert.equal(VERSION, '0.2.0');
     assert.deepEqual(formats().map((f) => f.id).sort(), ['geojson', 'geoparquet']);
     assert.equal(formats().find((f) => f.id === 'geojson').streaming, true);
     assert.equal(formats().find((f) => f.id === 'geoparquet').streaming, false);
