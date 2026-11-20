@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planRaw, rawEstimate } from '../src/raw.js';
+import { planRaw, rawEstimate, rawZipEntryNames } from '../src/raw.js';
 
 function neverFetch() {
   return async () => {
@@ -160,6 +160,45 @@ test('rawEstimate omits raw-passthrough-unfiltered when nothing row-level was re
   const est = await rawEstimate(plan, { spatial: { mode: 'bbox' } }, {});
 
   assert.equal(est.warnings.some((x) => x.code === 'raw-passthrough-unfiltered'), false);
+});
+
+test('ceiling.exceeded is not set from an unknown size alone (R9)', async () => {
+  const fetchImpl = async (url) => {
+    if (url === 'https://example.test/unknown.parquet') throw new Error('network down');
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+  const parts = [
+    { url: 'https://example.test/known.parquet', bytes: 1000 },
+    { url: 'https://example.test/unknown.parquet' },
+  ];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: fetchImpl });
+  const est = await rawEstimate(plan, {}, {});
+
+  assert.equal(est.outputBytes.exact, false);
+  assert.equal(est.outputBytes.max, Infinity);
+  assert.equal(est.readBytes.exact, false);
+  assert.equal(est.readBytes.max, Infinity);
+  assert.equal(est.ceiling.exceeded, false, `unexpected breaches: ${JSON.stringify(est.ceiling.breaches)}`);
+  assert.deepEqual(est.ceiling.breaches, []);
+});
+
+test('rawZipEntryNames preserves partition layout relative to the parts\' common prefix (R10)', () => {
+  const parts = [
+    { url: 'https://example.test/detections/acq_date=2026-09-01/part-0.parquet' },
+    { url: 'https://example.test/detections/acq_date=2026-09-02/part-0.parquet' },
+  ];
+  const { parts: names, attribution } = rawZipEntryNames(parts);
+  assert.deepEqual(names, ['acq_date=2026-09-01/part-0.parquet', 'acq_date=2026-09-02/part-0.parquet']);
+  assert.equal(attribution, 'ATTRIBUTION.txt');
+});
+
+test('rawZipEntryNames falls back to the full path when parts share no partition-level prefix', () => {
+  const parts = [
+    { url: 'https://example.test/a.parquet' },
+    { url: 'https://example.test/b.parquet' },
+  ];
+  const { parts: names } = rawZipEntryNames(parts);
+  assert.deepEqual(names, ['a.parquet', 'b.parquet']);
 });
 
 test('planRaw refuses an unsupported source kind with FORMAT_CAPABILITY', async () => {

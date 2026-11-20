@@ -67,18 +67,8 @@ function toNumber(v) {
   return typeof v === 'bigint' ? Number(v) : v;
 }
 
-/**
- * The zip entry name a writer would give this part's data: its URL's own
- * path, decoded and with the leading slash stripped by `sanitizeEntryName`
- * -- not just a basename, so parts from different hive partitions that
- * happen to share a filename (`year=2023/data.parquet`,
- * `year=2024/data.parquet`) keep their distinguishing directory instead of
- * colliding into `data-1.parquet`, `data-2.parquet`, ... A later writer
- * task must use this same derivation, or its real zip's entry names (and
- * therefore sizes) will drift from what this function predicted.
- * @param {string} url
- */
-function entryNameForPart(url) {
+/** @param {string} url @returns {string} */
+function decodedPathname(url) {
   try {
     return decodeURIComponent(new URL(url).pathname);
   } catch {
@@ -86,31 +76,78 @@ function entryNameForPart(url) {
   }
 }
 
+/** @param {string} pathname @returns {string[]} */
+function pathSegments(pathname) {
+  return pathname.split(/[\\/]+/).filter((s) => s !== '');
+}
+
+/**
+ * How many leading segments every one of `pathLists` shares, capped so the
+ * shortest path always keeps at least its own last segment (typically the
+ * filename) -- otherwise a set of parts that happen to share a full path
+ * (or a single-part list, trivially "common" with itself) would collapse
+ * to an empty relative name.
+ * @param {string[][]} pathLists
+ * @returns {number}
+ */
+function commonPathPrefixLength(pathLists) {
+  if (pathLists.length === 0) return 0;
+  const cap = Math.max(0, Math.min(...pathLists.map((p) => p.length)) - 1);
+  let len = 0;
+  while (len < cap && pathLists.every((p) => p[len] === pathLists[0][len])) len += 1;
+  return len;
+}
+
+/**
+ * Ruling R10: the zip entry name for each selected part is its path
+ * *relative to the common prefix of every selected part's own path* --
+ * preserving the dataset's partition layout (design doc §7.2:
+ * `acq_date=2026-09-01/part-0.parquet`, not the whole bucket path) --
+ * sanitized and deduplicated against each other and against the
+ * `ATTRIBUTION.txt` entry. Exported so the byte-streaming writer (a later
+ * task) uses this exact function instead of reimplementing the same
+ * derivation: the predicted zip overhead below and the real zip's entry
+ * names must come from one source or they will drift (the same reasoning
+ * Ruling R1 applied to the record builders themselves).
+ * @param {{ url: string }[]} selectedParts
+ * @returns {{ parts: string[], attribution: string }} `parts` in the same order as `selectedParts`.
+ */
+export function rawZipEntryNames(selectedParts) {
+  const pathLists = selectedParts.map((p) => pathSegments(decodedPathname(p.url)));
+  const prefixLen = commonPathPrefixLength(pathLists);
+  const taken = new Set();
+  const parts = pathLists.map((segs) => sanitizeEntryName(segs.slice(prefixLen).join('/'), taken));
+  const attribution = sanitizeEntryName(ATTRIBUTION_ENTRY_NAME, taken);
+  return { parts, attribution };
+}
+
 /**
  * The exact zip container overhead for the given selected parts plus one
  * `ATTRIBUTION.txt` entry, derived from Task 1's own record builders
  * (`localHeader`/`dataDescriptor`/`centralHeader`/`endOfCentralDirectory`)
- * and `sanitizeEntryName` -- never hand-copied constants (Ruling R1): a
- * change to those builders' layout changes this function's answer for
- * free instead of silently drifting from it. Entry byte sizes are
- * irrelevant to the overhead itself: every size field is a fixed-width
- * zip64 field (0 takes exactly as many bytes as a real file length would),
- * so placeholder `crc`/`size`/`offset` of 0 are exact stand-ins.
+ * and `rawZipEntryNames`/`sanitizeEntryName` -- never hand-copied constants
+ * (Ruling R1): a change to those builders' layout, or to the entry-naming
+ * convention, changes this function's answer for free instead of silently
+ * drifting from it. Entry byte *content* sizes are irrelevant to the
+ * overhead itself: every size field is a fixed-width zip64 field (0 takes
+ * exactly as many bytes as a real file length would), so placeholder
+ * `crc`/`size`/`offset` of 0 are exact stand-ins -- only the entry *name*
+ * lengths matter, which is why a shorter name (after R10's prefix
+ * stripping) means a smaller header.
  * @param {{ url: string }[]} selectedParts
  * @returns {number}
  */
 function zipOverheadBytes(selectedParts) {
-  const taken = new Set();
+  const { parts: partNames, attribution: attributionName } = rawZipEntryNames(selectedParts);
   let overhead = 0;
-  const addEntry = (rawName) => {
-    const name = sanitizeEntryName(rawName, taken);
+  const addEntry = (name) => {
     overhead += localHeader({ name }).length;
     overhead += dataDescriptor({ crc: 0, size: 0 }).length;
     overhead += centralHeader({ name, crc: 0, size: 0, offset: 0 }).length;
   };
-  for (const part of selectedParts) addEntry(entryNameForPart(part.url));
-  addEntry(ATTRIBUTION_ENTRY_NAME);
-  overhead += endOfCentralDirectory({ entryCount: selectedParts.length + 1, centralSize: 0, centralOffset: 0 }).length;
+  for (const name of partNames) addEntry(name);
+  addEntry(attributionName);
+  overhead += endOfCentralDirectory({ entryCount: partNames.length + 1, centralSize: 0, centralOffset: 0 }).length;
   return overhead;
 }
 
@@ -282,11 +319,23 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
     warnings.push({ code: 'slow-download', estimatedSeconds });
   }
 
+  // Ruling R9: an unknown part size must never manufacture a ceiling
+  // breach on its own (design doc §7.5 -- the user chose "warn distinctly,
+  // always proceed" over "warn and require explicit acceptance" for this
+  // exact case, and STAC-sourced parts routinely carry no size at all, so
+  // this is the common case, not an edge case). `outputBytes.max`/
+  // `readBytes.max` are `Infinity` whenever any size is unknown -- a
+  // genuine, honest upper bound for the *reported* `Bounded` (kept as-is
+  // above) -- but a breach check must compare against what is actually
+  // KNOWN: the sum of known part sizes, plus the (always-known) zip
+  // overhead. `files` is unaffected -- it counts parts, not bytes, and
+  // stays the hard backstop per §7.5 regardless of size knowledge.
+  const knownOutputBytes = sumKnownBytes + overhead;
   const ceiling = effectiveCeiling({ format: rawFormatDescriptor, sink: options.sink ?? null, overrides: options.ceiling });
   const breaches = [];
   if (rows && rows.max > ceiling.rows) breaches.push('rows');
-  if (outputBytes.max > ceiling.outputBytes) breaches.push('outputBytes');
-  if (readBytes.max > ceiling.readBytes) breaches.push('readBytes');
+  if (knownOutputBytes > ceiling.outputBytes) breaches.push('outputBytes');
+  if (sumKnownBytes > ceiling.readBytes) breaches.push('readBytes');
   if (selected.length > ceiling.files) breaches.push('files');
 
   const requestDigest = await sha256Hex(JSON.stringify({ parts, filter }));
