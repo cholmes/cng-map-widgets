@@ -39,7 +39,14 @@ export const gpkgFormatDescriptor = {
   extension: 'gpkg',
   mediaType: 'application/geopackage+sqlite3',
   streaming: false,
-  capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
+  // memoryFactor: 3.5 -- measured (gpkg-writer.js's module doc): every
+  // row buffered in JS arrays, then the whole SQLite database built in
+  // sql.js's wasm heap, then a third exported copy handed to the sink;
+  // 611 MB of output measured at 2,183 MB peak RSS. Kept in agreement
+  // with the plugin's own `capabilities` in gpkg-writer.js -- the
+  // registry reads whichever one is actually used (`registerFormat`'s
+  // eager plugin vs. this lazy descriptor resolved by `load()` below).
+  capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'], memoryFactor: 3.5 },
   approxBytes: APPROX_BYTES,
   // Shared with the plugin, so the descriptor's estimate and the loaded
   // plugin's can never disagree -- and still pure JS (no sql.js needed to

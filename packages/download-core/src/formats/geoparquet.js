@@ -91,7 +91,12 @@ export function createGeoParquetFormat() {
     extension: 'parquet',
     mediaType: 'application/vnd.apache.parquet',
     streaming: false,
-    capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
+    // memoryFactor: 2 -- `streaming: false` above: every batch is
+    // accumulated in JS arrays until `close()`, then `hyparquet-writer`
+    // builds the whole encoded buffer. Declared rather than left to the
+    // buffering default of 3, since this format holds the source rows
+    // plus one encoded copy, not a third working copy on top.
+    capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'], memoryFactor: 2 },
     estimateBytes: estimateGeoParquetBytes,
     async open(ctx) {
       // Loaded once, up front: `writeBatch` needs `geojsonToWkb` on every

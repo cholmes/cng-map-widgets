@@ -22,6 +22,12 @@ A `shapefileFormatDescriptor` is also exported for a page that lists every
 format through the lazy-registration API uniformly — its `load()`
 resolves immediately, so this costs nothing extra either way.
 
+`capabilities` declares no `memoryFactor` (`@cng/download-core`'s
+`ceiling.js`): this writer buffers every row before `close()`, same as
+GeoPackage, but the multiplier has not been measured the way GeoPackage's
+3.5 was. Leaving it absent falls back to the generic buffering default of
+3 rather than a guessed number.
+
 ## Why a `.shp.zip`, not four separate files
 
 A Shapefile is really five sibling files (`.shp`/`.shx`/`.dbf`/`.prj`/

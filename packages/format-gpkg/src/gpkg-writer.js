@@ -114,7 +114,9 @@ export function createGpkgFormat(SQL) {
     extension: 'gpkg',
     mediaType: 'application/geopackage+sqlite3',
     streaming: false,
-    capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
+    // memoryFactor: 3.5 -- measured, see the module doc above. Kept in
+    // agreement with index.js's `gpkgFormatDescriptor.capabilities`.
+    capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'], memoryFactor: 3.5 },
     estimateBytes: estimateGpkgBytes,
     async open(ctx) {
       const layerName = ctx.options?.layerName || 'features';

@@ -27,6 +27,12 @@ import { flatGeobufFormatDescriptor } from '@cng/format-flatgeobuf';
 registerLazyFormat(flatGeobufFormatDescriptor);
 ```
 
+`capabilities` declares no `memoryFactor` (`@cng/download-core`'s
+`ceiling.js`): this writer buffers every row before `close()`, same as
+GeoPackage, but the multiplier has not been measured the way GeoPackage's
+3.5 was. Leaving it absent falls back to the generic buffering default of
+3 rather than a guessed number.
+
 ## What you give up
 
 - **Not streaming.** `flatgeobuf`'s JS binding only exposes

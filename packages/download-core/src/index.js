@@ -17,7 +17,7 @@ export { memorySink, blobSink, streamSink, fileSystemSink, autoSink } from './si
 export { createHyparquetEngine, HYPARQUET_ENGINE_ID, DEFAULT_MAX_CONCURRENT_REQUESTS } from './engine-hyparquet.js';
 export { createGeoJsonFormat } from './formats/geojson.js';
 export { createGeoParquetFormat } from './formats/geoparquet.js';
-export { defaultCeiling, requirementsOf } from './ceiling.js';
+export { defaultCeiling, effectiveCeiling, memoryFactorOf, requirementsOf } from './ceiling.js';
 export { evaluatePredicate, evaluateWhere, getPath } from './predicate.js';
 export { rowMatchesArea, bboxIntersectsAny, pointInGeometry, geometriesIntersect, geometryIntersectsArea } from './spatial.js';
 export { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';

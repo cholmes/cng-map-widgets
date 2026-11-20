@@ -35,7 +35,7 @@ const engineRegistry = new Map();
  * @property {string} extension
  * @property {string} mediaType
  * @property {boolean} streaming
- * @property {{ nestedColumns: boolean, mixedGeometryTypes: boolean, maxFeatures?: number, crs: readonly string[] }} capabilities
+ * @property {{ nestedColumns: boolean, mixedGeometryTypes: boolean, maxFeatures?: number, crs: readonly string[], memoryFactor?: number }} capabilities - `memoryFactor` (`ceiling.js`'s `memoryFactorOf`): bytes of peak memory this format holds per output byte. Omit it to take the default (0 if `streaming`, else 3); declare it when measured, as `format-gpkg` does (3.5).
  * @property {{ min: number, max: number, estimate?: number }} [approxBytes] - min+gz wire weight of what `load()` will fetch, known up front so a UI can show "+~480KB" *before* the fetch happens.
  * @property {(schema: readonly unknown[], rows: unknown, ctx?: { avgGeometryBytes: number|null, geometryColumn: string }) => unknown} estimateBytes - Same signature as `FormatPlugin.estimateBytes`, third argument included. `ctx` is additive and optional (a descriptor written before it, or one that simply ignores it, keeps working): `avgGeometryBytes` is the dataset's own average geometry bytes per row, derived from parquet footer statistics by `prune.js`'s `avgColumnBytesPerRow`, or null when the dataset has no geometry column chunks to read. Must not require `load()` to have run (it's pure JS, no wasm needed to model output bytes-per-row).
  * @property {() => Promise<import('./types.js').FormatPlugin | { default: import('./types.js').FormatPlugin | (() => import('./types.js').FormatPlugin) }>} load

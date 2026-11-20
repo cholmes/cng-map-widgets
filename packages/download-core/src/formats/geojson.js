@@ -71,7 +71,9 @@ export function createGeoJsonFormat() {
     extension: 'geojson',
     mediaType: 'application/geo+json',
     streaming: true,
-    capabilities: { nestedColumns: true, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'] },
+    // memoryFactor: 0 -- this plugin streams, writing bytes as batches
+    // arrive (module doc above), so it holds nothing beyond one batch.
+    capabilities: { nestedColumns: true, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'], memoryFactor: 0 },
     estimateBytes: estimateGeoJsonBytes,
     async open(ctx) {
       const precision = ctx.options.precision ?? 7;
