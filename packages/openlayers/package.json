@@ -1,6 +1,6 @@
 {
   "name": "@cng/openlayers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenLayers adapter for the @cng widgets: an accessible search combobox control, an Area outline layer, a viewport provider, antimeridian-aware fit, and the EPSG:4326 <-> view-projection bridge OpenLayers needs that MapLibre's GeoJSON-native sources do not.",
   "keywords": [
     "openlayers",

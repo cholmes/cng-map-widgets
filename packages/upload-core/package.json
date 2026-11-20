@@ -1,6 +1,6 @@
 {
   "name": "@cng/upload-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Drag/drop, paste or file-pick a GeoJSON file and get back the same Area object @cng/geocoder-core emits -- the composability seam. Validates and repairs real-world GeoJSON (rings, winding, Z, out-of-range coordinates) and reports every repair. registerReader() is the seam for more formats.",
   "keywords": [
     "geojson",

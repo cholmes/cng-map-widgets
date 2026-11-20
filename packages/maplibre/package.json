@@ -1,6 +1,6 @@
 {
   "name": "@cng/maplibre",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MapLibre GL adapter for the @cng widgets: an accessible search combobox control, an Area outline layer (with a dashed ghost of the filter geometry), a viewport provider for the ranking boost, and antimeridian-aware fitBounds.",
   "keywords": [
     "maplibre",

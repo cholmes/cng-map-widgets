@@ -1,6 +1,6 @@
 {
   "name": "@cng/spec",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared contracts for cloud-native map widgets: the Area object, DatasetDescriptor/FilterSpec/DownloadRequest shapes, the CngError taxonomy, and pure geo helpers (bbox + antimeridian split, Visvalingam simplify, WKB decode, name normalization). No I/O, no dependencies.",
   "keywords": [
     "geospatial",

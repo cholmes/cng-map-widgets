@@ -1,6 +1,6 @@
 {
   "name": "@cng/format-gpkg",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GeoPackage output for @cng/download-core: a hand-written SQLite 'vector features' profile (gpkg_contents/gpkg_spatial_ref_sys/gpkg_geometry_columns + the feature table), built with sql.js. The ~340KB (min+gz) path O5 chose over gdal3.js's 2-8MB wasm build -- see README.md and experiments/e10-heavy-formats/RESULTS.md.",
   "keywords": [
     "geopackage",

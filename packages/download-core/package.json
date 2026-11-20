@@ -1,6 +1,6 @@
 {
   "name": "@cng/download-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Clip-free, server-free dataset download in the browser: STAC/Portolan collection resolution, a metadata-only pruning cascade (partition -> part bbox/time -> row-group stats -> row), pre-download estimates with a ceiling and an explicit refusal path, streaming sinks, and geojson + geoparquet writers.",
   "keywords": [
     "geoparquet",

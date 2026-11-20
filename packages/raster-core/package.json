@@ -1,6 +1,6 @@
 {
   "name": "@cng/raster-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "In-browser raster clip-and-download: windowed reads from remote COGs (geotiff.js over HTTP ranges), band subsetting from STAC band metadata, an exact pre-download size estimate with a memory ceiling, and a dependency-free GeoTIFF writer that preserves dtype and georeferencing.",
   "keywords": [
     "cog",

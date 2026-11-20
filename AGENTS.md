@@ -60,7 +60,7 @@ OV  https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.
 Do **not** add `hyparquet` to that map. The packages `import()` it themselves
 from pinned absolute CDN URLs (`src/cdn.js` in each). Nothing is on npm yet;
 when it is, each line becomes
-`https://cdn.jsdelivr.net/npm/@cng/<name>@0.1.0/src/index.js` and no module
+`https://cdn.jsdelivr.net/npm/@cng/<name>@0.2.0/src/index.js` and no module
 code changes.
 
 **Without a clone**, swap the relative paths for the published site — the
@@ -73,7 +73,7 @@ https://cholmes.github.io/cng-map-widgets/packages/<name>/src/index.js
 or, pinned to a tag,
 
 ```
-https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.1.0/packages/<name>/src/index.js
+https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.2.0/packages/<name>/src/index.js
 ```
 
 Either way, **map every package you need transitively**, not just the ones

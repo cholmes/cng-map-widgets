@@ -1,6 +1,6 @@
 {
   "name": "@cng/geocoder-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Framework-agnostic place-name search over a published cloud-native gazetteer: manifest + index load (full or HTTP-range), name normalization, prefix search, a nine-component ranking total order with result diversity, and geometry resolution into an Area. No DOM, no map library.",
   "keywords": [
     "geocoder",
