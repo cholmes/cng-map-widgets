@@ -173,13 +173,14 @@ test('gpkg format: a source column literally named "geom" or "fid" is renamed, n
   }
 });
 
-test('gpkg declares the measured memoryFactor: 3.5 on both its lazy descriptor and its plugin, not the default 3', async () => {
+test('gpkg declares the measured memoryFactor: 2.9 on both its lazy descriptor and its plugin, not the default 3', async () => {
   // Both declaration sites (download-core's ceiling.js's module doc:
   // "the registry reads whichever is used") must agree, so both are
-  // checked here rather than just one.
-  assert.equal(memoryFactorOf(gpkgFormatDescriptor), 3.5);
+  // checked here rather than just one. 2.9 is the post-task-9 value
+  // (down from 3.5) -- see test/memory-factor.verify.mjs.
+  assert.equal(memoryFactorOf(gpkgFormatDescriptor), 2.9);
   const SQL = await initializedSqlJs;
-  assert.equal(memoryFactorOf(createGpkgFormat(SQL)), 3.5);
+  assert.equal(memoryFactorOf(createGpkgFormat(SQL)), 2.9);
 });
 
 test('(environment check) ogrinfo and duckdb are both available, so the assertions above actually ran', () => {

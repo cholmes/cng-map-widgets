@@ -106,20 +106,37 @@ once every row has been seen, and sql.js's `Database.export()` serializes
 the *entire* in-memory database every time — there's no "append to a file
 on disk" mode to stream into.
 
-Peak memory while writing is roughly three copies of the data alive at
-once:
+Rows ARE inserted into the open sql.js database as each `writeBatch`
+arrives (bigger-downloads task 9 — GitHub issue #3's step 1), inside a
+transaction, with no row data retained afterwards. Only the two values
+not knowable until the last row — `gpkg_geometry_columns`'
+`geometry_type_name` and `gpkg_contents`' bbox — are buffered (as a small
+`Set` and four numbers, not per-row), and corrected at `close()` with two
+single-row `UPDATE`s.
 
-1. buffered JS row arrays (built incrementally in `writeBatch`),
-2. sql.js's in-memory SQLite database (built in `close()`, comparable in
-   size to the final `.gpkg` file, held in the wasm heap), and
-3. the exported `Uint8Array` copy handed to the sink.
+Peak memory while writing is still two copies of the data alive at once,
+not one:
+
+1. sql.js's in-memory SQLite database (built incrementally across
+   `writeBatch` calls, comparable in size to the final `.gpkg` file, held
+   in the wasm heap), and
+2. the exported `Uint8Array` copy `close()` hands to the sink.
+
+(Before task 9 there was a third copy — every row buffered in JS arrays
+from `writeBatch` until `close()` — which is what `memoryFactor` dropped
+from 3.5 to **2.9** for. sql.js has no incremental-export mode, so this
+is not yet a flat-memory writer; GitHub issue #3's OPFS-backed-SQLite
+step is what gets there.)
 
 For the row counts this system's download ceiling targets (see the main
 design doc's `Ceiling.outputBytes` default, 2 GiB) that's tens of MB in
 practice, not hundreds — but it is real, and `download-core`'s own
 ceiling check (`est.outputBytes.max > ceiling.blobBytes` for a
 non-streaming format) is what actually protects a page from a GeoPackage
-download large enough for this to matter.
+download large enough for this to matter. See
+`test/memory-factor.verify.mjs` for the measurement method (run by hand,
+not part of `npm test`) and its own notes on why the smallest measured
+case is excluded from the declared factor.
 
 ## Output-size estimates: the geometry term
 
@@ -170,3 +187,8 @@ suite, if either is missing — see the environment-check test at the
 bottom of that file, which fails loudly if validation was silently
 skipped). `gpkg-integration.test.js` additionally touches the network
 (the real FTW Liechtenstein file) and skips cleanly offline.
+`gpkg-streaming.test.js` covers the per-batch-insert behavior itself
+(rows land in the open database before `close()`, the two metadata
+`UPDATE`s, `abort()` closing the database). `memory-factor.verify.mjs` is
+a slow, hand-run script (deliberately **not** part of `npm test`) that
+re-measures `memoryFactor` — see "Memory ceiling" above.

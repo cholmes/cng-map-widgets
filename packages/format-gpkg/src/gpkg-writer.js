@@ -6,23 +6,29 @@
 // consumer gives up versus the gdal3.js path.
 //
 // NOT streaming (`streaming: false`, same reason as download-core's own
-// `geoparquet` plugin): every row is buffered in plain JS arrays during
-// `writeBatch`, and the whole SQLite database is built and serialized in
-// `close()`. Two reasons this can't be incremental: (1) `gpkg_contents`'
-// bbox and `gpkg_geometry_columns`' `geometry_type_name` are only known
-// once every row has been seen (exactly geoparquet.js's `overall`/
-// `geometryTypes` pattern); (2) sql.js has no "append to an existing file
-// on disk" mode -- `Database.export()` serializes the entire in-memory
-// database every time, so there is nothing to gain from writing earlier.
+// `geoparquet` plugin): rows ARE inserted into the open sql.js database
+// as each `writeBatch` arrives (step 1 of GitHub issue #3 -- see below),
+// but `Database.export()` still serializes the *entire* in-memory
+// database into one `Uint8Array` in `close()`, and sql.js has no "append
+// to an existing file on disk" mode to avoid that. `gpkg_contents`' bbox
+// and `gpkg_geometry_columns`' `geometry_type_name` are likewise only
+// known once every row has been seen (exactly geoparquet.js's `overall`/
+// `geometryTypes` pattern), so `open()` writes placeholders for both and
+// `close()` corrects them with two single-row `UPDATE`s -- cheap, because
+// they touch tiny metadata tables, not the feature table.
 // Memory ceiling, stated honestly (design doc §3.4 FormatPlugin.streaming
 // doc comment: "the estimate also checks ceiling.blobBytes for this
-// reason"): peak memory is roughly the buffered JS row arrays (comparable
-// to the row count times its data), PLUS sql.js's in-memory SQLite
-// database (comparable to the final .gpkg file size, held in the wasm
-// heap), PLUS the exported `Uint8Array` copy `close()` hands to the sink.
-// For an output in the tens-of-MB range (this project's realistic
-// per-download ceiling) that is tens of MB total, not hundreds -- but it
-// is three copies of the data alive at once, not one.
+// reason"): peak memory is roughly sql.js's in-memory SQLite database
+// (comparable to the final .gpkg file size, held in the wasm heap) PLUS
+// the exported `Uint8Array` copy `close()` hands to the sink -- two
+// copies alive at once, not three. (Before this restructure there was
+// also a buffered-JS-row-arrays copy, held from `writeBatch` until
+// `close()`; see `packages/format-gpkg/test/memory-factor.verify.mjs`
+// for the measured before/after.) A flat SQLite file with no
+// incremental-write mode still means a non-streaming plugin -- GitHub
+// issue #3 (replacing sql.js with an OPFS-backed SQLite) is what gets
+// this to genuinely flat memory; this is the independently-shippable
+// first step.
 //
 // R-tree spatial index: NOT implemented. Measured, not assumed: sql.js
 // 1.13.0's published wasm build throws "no such module: rtree" on
@@ -114,9 +120,11 @@ export function createGpkgFormat(SQL) {
     extension: 'gpkg',
     mediaType: 'application/geopackage+sqlite3',
     streaming: false,
-    // memoryFactor: 3.5 -- measured, see the module doc above. Kept in
+    // memoryFactor: 2.9 -- measured after the per-batch-insert restructure
+    // (bigger-downloads task 9), down from 3.5; see
+    // test/memory-factor.verify.mjs and the module doc above. Kept in
     // agreement with index.js's `gpkgFormatDescriptor.capabilities`.
-    capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'], memoryFactor: 3.5 },
+    capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'], memoryFactor: 2.9 },
     estimateBytes: estimateGpkgBytes,
     async open(ctx) {
       const layerName = ctx.options?.layerName || 'features';
@@ -141,92 +149,105 @@ export function createGpkgFormat(SQL) {
         attrColumns.push({ name, sourceName: col.name, sqliteType: SQLITE_TYPE_MAP[col.type] ?? 'TEXT' });
       }
 
-      /** @type {unknown[][]} */
-      const bufferedRows = [];
       const geometryTypeCodes = new Set();
       let overallBbox = null;
       let rows = 0;
 
+      const db = new SQL.Database();
+      db.run(`
+        CREATE TABLE gpkg_spatial_ref_sys (
+          srs_name TEXT NOT NULL, srs_id INTEGER NOT NULL PRIMARY KEY,
+          organization TEXT NOT NULL, organization_coordsys_id INTEGER NOT NULL,
+          definition TEXT NOT NULL, description TEXT
+        );
+        INSERT INTO gpkg_spatial_ref_sys VALUES
+          ('Undefined cartesian SRS', -1, 'NONE', -1, 'undefined', 'undefined cartesian coordinate reference system'),
+          ('Undefined geographic SRS', 0, 'NONE', 0, 'undefined', 'undefined geographic coordinate reference system'),
+          ('WGS 84 geodetic', 4326, 'EPSG', 4326, 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]', 'longitude/latitude WGS84');
+
+        CREATE TABLE gpkg_contents (
+          table_name TEXT NOT NULL PRIMARY KEY, data_type TEXT NOT NULL,
+          identifier TEXT UNIQUE, description TEXT DEFAULT '',
+          last_change DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          min_x DOUBLE, min_y DOUBLE, max_x DOUBLE, max_y DOUBLE,
+          srs_id INTEGER, CONSTRAINT fk_gc_r_srs_id FOREIGN KEY (srs_id) REFERENCES gpkg_spatial_ref_sys(srs_id)
+        );
+
+        CREATE TABLE gpkg_geometry_columns (
+          table_name TEXT NOT NULL, column_name TEXT NOT NULL,
+          geometry_type_name TEXT NOT NULL, srs_id INTEGER NOT NULL,
+          z TINYINT NOT NULL, m TINYINT NOT NULL,
+          CONSTRAINT pk_geom_cols PRIMARY KEY (table_name, column_name),
+          CONSTRAINT uk_gc_table_name UNIQUE (table_name),
+          CONSTRAINT fk_gc_tn FOREIGN KEY (table_name) REFERENCES gpkg_contents(table_name),
+          CONSTRAINT fk_gc_srs FOREIGN KEY (srs_id) REFERENCES gpkg_spatial_ref_sys(srs_id)
+        );
+      `);
+
+      const featureColsSql = attrColumns.map((c) => `${quoteIdent(c.name)} ${c.sqliteType}`).join(', ');
+      db.run(`CREATE TABLE ${quoteIdent(layerName)} (fid INTEGER PRIMARY KEY AUTOINCREMENT, geom BLOB${featureColsSql ? ', ' + featureColsSql : ''})`);
+
+      // `geometry_type_name` and the bbox aren't knowable until every row
+      // has been seen -- inserted here as placeholders, corrected by two
+      // single-row UPDATEs in close(). Everything else about these rows
+      // (identity, srs_id, column shape) is already final.
+      db.run(
+        'INSERT INTO gpkg_contents (table_name, data_type, identifier, min_x, min_y, max_x, max_y, srs_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [layerName, 'features', layerName, null, null, null, null, srsId],
+      );
+      db.run('INSERT INTO gpkg_geometry_columns VALUES (?, ?, ?, ?, 0, 0)', [layerName, 'geom', 'GEOMETRY', srsId]);
+
+      const placeholders = ['?', ...attrColumns.map(() => '?')].join(', ');
+      const insertStmt = db.prepare(`INSERT INTO ${quoteIdent(layerName)} (geom${attrColumns.length ? ', ' + attrColumns.map((c) => quoteIdent(c.name)).join(', ') : ''}) VALUES (${placeholders})`);
+
       return {
+        // Test-only probe (not part of the FormatPlugin contract): lets
+        // this package's tests inspect the live database between
+        // writeBatch calls, before close() runs.
+        _db: db,
         async writeBatch(batch) {
-          for (let i = 0; i < batch.rows; i++) {
-            const row = attrColumns.map((c) => sqliteValue(batch.columns[c.sourceName]?.[i]));
-            const geomValue = batch.geometry[i];
-            let blob = null;
-            if (geomValue != null) {
-              let wkbBytes;
-              if (isDecodedGeometry(geomValue)) {
-                wkbBytes = geojsonToWkb(geomValue);
-                overallBbox = unionBbox(overallBbox, bboxOf(geomValue));
-              } else {
-                // Already WKB (the common case: a GeoParquet-1.x/CGAZ/FTW
-                // source's bytes pass straight through, no decode+re-encode).
-                wkbBytes = geomValue instanceof Uint8Array ? geomValue : new Uint8Array(geomValue);
+          db.run('BEGIN TRANSACTION');
+          try {
+            for (let i = 0; i < batch.rows; i++) {
+              const row = attrColumns.map((c) => sqliteValue(batch.columns[c.sourceName]?.[i]));
+              const geomValue = batch.geometry[i];
+              let blob = null;
+              if (geomValue != null) {
+                let wkbBytes;
+                if (isDecodedGeometry(geomValue)) {
+                  wkbBytes = geojsonToWkb(geomValue);
+                  overallBbox = unionBbox(overallBbox, bboxOf(geomValue));
+                } else {
+                  // Already WKB (the common case: a GeoParquet-1.x/CGAZ/FTW
+                  // source's bytes pass straight through, no decode+re-encode).
+                  wkbBytes = geomValue instanceof Uint8Array ? geomValue : new Uint8Array(geomValue);
+                }
+                geometryTypeCodes.add(peekWkbType(wkbBytes));
+                blob = gpkgGeometryBlob(wkbBytes, srsId);
+                if (!isDecodedGeometry(geomValue)) {
+                  // Still need a bbox for gpkg_contents; `bboxOfWkb` walks
+                  // the raw bytes directly (no decode to GeoJSON objects).
+                  overallBbox = unionBbox(overallBbox, bboxOfWkb(wkbBytes));
+                }
               }
-              geometryTypeCodes.add(peekWkbType(wkbBytes));
-              blob = gpkgGeometryBlob(wkbBytes, srsId);
-              if (!isDecodedGeometry(geomValue)) {
-                // Still need a bbox for gpkg_contents; `bboxOfWkb` walks
-                // the raw bytes directly (no decode to GeoJSON objects).
-                overallBbox = unionBbox(overallBbox, bboxOfWkb(wkbBytes));
-              }
+              insertStmt.run([blob, ...row]);
             }
-            bufferedRows.push([blob, ...row]);
+            db.run('COMMIT');
+          } catch (err) {
+            db.run('ROLLBACK');
+            throw err;
           }
           rows += batch.rows;
         },
         async close() {
-          const db = new SQL.Database();
-          db.run(`
-            CREATE TABLE gpkg_spatial_ref_sys (
-              srs_name TEXT NOT NULL, srs_id INTEGER NOT NULL PRIMARY KEY,
-              organization TEXT NOT NULL, organization_coordsys_id INTEGER NOT NULL,
-              definition TEXT NOT NULL, description TEXT
-            );
-            INSERT INTO gpkg_spatial_ref_sys VALUES
-              ('Undefined cartesian SRS', -1, 'NONE', -1, 'undefined', 'undefined cartesian coordinate reference system'),
-              ('Undefined geographic SRS', 0, 'NONE', 0, 'undefined', 'undefined geographic coordinate reference system'),
-              ('WGS 84 geodetic', 4326, 'EPSG', 4326, 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]', 'longitude/latitude WGS84');
-
-            CREATE TABLE gpkg_contents (
-              table_name TEXT NOT NULL PRIMARY KEY, data_type TEXT NOT NULL,
-              identifier TEXT UNIQUE, description TEXT DEFAULT '',
-              last_change DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-              min_x DOUBLE, min_y DOUBLE, max_x DOUBLE, max_y DOUBLE,
-              srs_id INTEGER, CONSTRAINT fk_gc_r_srs_id FOREIGN KEY (srs_id) REFERENCES gpkg_spatial_ref_sys(srs_id)
-            );
-
-            CREATE TABLE gpkg_geometry_columns (
-              table_name TEXT NOT NULL, column_name TEXT NOT NULL,
-              geometry_type_name TEXT NOT NULL, srs_id INTEGER NOT NULL,
-              z TINYINT NOT NULL, m TINYINT NOT NULL,
-              CONSTRAINT pk_geom_cols PRIMARY KEY (table_name, column_name),
-              CONSTRAINT uk_gc_table_name UNIQUE (table_name),
-              CONSTRAINT fk_gc_tn FOREIGN KEY (table_name) REFERENCES gpkg_contents(table_name),
-              CONSTRAINT fk_gc_srs FOREIGN KEY (srs_id) REFERENCES gpkg_spatial_ref_sys(srs_id)
-            );
-          `);
-
           const geomTypeName = geometryTypeCodes.size === 1 ? wkbTypeName([...geometryTypeCodes][0]) : 'GEOMETRY';
-          const featureColsSql = attrColumns.map((c) => `${quoteIdent(c.name)} ${c.sqliteType}`).join(', ');
-          db.run(`CREATE TABLE ${quoteIdent(layerName)} (fid INTEGER PRIMARY KEY AUTOINCREMENT, geom BLOB${featureColsSql ? ', ' + featureColsSql : ''})`);
+          db.run('UPDATE gpkg_geometry_columns SET geometry_type_name = ? WHERE table_name = ?', [geomTypeName, layerName]);
 
           const [minX, minY, maxX, maxY] = overallBbox ?? [null, null, null, null];
           db.run(
-            'INSERT INTO gpkg_contents (table_name, data_type, identifier, min_x, min_y, max_x, max_y, srs_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [layerName, 'features', layerName, minX, minY, maxX, maxY, srsId],
+            'UPDATE gpkg_contents SET min_x = ?, min_y = ?, max_x = ?, max_y = ? WHERE table_name = ?',
+            [minX, minY, maxX, maxY, layerName],
           );
-          db.run('INSERT INTO gpkg_geometry_columns VALUES (?, ?, ?, ?, 0, 0)', [layerName, 'geom', geomTypeName, srsId]);
-
-          if (bufferedRows.length > 0) {
-            const placeholders = ['?', ...attrColumns.map(() => '?')].join(', ');
-            const stmt = db.prepare(`INSERT INTO ${quoteIdent(layerName)} (geom${attrColumns.length ? ', ' + attrColumns.map((c) => quoteIdent(c.name)).join(', ') : ''}) VALUES (${placeholders})`);
-            try {
-              for (const row of bufferedRows) stmt.run(row);
-            } finally {
-              stmt.free();
-            }
-          }
 
           try {
             db.run('PRAGMA application_id = 1196444487'); // 'GPKG' as a big-endian uint32, per spec
@@ -238,13 +259,15 @@ export function createGpkgFormat(SQL) {
             // failing the whole write over.
           }
 
+          insertStmt.free();
           const bytes = db.export();
           db.close();
           await ctx.writer.write(bytes);
           return { rows, bytes: bytes.byteLength };
         },
         async abort() {
-          bufferedRows.length = 0;
+          insertStmt.free();
+          db.close();
         },
       };
     },
