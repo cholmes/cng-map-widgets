@@ -228,7 +228,7 @@ for (const a of area.provenance.attribution) {
 
 ## Recipe 3 — a `DownloadRequest` for each dataset kind
 
-A `DownloadRequest` is `{ spec: 'cnmw-request/1.0', dataset, filter, output,
+A `DownloadRequest` is `{ spec: 'cng-request/1.0', dataset, filter, output,
 generator? }`. All plain JSON. `filter.area` is either an inline `AreaDocument`
 or `{ ref: 'area' }` to defer to the runtime argument.
 
@@ -236,9 +236,9 @@ or `{ ref: 'area' }` to defer to the runtime argument.
 
 ```js
 const request = {
-  spec: 'cnmw-request/1.0',
+  spec: 'cng-request/1.0',
   dataset: {
-    spec: 'cnmw-dataset/1.0',
+    spec: 'cng-dataset/1.0',
     id: 'ftw-fields-li',
     title: 'Fields of The World — field boundaries (Liechtenstein)',
     source: {
@@ -262,14 +262,14 @@ const request = {
     attribution: [{ text: 'Fields of The World', license: 'CC-BY-4.0', shareAlike: false }],
   },
   filter: {
-    spec: 'cnmw-filter/1.0',
+    spec: 'cng-filter/1.0',
     area: { ref: 'area' },
     spatial: { mode: 'intersects' },          // 'bbox' | 'intersects' (default) | 'clip' (unimplemented)
     where: [{ col: 'confidence', op: '>=', value: 0.9 }],
     columns: { include: ['id', 'confidence'] },
     limit: 50,
   },
-  output: { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'ftw-liechtenstein.geojson' },
+  output: { spec: 'cng-output/1.0', format: 'geojson', filename: 'ftw-liechtenstein.geojson' },
 };
 
 const est = await estimate(request.dataset, area, request.filter);
@@ -287,7 +287,7 @@ literally named `bbox` — i.e. a full scan. Declare it when you know it.
 import { resolveDataset, estimate } from '@cng/download-core';
 
 const dataset = await resolveDataset({
-  spec: 'cnmw-dataset/1.0',
+  spec: 'cng-dataset/1.0',
   id: 'firms-detections',
   source: {
     kind: 'portolan-collection',
@@ -305,7 +305,7 @@ dataset.table.bbox;           // { kind: 'none' } -- no covering COLUMN, but see
 dataset.table.rowCount;       // 632471436
 
 const filter = {
-  spec: 'cnmw-filter/1.0',
+  spec: 'cng-filter/1.0',
   area: { ref: 'area' },
   spatial: { mode: 'intersects' },
   time: { column: 'acq_datetime', start: '2026-09-01T00:00:00Z', end: '2026-09-08T00:00:00Z', closed: '[)' },
@@ -334,7 +334,7 @@ Same derivation; the kind is detected from `table:columns` containing
 
 ```js
 const dataset = await resolveDataset({
-  spec: 'cnmw-dataset/1.0',
+  spec: 'cng-dataset/1.0',
   id: 'sentinel-2-c1-l2a',
   source: {
     kind: 'portolan-collection',
@@ -345,7 +345,7 @@ dataset.source.kind;              // 'stac-geoparquet'
 dataset.attribution[0].shareAlike;  // true -- CC-BY-SA-3.0-IGO
 
 const filter = {
-  spec: 'cnmw-filter/1.0',
+  spec: 'cng-filter/1.0',
   area: { ref: 'area' },
   spatial: { mode: 'intersects' },
   time: { start: '2025-06-01T00:00:00Z', end: '2025-06-08T00:00:00Z', closed: '[)' },
@@ -490,7 +490,7 @@ const { area, warnings } = await areaFromFile(file);
 const r = await areaFromGeoJson(geojsonValue, { name: 'box.geojson' });
 
 // The SAME estimate() call works on it. No branching anywhere downstream.
-const est = await estimate(dataset, area, { spec: 'cnmw-filter/1.0', spatial: { mode: 'intersects' } });
+const est = await estimate(dataset, area, { spec: 'cng-filter/1.0', spatial: { mode: 'intersects' } });
 ```
 
 Report `warnings` to the user. Codes: `repaired` (with the list of fixes),
@@ -715,7 +715,7 @@ Use `'intersects'`. Same for `whereSql` (needs `'sql'`) and an `Area` with
 
 ### 12. Version-skew checking is currently inert
 
-The live catalogs publish no `cnmw:catalog_version` footer key, so
+The live catalogs publish no `cng:catalog_version` footer key, so
 `onVersionSkew: 'error'` neither errors nor warns. Identity is still safe —
 resolution always re-locates rows by key, never by a cached offset — but do not
 rely on the check catching a rebuilt catalog.
@@ -778,6 +778,6 @@ node packages/download-core/test/browser/filesystem-sink.verify.mjs
 If you add a widget to a page, copy the shape of one of the
 [`examples/*/verify.mjs`](examples/) scripts: navigate, wait on a visible
 status string, assert on the actual map source data
-(`map.getSource('cnmw-area-display')._data`) rather than a screenshot, and fail
+(`map.getSource('cng-area-display')._data`) rather than a screenshot, and fail
 on any console error. That pattern caught every real bug in this repo's
 history.

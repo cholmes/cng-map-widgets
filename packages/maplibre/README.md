@@ -43,9 +43,9 @@ and OpenLayers adapters. This file is DOM and event wiring.
 ```
 
 The control's CSS is **inlined as a string** and injected once into
-`document.head` under `id="cnmw-geocoder-style"` — no stylesheet to load, no
+`document.head` under `id="cng-geocoder-style"` — no stylesheet to load, no
 build step to configure, and nothing to break a zero-build page. Override by
-targeting `.cnmw-geocoder` and its children.
+targeting `.cng-geocoder` and its children.
 
 **Coming:** `npm i @cng/maplibre`.
 
@@ -226,7 +226,7 @@ outline.remove();
 
 | option | default |
 |---|---|
-| `id` | `'cnmw-area'` — prefixes every source/layer id, so two layers can coexist. |
+| `id` | `'cng-area'` — prefixes every source/layer id, so two layers can coexist. |
 | `lineColor` | `'#1a73e8'` |
 | `lineWidth` | `2` |
 | `lineDasharray` | — |
@@ -242,7 +242,7 @@ Sources and layers created, which you can also reach directly:
 Reading the drawn geometry is the right way to assert in a test:
 
 ```js
-map.getSource('cnmw-area-display')._data.features[0].geometry.type;   // 'Polygon'
+map.getSource('cng-area-display')._data.features[0].geometry.type;   // 'Polygon'
 ```
 
 ### `viewportProvider(map) => () => BBox`
@@ -330,7 +330,7 @@ searching, an error row with a Retry button, a `No matches for "…".` row,
 and — when geocoder-core's fuzzy fallback produced the results (every
 `rank.matchClass` is `'fuzzy'`, which only happens when the prefix search
 found nothing) — a non-interactive caption row above them:
-*No exact matches — showing close matches.* (`li.cnmw-fuzzy-note`,
+*No exact matches — showing close matches.* (`li.cng-fuzzy-note`,
 `role="presentation"`, excluded from keyboard navigation and click
 handling). A custom `renderItem` only replaces option contents; the caption
 still renders.
@@ -385,9 +385,9 @@ node examples/geocoder-demo/verify-live.mjs 8000   # ADM0/1/2, progressive upgra
 node examples/download-demo/verify.mjs 8000    # the control feeding @cng/download-core
 ```
 
-Those assert on `map.getSource('cnmw-area-display')._data`,
+Those assert on `map.getSource('cng-area-display')._data`,
 `aria-activedescendant` after an arrow key, and the rendered
-`.cnmw-attribution` text — not on screenshots.
+`.cng-attribution` text — not on screenshots.
 
 `packages/maplibre/test/` holds unit tests for the pure combobox helpers as
 they are extracted from the control.

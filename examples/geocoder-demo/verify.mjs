@@ -65,8 +65,8 @@ console.log('Status after select:', await page.textContent('#status'));
 // Confirm the outline layer actually has geometry data (not just that the
 // status text changed).
 const sourceData = await page.evaluate(() => {
-  const map = window.__cnmwDemo.map;
-  const src = map.getSource('cnmw-area-display');
+  const map = window.__cngDemo.map;
+  const src = map.getSource('cng-area-display');
   return src ? src._data : null;
 });
 if (!sourceData || sourceData.features.length === 0) {

@@ -138,7 +138,7 @@ test('progress counters stay monotonic and end on the same totals as a sequentia
 
 test('filter.limit stops work early and yields exactly the sequential run\'s rows', async () => {
   const { handle } = await openFakeHostedParquet({ groups: 12, rowsPerGroup: 5, delayMs: (o) => Math.max(0, 120 - o * 8) });
-  const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' }, limit: 13 };
+  const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' }, limit: 13 };
 
   const par = await runCollect(enginePlanFor({ handle, filter }), { maxConcurrentRequests: 6, limit: 13 });
   const seq = await runCollect(enginePlanFor({ handle, filter }), { maxConcurrentRequests: 1, limit: 13 });
@@ -156,7 +156,7 @@ test('filter.limit stops work early and yields exactly the sequential run\'s row
 
 test('a limit that lands exactly on a row-group boundary matches the sequential run', async () => {
   const { handle } = await openFakeHostedParquet({ groups: 6, rowsPerGroup: 5, delayMs: () => 10 });
-  const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' }, limit: 10 };
+  const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' }, limit: 10 };
   const par = await runCollect(enginePlanFor({ handle, filter }), { maxConcurrentRequests: 6, limit: 10 });
   const seq = await runCollect(enginePlanFor({ handle, filter }), { maxConcurrentRequests: 1, limit: 10 });
   assert.deepEqual(par.ids, seq.ids);

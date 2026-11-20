@@ -237,7 +237,7 @@ export async function openBoundaryFile(url, fetchImpl, signal, footerBytes) {
   const metadataOptions = { geoparquet: false };
   if (typeof footerBytes === 'number' && footerBytes > 0) metadataOptions.initialFetchSize = footerBytes;
   const metadata = await hyparquet.parquetMetadataAsync(file, metadataOptions);
-  const catalogVersion = metadata.key_value_metadata?.find((kv) => kv.key === 'cnmw:catalog_version')?.value ?? null;
+  const catalogVersion = metadata.key_value_metadata?.find((kv) => kv.key === 'cng:catalog_version')?.value ?? null;
   return { url, file, metadata, catalogVersion };
 }
 

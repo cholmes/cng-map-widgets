@@ -65,7 +65,7 @@ test('geoparquet format: writes a batch whose geometry is an already-decoded Geo
   assert.ok(written instanceof Uint8Array);
 
   if (hasDuckdb()) {
-    const tmpPath = `/tmp/cnmw-geoparquet-write-test-${process.pid}.parquet`;
+    const tmpPath = `/tmp/cng-geoparquet-write-test-${process.pid}.parquet`;
     writeFileSync(tmpPath, written);
     try {
       const out = execFileSync('duckdb', [
@@ -126,7 +126,7 @@ test('geoparquet format: writes a uint32 column whose values exceed the signed I
   assert.ok(written instanceof Uint8Array);
 
   if (hasDuckdb()) {
-    const tmpPath = `/tmp/cnmw-geoparquet-write-uint32-test-${process.pid}.parquet`;
+    const tmpPath = `/tmp/cng-geoparquet-write-uint32-test-${process.pid}.parquet`;
     writeFileSync(tmpPath, written);
     try {
       const out = execFileSync('duckdb', ['-csv', '-c', `SELECT _hilbert FROM '${tmpPath}' ORDER BY id;`]).toString();

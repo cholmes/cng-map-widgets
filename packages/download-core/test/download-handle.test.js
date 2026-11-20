@@ -14,9 +14,9 @@ import { defaultCeiling } from '../src/ceiling.js';
 import { registerLazyFormat, formatLoadState } from '../src/registry.js';
 import { CancelledError, CeilingExceededError } from '@cng/spec';
 
-const DATASET = { spec: 'cnmw-dataset/1.0', source: { kind: 'parquet', url: 'https://example.test/d.parquet' } };
-const FILTER = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } };
-const OUTPUT = { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'out.geojson' };
+const DATASET = { spec: 'cng-dataset/1.0', source: { kind: 'parquet', url: 'https://example.test/d.parquet' } };
+const FILTER = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } };
+const OUTPUT = { spec: 'cng-output/1.0', format: 'geojson', filename: 'out.geojson' };
 
 const MINIMAL_PLAN = {
   geometryColumn: 'geometry',

@@ -46,31 +46,31 @@ function applyParam(param) {
 }
 
 const CSS = `
-.cnmw-gaz-picker { position: absolute; top: 12px; right: 12px; z-index: 6; font: 13px/1.4 system-ui, sans-serif; }
-.cnmw-gaz-gear {
+.cng-gaz-picker { position: absolute; top: 12px; right: 12px; z-index: 6; font: 13px/1.4 system-ui, sans-serif; }
+.cng-gaz-gear {
   width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 16px; line-height: 1;
   color: #444; background: #fff; border: 1px solid #ccc; box-shadow: 0 1px 4px rgba(0,0,0,0.15); padding: 0;
 }
-.cnmw-gaz-gear:hover, .cnmw-gaz-gear:focus { color: #000; }
-.cnmw-gaz-gear:focus { outline: 2px solid #1a73e8; outline-offset: 1px; }
-.cnmw-gaz-panel {
+.cng-gaz-gear:hover, .cng-gaz-gear:focus { color: #000; }
+.cng-gaz-gear:focus { outline: 2px solid #1a73e8; outline-offset: 1px; }
+.cng-gaz-panel {
   position: absolute; top: 36px; right: 0; width: 280px; background: #fff; border: 1px solid #ccc;
   border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); padding: 6px;
 }
-.cnmw-gaz-panel[hidden] { display: none; }
-.cnmw-gaz-panel h3 { margin: 2px 6px 6px; font-size: 12px; color: #666; font-weight: 600; }
-.cnmw-gaz-option { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 4px;
+.cng-gaz-panel[hidden] { display: none; }
+.cng-gaz-panel h3 { margin: 2px 6px 6px; font-size: 12px; color: #666; font-weight: 600; }
+.cng-gaz-option { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 4px;
   padding: 6px 8px; cursor: pointer; font: inherit; }
-.cnmw-gaz-option:hover, .cnmw-gaz-option:focus { background: #f0f4fc; }
-.cnmw-gaz-option[aria-pressed="true"] { background: #e8f0fe; }
-.cnmw-gaz-option .cnmw-gaz-name { font-weight: 600; }
-.cnmw-gaz-option[aria-pressed="true"] .cnmw-gaz-name::after { content: " ✓"; color: #1a73e8; }
-.cnmw-gaz-option .cnmw-gaz-blurb { display: block; font-size: 11px; color: #666; }
-.cnmw-gaz-custom { display: flex; gap: 4px; margin: 6px 6px 2px; }
-.cnmw-gaz-custom input { flex: 1; font: inherit; font-size: 11px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
-.cnmw-gaz-custom button { font: inherit; font-size: 11px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;
+.cng-gaz-option:hover, .cng-gaz-option:focus { background: #f0f4fc; }
+.cng-gaz-option[aria-pressed="true"] { background: #e8f0fe; }
+.cng-gaz-option .cng-gaz-name { font-weight: 600; }
+.cng-gaz-option[aria-pressed="true"] .cng-gaz-name::after { content: " ✓"; color: #1a73e8; }
+.cng-gaz-option .cng-gaz-blurb { display: block; font-size: 11px; color: #666; }
+.cng-gaz-custom { display: flex; gap: 4px; margin: 6px 6px 2px; }
+.cng-gaz-custom input { flex: 1; font: inherit; font-size: 11px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+.cng-gaz-custom button { font: inherit; font-size: 11px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;
   background: #fff; cursor: pointer; }
-.cnmw-gaz-custom button:hover { background: #f0f4fc; }
+.cng-gaz-custom button:hover { background: #f0f4fc; }
 `;
 
 let cssInjected = false;
@@ -91,20 +91,20 @@ export function mountGazetteerPicker(opts = {}) {
 
   const current = currentIndexParam();
   const host = document.createElement('div');
-  host.className = 'cnmw-gaz-picker';
+  host.className = 'cng-gaz-picker';
 
   const gear = document.createElement('button');
   gear.type = 'button';
-  gear.className = 'cnmw-gaz-gear';
+  gear.className = 'cng-gaz-gear';
   gear.textContent = '⚙';
   gear.setAttribute('aria-label', 'Choose gazetteer');
   gear.title = 'Choose gazetteer';
   gear.setAttribute('aria-expanded', 'false');
 
   const panel = document.createElement('div');
-  panel.className = 'cnmw-gaz-panel';
+  panel.className = 'cng-gaz-panel';
   panel.hidden = true;
-  panel.id = 'cnmw-gaz-panel';
+  panel.id = 'cng-gaz-panel';
   gear.setAttribute('aria-controls', panel.id);
 
   const heading = document.createElement('h3');
@@ -118,14 +118,14 @@ export function mountGazetteerPicker(opts = {}) {
   for (const g of gazetteers) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'cnmw-gaz-option';
+    btn.className = 'cng-gaz-option';
     const active = g.param === null ? !current : current === g.param;
     btn.setAttribute('aria-pressed', String(active));
     const name = document.createElement('span');
-    name.className = 'cnmw-gaz-name';
+    name.className = 'cng-gaz-name';
     name.textContent = g.name;
     const blurb = document.createElement('span');
-    blurb.className = 'cnmw-gaz-blurb';
+    blurb.className = 'cng-gaz-blurb';
     blurb.textContent = g.blurb;
     btn.appendChild(name);
     btn.appendChild(blurb);
@@ -134,7 +134,7 @@ export function mountGazetteerPicker(opts = {}) {
   }
 
   const custom = document.createElement('div');
-  custom.className = 'cnmw-gaz-custom';
+  custom.className = 'cng-gaz-custom';
   const customInput = document.createElement('input');
   customInput.type = 'url';
   customInput.placeholder = 'Custom manifest URL (index.json)';

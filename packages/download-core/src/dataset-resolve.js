@@ -107,7 +107,7 @@ function deriveFromCollection(collection, descriptor, baseUrl) {
   const attribution = deriveAttribution(collection);
 
   return {
-    spec: 'cnmw-dataset/1.0',
+    spec: 'cng-dataset/1.0',
     id: descriptor.id,
     title: descriptor.title ?? collection.title ?? collection.id,
     source,

@@ -9,7 +9,7 @@
 <style>
   html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
   #map { position: absolute; inset: 0; }
-  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+  .maplibregl-ctrl .cng-geocoder { margin: 10px; }
 
   #panel {
     position: absolute; top: 10px; right: 10px; z-index: 5; width: 420px; max-height: calc(100% - 20px);
@@ -132,7 +132,7 @@ async function loadDataset() {
   collectionExtentEnd = rawCollection.extent?.temporal?.interval?.[0]?.[1] ?? null;
 
   resolvedDataset = await resolveDataset({
-    spec: 'cnmw-dataset/1.0',
+    spec: 'cng-dataset/1.0',
     id: 'firms-detections',
     title: 'NASA FIRMS active fire detections',
     source: { kind: 'portolan-collection', url: COLLECTION_URL },
@@ -223,7 +223,7 @@ function buildFilter() {
   const time = currentTimeFilter();
   const scienceOnly = document.getElementById('scienceOnly').checked;
   return {
-    spec: 'cnmw-filter/1.0',
+    spec: 'cng-filter/1.0',
     spatial: { mode: area ? 'intersects' : 'bbox' },
     time,
     where: scienceOnly ? [{ col: 'quality', op: '=', value: 'sp' }] : [],
@@ -309,7 +309,7 @@ function resetDownloadUi() {
 function startDownload(format) {
   const filter = buildFilter();
   const extension = format === 'geojson' ? 'geojson' : 'parquet';
-  const output = { spec: 'cnmw-output/1.0', format, filename: `firms-detections.${extension}` };
+  const output = { spec: 'cng-output/1.0', format, filename: `firms-detections.${extension}` };
 
   // memorySink() + <a download> rather than autoSink()'s File System Access
   // picker, so this page is drivable headlessly (Playwright) without a
@@ -361,7 +361,7 @@ function startDownload(format) {
       downloadLink.download = output.filename;
       downloadLink.textContent = `Save ${output.filename} (${result.bytes.toLocaleString()} bytes)`;
       downloadLink.style.display = 'block';
-      window.__cnmwLastResult = result;
+      window.__cngLastResult = result;
     },
     (err) => {
       // Not a failure: the handle is `blocked` and the refusal box is
@@ -390,7 +390,7 @@ document.getElementById('downloadGeoJsonBtn').addEventListener('click', () => st
 document.getElementById('downloadGeoParquetBtn').addEventListener('click', () => startDownload('geoparquet'));
 document.getElementById('cancelBtn').addEventListener('click', () => activeHandle?.cancel('user cancelled'));
 
-window.__cnmwFirmsExplorer = {
+window.__cngFirmsExplorer = {
   geocoder, control, map,
   get area() { return area; },
   get lastEstimate() { return lastEstimate; },

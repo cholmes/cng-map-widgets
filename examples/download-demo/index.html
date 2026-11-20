@@ -9,7 +9,7 @@
 <style>
   html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
   #map { position: absolute; inset: 0; }
-  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+  .maplibregl-ctrl .cng-geocoder { margin: 10px; }
 
   #panel {
     position: absolute; top: 10px; right: 10px; z-index: 5; width: 380px; max-height: calc(100% - 20px);
@@ -23,8 +23,8 @@
   #panel button:disabled { opacity: 0.5; cursor: default; }
   #panel button.primary { background: #2563eb; color: white; border-color: #1d4ed8; }
   #panel button.active { background: #0f766e; color: white; border-color: #0d5f59; }
-  .cnmw-draw-ctrl button { font: 12px/1 system-ui, sans-serif; padding: 0 8px; cursor: pointer; }
-  .cnmw-draw-ctrl button.armed { background: #1a73e8; color: #fff; }
+  .cng-draw-ctrl button { font: 12px/1 system-ui, sans-serif; padding: 0 8px; cursor: pointer; }
+  .cng-draw-ctrl button.armed { background: #1a73e8; color: #fff; }
   #areaInfo, #estimateInfo, #downloadInfo { font-size: 12px; background: #f7f7f7; border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
   #ceilingBox { display: none; background: #fff3cd; border: 1px solid #c99; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 12px; }
   .row { display: flex; gap: 6px; }
@@ -151,7 +151,7 @@ const setStatus = (text) => { statusEl.textContent = text; };
 /** FTW field boundaries: single GeoParquet per country (design doc §2.6). */
 function ftwDataset(countryCode, countryName) {
   return {
-    spec: 'cnmw-dataset/1.0',
+    spec: 'cng-dataset/1.0',
     id: `ftw-fields-${countryCode.toLowerCase()}`,
     title: `Fields of The World — field boundaries (${countryName})`,
     source: {
@@ -176,7 +176,7 @@ function ftwDataset(countryCode, countryName) {
 
 /** geoBoundaries CGAZ ADM2 (tge-labs mirror): one 97MB, single-row-group file covering every country (PLAN.md's E0 recon finding). "Meta but real": downloading ADM2 units intersecting an area selected *from this same file's own search index*. */
 const CGAZ_ADM2 = {
-  spec: 'cnmw-dataset/1.0',
+  spec: 'cng-dataset/1.0',
   id: 'geoboundaries-cgaz-adm2',
   title: 'geoBoundaries CGAZ — ADM2 admin boundaries (global)',
   source: { kind: 'parquet', url: 'https://data.source.coop/tge-labs/admin-boundaries/geoBoundaries/geoBoundariesCGAZ_ADM2.parquet' },
@@ -346,7 +346,7 @@ drawTool.on('area', ({ area: drawnArea }) => setCurrentArea(drawnArea));
 const drawControl = {
   onAdd() {
     const container = document.createElement('div');
-    container.className = 'maplibregl-ctrl maplibregl-ctrl-group cnmw-draw-ctrl';
+    container.className = 'maplibregl-ctrl maplibregl-ctrl-group cng-draw-ctrl';
     container.appendChild(drawBoxBtn);
     return container;
   },
@@ -395,7 +395,7 @@ map.on('error', (e) => setStatus('Map style failed to load (offline?) — the re
 
 function buildFilter(entry, spatialMode = 'intersects') {
   return {
-    spec: 'cnmw-filter/1.0',
+    spec: 'cng-filter/1.0',
     spatial: { mode: area ? spatialMode : 'bbox' },
     where: entry.where,
     columns: entry.outputColumns,
@@ -540,13 +540,13 @@ function startDownload(formatId) {
   const filter = buildFilter(entry);
   const fmtInfo = listFormats().find((f) => f.id === formatId);
   const extension = fmtInfo?.extension ?? formatId;
-  const output = { spec: 'cnmw-output/1.0', format: formatId, filename: `${entry.key}.${extension}` };
+  const output = { spec: 'cng-output/1.0', format: formatId, filename: `${entry.key}.${extension}` };
 
   // The demo uses memorySink() + a <a download> link rather than
   // autoSink()'s File System Access picker, so this page is drivable
   // headlessly (Playwright) without a native file dialog.
-  window.__cnmwLastResult = null;
-  window.__cnmwLastError = null;
+  window.__cngLastResult = null;
+  window.__cngLastError = null;
 
   const sink = memorySink();
   const handle = download(entry.dataset, area, filter, output, { sink });
@@ -624,7 +624,7 @@ function startDownload(formatId) {
       downloadLink.download = output.filename;
       downloadLink.textContent = `Save ${output.filename} (${result.bytes.toLocaleString()} bytes)`;
       downloadLink.style.display = 'block';
-      window.__cnmwLastResult = result;
+      window.__cngLastResult = result;
       renderFormatPicker();
     },
     (err) => {
@@ -646,7 +646,7 @@ function startDownload(formatId) {
       } else {
         downloadInfo.textContent = `${err.code === 'CANCELLED' ? 'Cancelled.' : `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`}`;
       }
-      window.__cnmwLastError = { code: err.code, message: err.message };
+      window.__cngLastError = { code: err.code, message: err.message };
       renderFormatPicker();
     },
     );
@@ -670,7 +670,7 @@ function startDownload(formatId) {
 document.getElementById('downloadBtn').addEventListener('click', () => startDownload(selectedFormat));
 document.getElementById('cancelBtn').addEventListener('click', () => activeHandle?.cancel('user cancelled'));
 
-window.__cnmwDownloadDemo = {
+window.__cngDownloadDemo = {
   geocoder, control, map, drawTool,
   get area() { return area; },
   get lastEstimate() { return lastEstimate; },

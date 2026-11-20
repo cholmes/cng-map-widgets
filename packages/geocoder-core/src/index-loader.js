@@ -44,6 +44,26 @@ const OPTIONAL_COLUMNS = ['parent_name', 'parent_id', 'area_km2', 'country_name'
  * @param {typeof fetch} fetchImpl
  * @returns {Promise<Record<string, unknown>>}
  */
+/**
+ * Index manifest `spec` values this build accepts.
+ *
+ * `cnmw-index/1.0` is the legacy value and is still what the published
+ * catalogs on data.source.coop carry. It stays accepted until they are
+ * republished -- the deployed demo site runs deployed code, so flipping the
+ * validator and the catalogs independently breaks one side or the other.
+ * Rollout: accept both -> republish the catalogs -> drop the legacy value.
+ *
+ * Issue #1 proposes replacing this manifest with STAC extensions entirely,
+ * at which point identity moves to an extension URI in `stac_extensions[]`
+ * and this field disappears rather than being renamed again.
+ */
+export const ACCEPTED_INDEX_SPECS = Object.freeze(['cng-index/1.0', 'cnmw-index/1.0']);
+
+/** @param {unknown} spec @returns {boolean} */
+export function isAcceptedIndexSpec(spec) {
+  return typeof spec === 'string' && ACCEPTED_INDEX_SPECS.includes(spec);
+}
+
 export async function loadManifest(url, fetchImpl) {
   let res;
   try {
@@ -57,7 +77,7 @@ export async function loadManifest(url, fetchImpl) {
     });
   }
   const manifest = await res.json();
-  if (manifest.spec !== 'cnmw-index/1.0') {
+  if (!isAcceptedIndexSpec(manifest.spec)) {
     throw new CngError('Index manifest has an unrecognized spec version.', 'INDEX_SCHEMA_MISMATCH', {
       context: { spec: manifest.spec },
     });

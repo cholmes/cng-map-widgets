@@ -600,7 +600,7 @@ obligation on ODbL data. If you read a manifest's `attribution` directly,
 rather than through a `Geocoder`, you still get only `share_alike`.
 
 **Version skew is currently inert against the live catalog.** The published
-parquet files carry no `cnmw:catalog_version` footer key, so
+parquet files carry no `cng:catalog_version` footer key, so
 `onVersionSkew: 'error'` neither errors nor warns — the check reads `null` and
 no-ops. Feature identity is still safe, because resolution always re-locates
 the row by key and never by a cached offset.

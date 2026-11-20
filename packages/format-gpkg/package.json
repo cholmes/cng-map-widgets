@@ -9,7 +9,7 @@
     "sql.js",
     "wasm",
     "download",
-    "cnmw"
+    "cng"
   ],
   "license": "MIT",
   "type": "module",

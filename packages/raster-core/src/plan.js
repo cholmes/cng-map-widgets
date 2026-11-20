@@ -120,7 +120,7 @@ export function describeRasterDataset(item, options = {}) {
     }
   }
   return {
-    spec: 'cnmw-raster-dataset/1.0',
+    spec: 'cng-raster-dataset/1.0',
     id: item?.id,
     title: item?.properties?.title ?? item?.id,
     bands,
@@ -144,7 +144,7 @@ export async function describeRasterUrl(url, options = {}) {
     });
   }
   return {
-    spec: 'cnmw-raster-dataset/1.0',
+    spec: 'cng-raster-dataset/1.0',
     id: url,
     title: url.split('/').pop(),
     bands,

@@ -78,7 +78,7 @@ import { estimate, download, memorySink } from '@cng/download-core';
 import { areaFromGeoJson } from '@cng/upload-core';
 
 const dataset = {
-  spec: 'cnmw-dataset/1.0',
+  spec: 'cng-dataset/1.0',
   id: 'ftw-fields-li',
   title: 'Fields of The World — field boundaries (Liechtenstein)',
   source: {
@@ -101,7 +101,7 @@ const dataset = {
 };
 
 const filter = {
-  spec: 'cnmw-filter/1.0',
+  spec: 'cng-filter/1.0',
   spatial: { mode: 'intersects' },
   where: [{ col: 'confidence', op: '>=', value: 0.5 }],
   columns: { include: ['id', 'confidence'] },
@@ -127,7 +127,7 @@ est.prune.map((s) => s.stage);   // ['row-group-bbox', 'row-group-stats', 'row-g
 // --- download ------------------------------------------------------------
 const sink = memorySink();
 const handle = download(dataset, area, filter,
-  { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'fields.geojson' },
+  { spec: 'cng-output/1.0', format: 'geojson', filename: 'fields.geojson' },
   { sink });
 
 handle.state;       // 'planning'  -- the handle exists before any await
@@ -183,7 +183,7 @@ Omit `table` entirely and it is inferred from the first file's parquet schema �
 
 ```js
 {
-  spec: 'cnmw-filter/1.0',
+  spec: 'cng-filter/1.0',
   area: { ref: 'area' },        // or an inline AreaDocument; see downloadRequest()
   spatial: { mode: 'intersects', includeBboxTouch: false },
   time: { column: 'acq_datetime', start: '2026-09-01T00:00:00Z', end: '2026-09-08T00:00:00Z', closed: '[)' },
@@ -210,10 +210,10 @@ double-counting.
 ### `OutputRequest` + `DownloadRequest`
 
 ```js
-{ spec: 'cnmw-output/1.0', format: 'geojson', filename: 'fields.geojson', options: { precision: 6 } }
+{ spec: 'cng-output/1.0', format: 'geojson', filename: 'fields.geojson', options: { precision: 6 } }
 ```
 
-A `DownloadRequest` is `{ spec: 'cnmw-request/1.0', dataset, filter, output,
+A `DownloadRequest` is `{ spec: 'cng-request/1.0', dataset, filter, output,
 generator? }` — the copy-pasteable unit, runnable with `downloadRequest()`.
 
 ---
@@ -410,10 +410,10 @@ Runs a serialized `DownloadRequest`. An inline `filter.area` (an
 import { toAreaDocument } from '@cng/spec';
 
 const request = {
-  spec: 'cnmw-request/1.0',
+  spec: 'cng-request/1.0',
   dataset,
   filter: { ...filter, area: toAreaDocument(area), limit: 25 },
-  output: { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'fields.geojson' },
+  output: { spec: 'cng-output/1.0', format: 'geojson', filename: 'fields.geojson' },
   generator: { name: 'my-app', version: '1.0.0', at: new Date().toISOString() },
 };
 
@@ -430,7 +430,7 @@ Python side can implement the same mapping.
 
 ```js
 const dataset = await resolveDataset({
-  spec: 'cnmw-dataset/1.0',
+  spec: 'cng-dataset/1.0',
   id: 'firms-detections',
   source: { kind: 'portolan-collection', url: 'https://data.source.coop/portolan-mirrors/firms-catalog/detections/collection.json' },
 });
@@ -613,7 +613,7 @@ default, a bbox covering — so the output is itself prunable:
 ```js
 const sink = memorySink();
 await download(dataset, area, filter,
-  { spec: 'cnmw-output/1.0', format: 'geoparquet', filename: 'fields.parquet' },
+  { spec: 'cng-output/1.0', format: 'geoparquet', filename: 'fields.parquet' },
   { sink }).result;
 
 const bytes = Buffer.concat(sink.chunks.map(Buffer.from));
@@ -630,7 +630,7 @@ geo.columns.geometry.covering.bbox.xmin;             // ['bbox_xmin']
 
 ```js
 download(dataset, area, filter,
-  { spec: 'cnmw-output/1.0', format: 'geoparquet', options: { compression: 'zstd' } },
+  { spec: 'cng-output/1.0', format: 'geoparquet', options: { compression: 'zstd' } },
   { sink: memorySink() }).result;
 // rejects CngError { code: 'FORMAT_CAPABILITY' }
 ```
@@ -775,9 +775,9 @@ without a later breaking change.
 
 ```js
 const handle = download(
-  { spec: 'cnmw-dataset/1.0', source: { kind: 'parquet', url: 'https://data.source.coop/does-not-exist-404.parquet' } },
-  null, { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } },
-  { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink() });
+  { spec: 'cng-dataset/1.0', source: { kind: 'parquet', url: 'https://data.source.coop/does-not-exist-404.parquet' } },
+  null, { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } },
+  { spec: 'cng-output/1.0', format: 'geojson' }, { sink: memorySink() });
 
 await handle.result;   // rejects; isCngError(err) === true, err.code is NETWORK / HTTP_STATUS / DATASET_UNRESOLVED
 handle.state;          // 'failed'

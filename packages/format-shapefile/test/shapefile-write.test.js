@@ -49,7 +49,7 @@ async function writeToTmpZip(batches, options = {}) {
   const writer = await format.open(ctx);
   for (const batch of batches) await writer.writeBatch(batch);
   const result = await writer.close();
-  const dir = mkdtempSync(join(tmpdir(), 'cnmw-shp-'));
+  const dir = mkdtempSync(join(tmpdir(), 'cng-shp-'));
   const path = join(dir, `${options.options?.layerName ?? 'features'}.shp.zip`);
   writeFileSync(path, Buffer.from(written));
   return { ...result, path };

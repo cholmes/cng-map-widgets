@@ -11,7 +11,7 @@
     "projection",
     "epsg-3857",
     "cloud-native",
-    "cnmw"
+    "cng"
   ],
   "license": "MIT",
   "type": "module",

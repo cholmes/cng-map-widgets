@@ -14,7 +14,7 @@
      pill), bottom-right to MapLibre's own attribution. */
   #status { position: absolute; top: 50px; right: 12px; z-index: 5; background: rgba(255,255,255,0.9);
     padding: 6px 10px; border-radius: 4px; font-size: 12px; max-width: 420px; }
-  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+  .maplibregl-ctrl .cng-geocoder { margin: 10px; }
 </style>
 <!--
   Zero-build ESM, no bundler. @cng/* packages resolve via this import
@@ -130,7 +130,7 @@ map.on('load', () => {
 });
 map.on('error', (e) => setStatus('Map style failed to load (offline?) — the geocoder still works. ' + (e?.error?.message ?? '')));
 
-window.__cnmwDemo = { geocoder, control, map };
+window.__cngDemo = { geocoder, control, map };
 </script>
 </body>
 </html>

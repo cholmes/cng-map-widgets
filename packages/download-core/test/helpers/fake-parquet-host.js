@@ -134,7 +134,7 @@ export function enginePlanFor(opts) {
   return {
     dataset: { id: 'test' },
     area: opts.area ?? null,
-    filter: opts.filter ?? { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } },
+    filter: opts.filter ?? { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } },
     plan: {
       readColumns,
       outputColumns: opts.outputColumns ?? readColumns,

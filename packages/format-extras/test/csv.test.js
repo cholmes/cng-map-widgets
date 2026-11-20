@@ -77,7 +77,7 @@ test('csv format: duckdb reads the file back and the WKT parses to the right geo
   const schema = [{ name: 'name', type: 'string' }, { name: 'geometry', type: 'geometry' }];
   const batch = { rows: 1, columns: { name: ['Vaduz'] }, geometry: [wkbPoint(9.5215, 47.141)] };
   const { text } = await writeCsv([batch], { schema });
-  const dir = mkdtempSync(join(tmpdir(), 'cnmw-csv-'));
+  const dir = mkdtempSync(join(tmpdir(), 'cng-csv-'));
   const path = join(dir, 'out.csv');
   writeFileSync(path, text);
   const out = execFileSync('duckdb', ['-csv', '-c', `INSTALL spatial; LOAD spatial; SELECT name, ST_AsText(ST_GeomFromText(wkt)) FROM read_csv('${path}');`]).toString().trim();

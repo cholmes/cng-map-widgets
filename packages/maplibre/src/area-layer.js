@@ -7,7 +7,7 @@
 
 import { fitAreaBounds } from './fit-bounds.js';
 
-const SOURCE_ID_PREFIX = 'cnmw-area';
+const SOURCE_ID_PREFIX = 'cng-area';
 
 /** @typedef {import('@cng/spec').Area} Area */
 

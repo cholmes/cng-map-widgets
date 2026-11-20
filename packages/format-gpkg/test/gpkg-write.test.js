@@ -42,7 +42,7 @@ async function writeToTmpFile(formatWriterPromiseOrCtx, batches, options = {}) {
   const writer = await format.open(ctx);
   for (const batch of batches) await writer.writeBatch(batch);
   const { rows, bytes } = await writer.close();
-  const dir = mkdtempSync(join(tmpdir(), 'cnmw-gpkg-'));
+  const dir = mkdtempSync(join(tmpdir(), 'cng-gpkg-'));
   const path = join(dir, 'out.gpkg');
   writeFileSync(path, Buffer.from(written));
   return { rows, bytes, path, written };

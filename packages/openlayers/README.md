@@ -54,7 +54,7 @@ about it are easy to get wrong:
   publishing anything.
 
 CSS is inlined as a string and injected once under
-`id="cnmw-ol-geocoder-style"`. Override via `.cnmw-geocoder-ol`.
+`id="cng-ol-geocoder-style"`. Override via `.cng-geocoder-ol`.
 
 **Coming:** `npm i @cng/openlayers`.
 
@@ -247,7 +247,7 @@ searching, an error row with a Retry button, a `No matches for "…".` row,
 and — when geocoder-core's fuzzy fallback produced the results (every
 `rank.matchClass` is `'fuzzy'`, which only happens when the prefix search
 found nothing) — a non-interactive caption row above them:
-*No exact matches — showing close matches.* (`li.cnmw-fuzzy-note`,
+*No exact matches — showing close matches.* (`li.cng-fuzzy-note`,
 `role="presentation"`, excluded from keyboard navigation and click
 handling). A custom `renderItem` only replaces option contents; the caption
 still renders.

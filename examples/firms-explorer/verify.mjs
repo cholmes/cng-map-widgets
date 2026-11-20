@@ -124,7 +124,7 @@ await page.waitForFunction(
 );
 console.log(await page.textContent('#downloadInfo'));
 
-const result = await page.evaluate(() => window.__cnmwLastResult);
+const result = await page.evaluate(() => window.__cngLastResult);
 console.log('\n=== download() result ===');
 console.log(JSON.stringify({ rows: result.rows, bytes: result.bytes, readBytes: result.readBytes, requests: result.requests, elapsedMs: result.elapsedMs }, null, 2));
 if (!result || result.rows <= 0) throw new Error('Expected a real download with rows > 0');

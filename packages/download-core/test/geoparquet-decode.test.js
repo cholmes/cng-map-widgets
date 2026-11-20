@@ -52,7 +52,7 @@ async function fetchLocalFile(url) {
 
 function fixtureDataset(name) {
   return {
-    spec: 'cnmw-dataset/1.0',
+    spec: 'cng-dataset/1.0',
     id: `fixture-${name}`,
     source: { kind: 'parquet', url: `file://${FIXTURES}${name}` },
     table: {
@@ -115,12 +115,12 @@ test('openParquetFile + readRows (both fixes applied): geometry is raw WKB Uint8
 test('end-to-end estimate()+download() produce correct, matching GeoJSON output for BOTH fixture kinds', async () => {
   for (const name of ['geo-metadata.parquet', 'bare.parquet']) {
     const dataset = fixtureDataset(name);
-    const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } };
+    const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } };
 
     const est = await estimate(dataset, null, filter, { fetch: fetchLocalFile });
     assert.equal(est.rowGroups.total, 1, name);
 
-    const output = { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'out.geojson' };
+    const output = { spec: 'cng-output/1.0', format: 'geojson', filename: 'out.geojson' };
     const sink = memorySink();
     const handle = download(dataset, null, filter, output, { sink, fetch: fetchLocalFile });
     const result = await handle.result;

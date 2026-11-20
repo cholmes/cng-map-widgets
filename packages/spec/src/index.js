@@ -34,7 +34,7 @@ export { CngError, CancelledError, CeilingExceededError, isCngError } from './er
 // checks. A second, different version logs one loud warning.
 (function registerSingleton() {
   if (typeof globalThis === 'undefined') return;
-  const key = Symbol.for('cnmw.spec');
+  const key = Symbol.for('cng.spec');
   const existing = globalThis[key];
   if (existing && existing.version !== VERSION) {
     // eslint-disable-next-line no-console

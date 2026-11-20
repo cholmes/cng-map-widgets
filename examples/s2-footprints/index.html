@@ -9,7 +9,7 @@
 <style>
   html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
   #map { position: absolute; inset: 0; }
-  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+  .maplibregl-ctrl .cng-geocoder { margin: 10px; }
 
   #panel {
     position: absolute; top: 10px; right: 10px; z-index: 5; width: 420px; max-height: calc(100% - 20px);
@@ -142,7 +142,7 @@ async function loadDataset() {
   const extent = rawCollection.extent?.temporal?.interval?.[0];
 
   resolvedDataset = await resolveDataset({
-    spec: 'cnmw-dataset/1.0',
+    spec: 'cng-dataset/1.0',
     id: 'sentinel-2-c1-l2a',
     title: 'Sentinel-2 Collection 1 L2A — STAC item footprints',
     source: { kind: 'portolan-collection', url: COLLECTION_URL },
@@ -225,7 +225,7 @@ function buildFilter() {
   const includeAssets = document.getElementById('includeAssets').checked;
   const cloudFilter = document.getElementById('cloudFilter').checked;
   return {
-    spec: 'cnmw-filter/1.0',
+    spec: 'cng-filter/1.0',
     spatial: { mode: area ? 'intersects' : 'bbox' },
     time,
     where: cloudFilter ? [{ col: 'eo:cloud_cover', op: '<=', value: 20 }] : [],
@@ -302,7 +302,7 @@ function resetDownloadUi() {
 function startDownload(format) {
   const filter = buildFilter();
   const extension = format === 'geojson' ? 'geojson' : 'parquet';
-  const output = { spec: 'cnmw-output/1.0', format, filename: `s2-footprints.${extension}` };
+  const output = { spec: 'cng-output/1.0', format, filename: `s2-footprints.${extension}` };
 
   const sink = memorySink();
   const handle = download(resolvedDataset, area, filter, output, { sink });
@@ -359,7 +359,7 @@ function startDownload(format) {
       downloadLink.download = output.filename;
       downloadLink.textContent = `Save ${output.filename} (${result.bytes.toLocaleString()} bytes)`;
       downloadLink.style.display = 'block';
-      window.__cnmwLastResult = result;
+      window.__cngLastResult = result;
     },
     (err) => {
       // CEILING_EXCEEDED is not a failure: the handle is `blocked` and the
@@ -390,7 +390,7 @@ document.getElementById('downloadGeoJsonBtn').addEventListener('click', () => st
 document.getElementById('downloadGeoParquetBtn').addEventListener('click', () => startDownload('geoparquet'));
 document.getElementById('cancelBtn').addEventListener('click', () => activeHandle?.cancel('user cancelled'));
 
-window.__cnmwS2Explorer = {
+window.__cngS2Explorer = {
   geocoder, control, map,
   get area() { return area; },
   get lastEstimate() { return lastEstimate; },

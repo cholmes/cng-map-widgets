@@ -71,7 +71,7 @@ async function typeAndCollect(query, { expectOptions }) {
   let results = [];
   for (let attempt = 0; attempt < (expectOptions ? 6 : 1); attempt += 1) {
     results = await page.evaluate(async (q) => {
-      const r = await window.__cnmwDemo.geocoder.search(q);
+      const r = await window.__cngDemo.geocoder.search(q);
       return r.map((x) => ({ name: x.name, country: x.country, level: x.level, matchClass: x.rank.matchClass, similarity: x.rank.similarity }));
     }, query);
     if (results.length > 0 || !expectOptions) break;
@@ -101,7 +101,7 @@ await openDemo('');
   const fuzzy = results.filter((r) => r.matchClass === 'fuzzy');
   if (fuzzy.length > 0) throw new Error(`"bag": fuzzy fallback fired despite prefix matches: ${JSON.stringify(fuzzy)}`);
   console.log('PASS: non-empty prefix results are never augmented with fuzzy matches.');
-  const strayNote = await page.$('li.cnmw-fuzzy-note');
+  const strayNote = await page.$('li.cng-fuzzy-note');
   if (strayNote) throw new Error('"bag": fuzzy caption rendered on prefix results');
   console.log('PASS: no fuzzy caption on prefix results.');
 }
@@ -112,11 +112,11 @@ await page.fill('input[role="combobox"]', '');
 await page.type('input[role="combobox"]', 'liechtenstien', { delay: 20 });
 await page.waitForSelector('li[role="option"]', { timeout: 20_000 });
 {
-  const note = await page.textContent('li.cnmw-fuzzy-note');
+  const note = await page.textContent('li.cng-fuzzy-note');
   if (!note || !note.includes('close matches')) {
     throw new Error(`fuzzy caption missing or wrong: ${JSON.stringify(note)}`);
   }
-  const noteRole = await page.getAttribute('li.cnmw-fuzzy-note', 'role');
+  const noteRole = await page.getAttribute('li.cng-fuzzy-note', 'role');
   if (noteRole !== 'presentation') throw new Error(`fuzzy caption role should be presentation, got ${noteRole}`);
   console.log('PASS: fuzzy caption "No exact matches — showing close matches." renders with role=presentation.');
   // Keyboard sanity with the caption present: ArrowDown must select the first

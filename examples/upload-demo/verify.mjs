@@ -76,7 +76,7 @@ await page.waitForFunction(
 console.log('Status after search select:', await page.textContent('#status'));
 
 const searchAreaInfo = await page.evaluate(() => {
-  const control = window.__cnmwUploadDemo.searchControl;
+  const control = window.__cngUploadDemo.searchControl;
   const area = control.area;
   return area
     ? { crossesAntimeridian: area.crossesAntimeridian, bboxesCount: area.bboxes.length, name: area.name }
@@ -91,7 +91,7 @@ if (!searchAreaInfo.crossesAntimeridian) {
 // Confirm the search outline layer (inside GeocoderControl, via
 // addAreaLayer) actually received a feature with real geometry.
 const searchLayerFeatureCount = await page.evaluate(() => {
-  const map = window.__cnmwUploadDemo.map;
+  const map = window.__cngUploadDemo.map;
   const vectorLayers = map
     .getLayers()
     .getArray()
@@ -125,14 +125,14 @@ for (const expectedKind of ['dropped-non-areal', 'closed-ring', 'rewound-ring', 
 }
 
 const uploadAreaInfo = await page.evaluate(() => {
-  const outline = window.__cnmwUploadDemo.uploadOutline;
+  const outline = window.__cngUploadDemo.uploadOutline;
   const area = outline.getArea ? outline.getArea() : null;
   return area ? { name: area.name, combine: area.provenance.combine } : null;
 });
 console.log('Upload Area (via outline, if exposed):', JSON.stringify(uploadAreaInfo));
 
 const allVectorFeatureCounts = await page.evaluate(() => {
-  const map = window.__cnmwUploadDemo.map;
+  const map = window.__cngUploadDemo.map;
   return map
     .getLayers()
     .getArray()

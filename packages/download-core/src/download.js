@@ -267,23 +267,23 @@ export function download(dataset, area, filter, output, options = {}) {
       emitter.emit('done', result);
       current.resolve(result);
     } catch (err) {
-      const cnmwErr = err instanceof CngError ? err : new CngError(err?.message ?? String(err), 'INTERNAL', { cause: err });
-      if (cnmwErr.code === 'CANCELLED') {
+      const cngErr = err instanceof CngError ? err : new CngError(err?.message ?? String(err), 'INTERNAL', { cause: err });
+      if (cngErr.code === 'CANCELLED') {
         setState('cancelled');
       } else {
         setState('failed');
-        emitter.emit('error', cnmwErr);
+        emitter.emit('error', cngErr);
       }
       if (!estimateSettled) {
         estimateSettled = true;
-        rejectEstimate(cnmwErr);
+        rejectEstimate(cngErr);
       }
       // A no-op when the ceiling gate already rejected this deferred and
       // the caller then cancelled instead of accepting: the handle's
       // `state` becomes `'cancelled'`, but the promise a caller is holding
       // stays rejected with the `CEILING_EXCEEDED` it was first given
       // rather than switching error codes underneath them.
-      current.reject(cnmwErr);
+      current.reject(cngErr);
     } finally {
       progressStream.end();
       markRunSettled();

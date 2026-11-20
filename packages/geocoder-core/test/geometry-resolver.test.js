@@ -175,7 +175,7 @@ function fakeBoundary({ rows, rowGroupRows, joinColumn, countryColumn = 'country
     asyncBufferFromUrl: async () => ({ __fake: true }),
     parquetMetadataAsync: async () => ({
       row_groups: rowGroups,
-      key_value_metadata: catalogVersion ? [{ key: 'cnmw:catalog_version', value: catalogVersion }] : [],
+      key_value_metadata: catalogVersion ? [{ key: 'cng:catalog_version', value: catalogVersion }] : [],
     }),
     parquetReadObjects: async ({ columns, rowStart, rowEnd }) => {
       calls.push({ columns: [...columns], rowStart, rowEnd });

@@ -112,7 +112,7 @@ await page.waitForFunction(
 );
 console.log(await page.textContent('#downloadInfo'));
 
-const result = await page.evaluate(() => window.__cnmwLastResult);
+const result = await page.evaluate(() => window.__cngLastResult);
 console.log('\n=== download() result ===');
 console.log(JSON.stringify({ rows: result.rows, bytes: result.bytes, readBytes: result.readBytes, requests: result.requests, elapsedMs: result.elapsedMs }, null, 2));
 if (!result || result.rows <= 0) throw new Error('Expected a real download with rows > 0');
@@ -143,7 +143,7 @@ await page.waitForFunction(
   { timeout: 60_000 },
 );
 console.log(await page.textContent('#downloadInfo'));
-const parquetResult = await page.evaluate(() => window.__cnmwLastResult);
+const parquetResult = await page.evaluate(() => window.__cngLastResult);
 if (!parquetResult || parquetResult.rows <= 0) throw new Error('Expected a real GeoParquet download with rows > 0');
 console.log('GeoParquet download() result:', JSON.stringify({ rows: parquetResult.rows, bytes: parquetResult.bytes }));
 

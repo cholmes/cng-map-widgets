@@ -41,7 +41,7 @@ async function writeEsriJson(batches, options = {}) {
   for (const batch of batches) await writer.writeBatch(batch);
   const result = await writer.close();
   const text = Buffer.from(written).toString('utf8');
-  const dir = mkdtempSync(join(tmpdir(), 'cnmw-esrijson-'));
+  const dir = mkdtempSync(join(tmpdir(), 'cng-esrijson-'));
   const path = join(dir, 'out.json');
   writeFileSync(path, text);
   return { ...result, text, path, doc: JSON.parse(text) };

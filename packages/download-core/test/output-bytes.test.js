@@ -127,7 +127,7 @@ test('a lazy descriptor and its loaded plugin model the same bytes', async () =>
 function fakeDataset(url, fetchImpl) {
   return {
     dataset: {
-      spec: 'cnmw-dataset/1.0',
+      spec: 'cng-dataset/1.0',
       id: 'fake',
       title: 'fake',
       source: { kind: 'parquet', url },
@@ -170,8 +170,8 @@ test('the geometry term reaches Estimate.outputBytes through download()', async 
   const handle = download(
     dataset,
     null,
-    { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } },
-    { spec: 'cnmw-output/1.0', format: 'geojson-spy', filename: 'x.geojson' },
+    { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } },
+    { spec: 'cng-output/1.0', format: 'geojson-spy', filename: 'x.geojson' },
     { sink: memorySink(), fetch: fetchImpl, acceptCeiling: true },
   );
   const est = await handle.estimate;
@@ -201,18 +201,18 @@ test('the improved outputBytes is what the outputBytes and blobBytes ceilings ch
   const { rangeFetch } = await import('./helpers/fake-parquet-host.js');
   const fetchImpl = rangeFetch(hosted.bytes);
   const { dataset } = fakeDataset('https://example.invalid/t.parquet', fetchImpl);
-  const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } };
+  const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } };
 
   // A ceiling just under the geometry-inclusive number must now trip,
   // where the old attribute-only model would have sailed under it.
-  const probe = download(dataset, null, filter, { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink(), fetch: fetchImpl, acceptCeiling: true });
+  const probe = download(dataset, null, filter, { spec: 'cng-output/1.0', format: 'geojson' }, { sink: memorySink(), fetch: fetchImpl, acceptCeiling: true });
   const probeEst = await probe.estimate;
   await probe.result;
   const geomInclusiveMax = probeEst.outputBytes.max;
   const attributesOnlyMax = 4 * 25 * probeEst.rows.max; // what `schema.length * 25` alone would have said
   assert.ok(geomInclusiveMax > attributesOnlyMax, `the geometry term must raise the number: ${geomInclusiveMax} vs ${attributesOnlyMax}`);
 
-  const blocked = download(dataset, null, filter, { spec: 'cnmw-output/1.0', format: 'geojson' }, {
+  const blocked = download(dataset, null, filter, { spec: 'cng-output/1.0', format: 'geojson' }, {
     sink: memorySink(),
     fetch: fetchImpl,
     ceiling: { outputBytes: attributesOnlyMax },
@@ -223,7 +223,7 @@ test('the improved outputBytes is what the outputBytes and blobBytes ceilings ch
 
   // Same for the non-streaming blobBytes check, which reads
   // `est.outputBytes.max` directly in download.js.
-  const blobBlocked = download(dataset, null, filter, { spec: 'cnmw-output/1.0', format: 'geoparquet' }, {
+  const blobBlocked = download(dataset, null, filter, { spec: 'cng-output/1.0', format: 'geoparquet' }, {
     sink: memorySink(),
     fetch: fetchImpl,
     ceiling: { blobBytes: 1_000 },

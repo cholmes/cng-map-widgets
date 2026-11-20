@@ -11,7 +11,7 @@
     "portolan",
     "range-requests",
     "cloud-native",
-    "cnmw"
+    "cng"
   ],
   "license": "MIT",
   "type": "module",

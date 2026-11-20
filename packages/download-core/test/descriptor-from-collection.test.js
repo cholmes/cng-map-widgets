@@ -44,7 +44,7 @@ function adm0Collection() {
 
 test('descriptorFromCollection: single-parquet collection -> concrete parquet source', () => {
   const d = descriptorFromCollection(adm0Collection(), { baseUrl: BASE });
-  assert.equal(d.spec, 'cnmw-dataset/1.0');
+  assert.equal(d.spec, 'cng-dataset/1.0');
   assert.equal(d.id, 'adm0');
   assert.equal(d.title, 'CGAZ ADM0 - Country Boundaries');
   assert.equal(d.source.kind, 'parquet');

@@ -18,7 +18,7 @@
   #map { position: absolute; inset: 0; }
   #status { position: absolute; bottom: 12px; left: 12px; z-index: 5; background: rgba(255,255,255,0.9);
     padding: 6px 10px; border-radius: 4px; font-size: 12px; max-width: 420px; }
-  .cnmw-geocoder-ol { margin: 10px; }
+  .cng-geocoder-ol { margin: 10px; }
 </style>
 <script type="importmap">
 {
@@ -78,7 +78,7 @@ const control = new GeocoderControl({ geocoder, placeholder: 'Search for a place
 map.addControl(control);
 setStatus('Map loaded. Type a place name, e.g. "contra costa".');
 
-window.__cnmwDemo = { geocoder, control, map };
+window.__cngDemo = { geocoder, control, map };
 </script>
 </body>
 </html>

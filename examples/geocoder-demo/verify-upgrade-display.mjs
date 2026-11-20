@@ -65,7 +65,7 @@ console.log('Status:', await page.textContent('#status'));
 /** @returns {Promise<{ vertexCount: number, type: string }>} the display source's current geometry. */
 async function readOutlineVertexCount() {
   return page.evaluate(() => {
-    const src = window.__cnmwDemo.map.getSource('cnmw-area-display');
+    const src = window.__cngDemo.map.getSource('cng-area-display');
     const geom = src?._data?.features?.[0]?.geometry;
     if (!geom) return { vertexCount: 0, type: null };
     const countRings = (poly) => poly.reduce((n, ring) => n + ring.length, 0);
@@ -86,8 +86,8 @@ async function select(query) {
   await page.keyboard.press('Enter');
 }
 
-const notice = () => page.locator('.cnmw-upgrade-notice');
-const noticeCancel = () => page.locator('.cnmw-upgrade-notice-cancel');
+const notice = () => page.locator('.cng-upgrade-notice');
+const noticeCancel = () => page.locator('.cng-upgrade-notice-cancel');
 
 /**
  * Poll for the notice's text to match `pattern`, rather than merely
@@ -163,9 +163,9 @@ console.log(`UK: ${longTasksUK.length} long tasks observed, max ${maxLongTaskUK.
 
 // --- Test 2: Canada -- cancel keeps the simplified outline, no upgrade event.
 console.log('\n=== Canada: cancelUpgrade() keeps the simplified outline ===');
-await page.evaluate(() => { window.__cnmwUpgradedFired = false; });
+await page.evaluate(() => { window.__cngUpgradedFired = false; });
 await page.evaluate(() => {
-  window.__cnmwDemo.geocoder.on('area:upgraded', () => { window.__cnmwUpgradedFired = true; });
+  window.__cngDemo.geocoder.on('area:upgraded', () => { window.__cngUpgradedFired = true; });
 });
 
 await select('canada');
@@ -196,7 +196,7 @@ console.log('outline vertex count after cancel (should be unchanged):', afterCan
 if (afterCancel.vertexCount !== beforeCancel.vertexCount) {
   throw new Error(`cancelUpgrade() must leave the outline exactly as it was: before=${beforeCancel.vertexCount} after=${afterCancel.vertexCount}`);
 }
-const upgradedFired = await page.evaluate(() => window.__cnmwUpgradedFired);
+const upgradedFired = await page.evaluate(() => window.__cngUpgradedFired);
 console.log("'area:upgraded' fired after cancel (must be false):", upgradedFired);
 if (upgradedFired) throw new Error("'area:upgraded' must never fire for a selection whose upgrade was cancelled");
 

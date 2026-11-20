@@ -75,24 +75,24 @@ test('geometryNeededForFilter: intersects mode degraded to bbox (no filterGeomet
 
 test('resolveReadColumns: geometry excluded from output AND not needed for filtering -> excluded from the read too', () => {
   const outputColumns = ['id']; // dropGeometry already removed it
-  const cols = resolveReadColumns(outputColumns, { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } }, null, [], 'geometry', false);
+  const cols = resolveReadColumns(outputColumns, { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } }, null, [], 'geometry', false);
   assert.ok(!cols.includes('geometry'), 'geometry must not be fetched over the network when nothing needs it');
 });
 
 test('resolveReadColumns: geometry excluded from output BUT needed for filtering -> still read (just never output)', () => {
   const outputColumns = ['id']; // dropGeometry already removed it
-  const cols = resolveReadColumns(outputColumns, { spec: 'cnmw-filter/1.0', spatial: { mode: 'intersects' } }, null, [], 'geometry', true);
+  const cols = resolveReadColumns(outputColumns, { spec: 'cng-filter/1.0', spatial: { mode: 'intersects' } }, null, [], 'geometry', true);
   assert.ok(cols.includes('geometry'), 'geometry must still be read so the intersects test can run');
   assert.ok(!outputColumns.includes('geometry'), 'and must remain absent from the output column list');
 });
 
 test('resolveReadColumns: geometry present in outputColumns (no dropGeometry) -> always read regardless of needsGeometryForFilter', () => {
   const outputColumns = ['id', 'geometry'];
-  const cols = resolveReadColumns(outputColumns, { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } }, null, [], 'geometry', false);
+  const cols = resolveReadColumns(outputColumns, { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } }, null, [], 'geometry', false);
   assert.ok(cols.includes('geometry'));
 });
 
 test('resolveReadColumns: defaults to including geometry when the caller omits needsGeometryForFilter (backward compatible)', () => {
-  const cols = resolveReadColumns(['id'], { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } }, null, [], 'geometry');
+  const cols = resolveReadColumns(['id'], { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } }, null, [], 'geometry');
   assert.ok(cols.includes('geometry'));
 });

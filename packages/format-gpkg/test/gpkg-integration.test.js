@@ -29,7 +29,7 @@ const LI_URL =
   'https://data.source.coop/ftw/global-data/predictions/vectors/alpha/results-by-admin-conf/admin:country_code=LI/Liechtenstein.parquet';
 
 const DATASET = {
-  spec: 'cnmw-dataset/1.0',
+  spec: 'cng-dataset/1.0',
   id: 'ftw-fields-li',
   title: 'FTW field boundaries — Liechtenstein',
   source: { kind: 'parquet', url: LI_URL },
@@ -74,12 +74,12 @@ test(
     registerFormat(createGpkgFormat(SQL));
 
     const filter = {
-      spec: 'cnmw-filter/1.0',
+      spec: 'cng-filter/1.0',
       spatial: { mode: 'bbox' },
       where: [{ col: 'confidence', op: '>=', value: 0.5 }],
       limit: 100,
     };
-    const output = { spec: 'cnmw-output/1.0', format: 'gpkg', filename: 'li-fields.gpkg', options: { layerName: 'fields' } };
+    const output = { spec: 'cng-output/1.0', format: 'gpkg', filename: 'li-fields.gpkg', options: { layerName: 'fields' } };
     const sink = memorySink();
     const handle = download(DATASET, null, filter, output, { sink });
 
@@ -92,7 +92,7 @@ test(
     assert.equal(result.format, 'gpkg');
 
     const buf = Buffer.concat(sink.chunks.map((c) => Buffer.from(c)));
-    const dir = mkdtempSync(join(tmpdir(), 'cnmw-gpkg-integration-'));
+    const dir = mkdtempSync(join(tmpdir(), 'cng-gpkg-integration-'));
     const path = join(dir, 'li-fields.gpkg');
     writeFileSync(path, buf);
 

@@ -372,7 +372,7 @@ machine, the `CngError` taxonomy, the pinned-CDN + host-injection packaging —
 and publishes the `{ name, approxBytes, load }` deferred-plugin descriptor the
 registry amendment established, so a picker can show "GeoTIFF clip (+~28 KB)"
 before fetching anything. The descriptor model (§2) gains a sibling kind
-(`cnmw-raster-dataset/1.0`: a band list with URLs, samples and STAC metadata)
+(`cng-raster-dataset/1.0`: a band list with URLs, samples and STAC metadata)
 rather than a new `DatasetSource`, because the filter vocabulary is different
 too — bands and resolution, not predicates and columns.
 

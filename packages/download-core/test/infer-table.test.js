@@ -36,7 +36,7 @@ async function fetchLocalFile(url) {
 
 function undeclaredDataset(name) {
   return {
-    spec: 'cnmw-dataset/1.0',
+    spec: 'cng-dataset/1.0',
     id: `fixture-${name}-undeclared`,
     source: { kind: 'parquet', url: `file://${FIXTURES}${name}` },
     // deliberately no `table:` -- the whole point of this test file.
@@ -98,7 +98,7 @@ test('inferTableFromSchema: a two-level-nested struct is skipped as one subtree 
 test('estimate() against an undeclared-table struct-bbox fixture no longer throws "parquet column not found"', async () => {
   for (const name of ['geo-metadata.parquet', 'bare.parquet']) {
     const dataset = undeclaredDataset(name);
-    const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } };
+    const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } };
     const est = await estimate(dataset, null, filter, { fetch: fetchLocalFile });
     assert.equal(est.rowGroups.total, 1, name);
     assert.equal(est.rows.max, 3, name);
@@ -114,8 +114,8 @@ test('estimate() against an undeclared-table struct-bbox fixture no longer throw
 test('download() an undeclared-table struct-bbox fixture to GeoJSON succeeds end to end (previously failed the read)', async () => {
   for (const name of ['geo-metadata.parquet', 'bare.parquet']) {
     const dataset = undeclaredDataset(name);
-    const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } };
-    const output = { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'out.geojson' };
+    const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } };
+    const output = { spec: 'cng-output/1.0', format: 'geojson', filename: 'out.geojson' };
     const sink = memorySink();
     const handle = download(dataset, null, filter, output, { sink, fetch: fetchLocalFile });
     const result = await handle.result;

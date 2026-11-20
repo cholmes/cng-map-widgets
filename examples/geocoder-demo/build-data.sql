@@ -112,7 +112,7 @@ SELECT level, count(*) AS n FROM index_sorted GROUP BY level ORDER BY level;
 
 COPY index_sorted TO 'data/index.parquet' (
   FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9, ROW_GROUP_SIZE 2048,
-  KV_METADATA {'cnmw:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12'}
+  KV_METADATA {'cng:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12'}
 );
 
 -- ---------------------------------------------------------------------
@@ -133,7 +133,7 @@ ORDER BY country, feature_id;
 
 COPY adm0_boundaries TO 'data/adm0-boundaries.parquet' (
   FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9, ROW_GROUP_SIZE 1000,
-  KV_METADATA {'cnmw:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12'}
+  KV_METADATA {'cng:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12'}
 );
 
 CREATE OR REPLACE TABLE adm2_boundaries AS
@@ -149,7 +149,7 @@ ORDER BY country, feature_id;
 
 COPY adm2_boundaries TO 'data/adm2-boundaries.parquet' (
   FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9, ROW_GROUP_SIZE 1000,
-  KV_METADATA {'cnmw:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12'}
+  KV_METADATA {'cng:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12'}
 );
 
 -- ---------------------------------------------------------------------
@@ -216,8 +216,8 @@ ORDER BY country, feature_id;
 COPY adm0_display TO 'data/adm0-display.parquet' (
   FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9, ROW_GROUP_SIZE 1000,
   KV_METADATA {
-    'cnmw:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12',
-    'cnmw:geometry_bias': 'outward (ST_Buffer(ST_SimplifyPreserveTopology(geom, 0.05), 0.05, 2) on features >10K vertices)'
+    'cng:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12',
+    'cng:geometry_bias': 'outward (ST_Buffer(ST_SimplifyPreserveTopology(geom, 0.05), 0.05, 2) on features >10K vertices)'
   }
 );
 
@@ -254,8 +254,8 @@ ORDER BY country, feature_id;
 COPY adm2_display TO 'data/adm2-display.parquet' (
   FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 9, ROW_GROUP_SIZE 1000,
   KV_METADATA {
-    'cnmw:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12',
-    'cnmw:geometry_bias': 'outward (ST_Buffer(ST_SimplifyPreserveTopology(geom, 0.03), 0.03, 2) on features >10K vertices)'
+    'cng:catalog_version': 'geoboundaries-cgaz-provisional-2026-11-12',
+    'cng:geometry_bias': 'outward (ST_Buffer(ST_SimplifyPreserveTopology(geom, 0.03), 0.03, 2) on features >10K vertices)'
   }
 );
 

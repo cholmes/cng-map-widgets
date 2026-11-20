@@ -39,7 +39,7 @@ async function fetchLocalFile(url) {
 }
 
 const FIXTURE_DATASET = {
-  spec: 'cnmw-dataset/1.0',
+  spec: 'cng-dataset/1.0',
   id: 'fixture-geo-metadata',
   source: { kind: 'parquet', url: `file://${FIXTURES}geo-metadata.parquet` },
   table: {
@@ -171,8 +171,8 @@ test('geoparquet format: WITHOUT dropGeometry, the geometry column and "geo" met
 // --- end to end: download() with dropGeometry, with and without a spatial filter that needs geometry ---
 
 test('download() with dropGeometry and NO spatial filter: output has no geometry, all 3 rows present', async () => {
-  const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' }, columns: { dropGeometry: true } };
-  const output = { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'out.geojson' };
+  const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' }, columns: { dropGeometry: true } };
+  const output = { spec: 'cng-output/1.0', format: 'geojson', filename: 'out.geojson' };
   const sink = memorySink();
   const handle = download(FIXTURE_DATASET, null, filter, output, { sink, fetch: fetchLocalFile });
   const result = await handle.result;
@@ -184,8 +184,8 @@ test('download() with dropGeometry and NO spatial filter: output has no geometry
 
 test('download() with dropGeometry AND an intersects filter that needs geometry: filtering still works correctly, output still has no geometry', async () => {
   const area = areaAroundRowA();
-  const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'intersects' }, columns: { dropGeometry: true } };
-  const output = { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'out.geojson' };
+  const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'intersects' }, columns: { dropGeometry: true } };
+  const output = { spec: 'cng-output/1.0', format: 'geojson', filename: 'out.geojson' };
   const sink = memorySink();
   const handle = download(FIXTURE_DATASET, area, filter, output, { sink, fetch: fetchLocalFile });
   const result = await handle.result;
@@ -200,8 +200,8 @@ test('download() with dropGeometry AND an intersects filter that needs geometry:
 });
 
 test('download() with dropGeometry to geoparquet: the written file has no geometry column and no "geo" metadata', async () => {
-  const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' }, columns: { dropGeometry: true } };
-  const output = { spec: 'cnmw-output/1.0', format: 'geoparquet', filename: 'out.parquet' };
+  const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' }, columns: { dropGeometry: true } };
+  const output = { spec: 'cng-output/1.0', format: 'geoparquet', filename: 'out.parquet' };
   const sink = memorySink();
   const handle = download(FIXTURE_DATASET, null, filter, output, { sink, fetch: fetchLocalFile });
   const result = await handle.result;
@@ -222,9 +222,9 @@ test('download() output-bytes estimate does not inflate for a dropped geometry (
   // estimateGeoJsonBytes/estimateGeoParquetBytes added the geometry term
   // unconditionally. With the fix, the estimate should be noticeably
   // smaller for the same rows.
-  const withGeom = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } };
-  const dropped = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' }, columns: { dropGeometry: true } };
-  const output = { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'out.geojson' };
+  const withGeom = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } };
+  const dropped = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' }, columns: { dropGeometry: true } };
+  const output = { spec: 'cng-output/1.0', format: 'geojson', filename: 'out.geojson' };
 
   const h1 = download(FIXTURE_DATASET, null, withGeom, output, { sink: memorySink(), fetch: fetchLocalFile });
   const est1 = await h1.estimate;

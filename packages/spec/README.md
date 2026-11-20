@@ -362,7 +362,7 @@ it is the package that can throw most of them.
 
 ## Why one copy matters
 
-`@cng/spec` registers itself on `globalThis[Symbol.for('cnmw.spec')]` at import
+`@cng/spec` registers itself on `globalThis[Symbol.for('cng.spec')]` at import
 time. A second, *different* version logs one loud warning and defers to the
 first:
 

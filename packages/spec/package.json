@@ -12,7 +12,7 @@
     "wkb",
     "cloud-native",
     "gazetteer",
-    "cnmw"
+    "cng"
   ],
   "license": "MIT",
   "type": "module",

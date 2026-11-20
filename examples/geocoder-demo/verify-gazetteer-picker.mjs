@@ -20,17 +20,17 @@ page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text(
 
 for (const pagePath of ['examples/geocoder-demo/index.html', 'examples/quickstart/index.html']) {
   await page.goto(`http://localhost:${port}/${pagePath}`);
-  await page.waitForSelector('.cnmw-gaz-gear', { timeout: 45_000 });
+  await page.waitForSelector('.cng-gaz-gear', { timeout: 45_000 });
 
   // Panel opens from the gear, closed by default, default marked active.
-  const closed = await page.evaluate(() => document.querySelector('.cnmw-gaz-panel').hidden);
+  const closed = await page.evaluate(() => document.querySelector('.cng-gaz-panel').hidden);
   if (closed !== true) throw new Error(`${pagePath}: panel should start closed`);
-  await page.click('.cnmw-gaz-gear');
+  await page.click('.cng-gaz-gear');
   const state = await page.evaluate(() => ({
-    open: !document.querySelector('.cnmw-gaz-panel').hidden,
-    expanded: document.querySelector('.cnmw-gaz-gear').getAttribute('aria-expanded'),
-    options: [...document.querySelectorAll('.cnmw-gaz-option')].map((b) => ({
-      name: b.querySelector('.cnmw-gaz-name').textContent,
+    open: !document.querySelector('.cng-gaz-panel').hidden,
+    expanded: document.querySelector('.cng-gaz-gear').getAttribute('aria-expanded'),
+    options: [...document.querySelectorAll('.cng-gaz-option')].map((b) => ({
+      name: b.querySelector('.cng-gaz-name').textContent,
       active: b.getAttribute('aria-pressed') === 'true',
     })),
   }));
@@ -45,7 +45,7 @@ for (const pagePath of ['examples/geocoder-demo/index.html', 'examples/quickstar
   // before the new index actually loads — no live fetches.
   await Promise.all([
     page.waitForURL(/index=overture/, { timeout: 15_000 }),
-    page.click('.cnmw-gaz-option:nth-of-type(2)'),
+    page.click('.cng-gaz-option:nth-of-type(2)'),
   ]);
   console.log(`PASS: ${pagePath} — picking Overture navigates to ?index=overture.`);
   await page.goto('about:blank'); // abandon before the live Overture manifest loads
@@ -53,17 +53,17 @@ for (const pagePath of ['examples/geocoder-demo/index.html', 'examples/quickstar
   // The custom-URL field navigates to ?index=<url> and the page actually
   // loads against it (locally served manifest; fully offline-capable).
   await page.goto(`http://localhost:${port}/${pagePath}`);
-  await page.waitForSelector('.cnmw-gaz-gear', { timeout: 45_000 });
-  await page.click('.cnmw-gaz-gear');
-  await page.fill('.cnmw-gaz-custom input', localManifest);
+  await page.waitForSelector('.cng-gaz-gear', { timeout: 45_000 });
+  await page.click('.cng-gaz-gear');
+  await page.fill('.cng-gaz-custom input', localManifest);
   await Promise.all([
     page.waitForURL((u) => u.searchParams.get('index') === localManifest, { timeout: 15_000 }),
-    page.click('.cnmw-gaz-custom button'),
+    page.click('.cng-gaz-custom button'),
   ]);
-  await page.waitForSelector('.cnmw-gaz-gear', { timeout: 45_000 });
+  await page.waitForSelector('.cng-gaz-gear', { timeout: 45_000 });
   // The custom URL round-trips into the input, and a search works against it.
-  await page.click('.cnmw-gaz-gear');
-  const roundTripped = await page.inputValue('.cnmw-gaz-custom input');
+  await page.click('.cng-gaz-gear');
+  const roundTripped = await page.inputValue('.cng-gaz-custom input');
   if (roundTripped !== localManifest) throw new Error(`${pagePath}: custom URL should round-trip into the field, got ${roundTripped}`);
   await page.keyboard.press('Escape');
   await page.type('input[role="combobox"]', 'liecht', { delay: 15 });
@@ -73,8 +73,8 @@ for (const pagePath of ['examples/geocoder-demo/index.html', 'examples/quickstar
 
 // Screenshot the open panel for the record (geocoder-demo, local index).
 await page.goto(`http://localhost:${port}/examples/geocoder-demo/index.html`);
-await page.waitForSelector('.cnmw-gaz-gear', { timeout: 45_000 });
-await page.click('.cnmw-gaz-gear');
+await page.waitForSelector('.cng-gaz-gear', { timeout: 45_000 });
+await page.click('.cng-gaz-gear');
 await page.screenshot({ path: new URL('./screenshot-gazetteer-picker.png', import.meta.url).pathname });
 
 console.log('Console errors:', consoleErrors.length);

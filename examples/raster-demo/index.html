@@ -9,7 +9,7 @@
 <style>
   html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
   #map { position: absolute; inset: 0; }
-  .maplibregl-ctrl .cnmw-geocoder { margin: 10px; }
+  .maplibregl-ctrl .cng-geocoder { margin: 10px; }
   #panel {
     position: absolute; top: 10px; right: 10px; z-index: 5; width: 390px; max-height: calc(100% - 20px);
     overflow-y: auto; background: rgba(255,255,255,0.97); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
@@ -300,7 +300,7 @@ el('estimateBtn').addEventListener('click', async () => {
   el('estimateInfo').textContent = 'Estimating (headers only)…';
   try {
     const est = await estimateRasterClip(descriptor, area, filterSpec(), { sources });
-    window.__cnmwLastEstimate = est;
+    window.__cngLastEstimate = est;
     el('estimateInfo').textContent =
       `${est.width} x ${est.height} px x ${est.bands.length} band(s) ${est.dtype}` +
       `  (level ${est.resolution.level}${est.resolution.native ? ', native' : ''}, ${est.resolution.pixelSize[0]} units/px)\n` +
@@ -339,7 +339,7 @@ async function startDownload(acceptCeiling, customSink) {
   handle.on('ceiling', () => { el('ceilingBox').style.display = 'block'; });
   try {
     const result = await handle.result;
-    window.__cnmwLastResult = { ...result, sink: { kind: result.sink.kind } };
+    window.__cngLastResult = { ...result, sink: { kind: result.sink.kind } };
     const blob = sink.kind === 'memory' ? new Blob(sink.chunks, { type: 'image/tiff' }) : null;
     el('downloadInfo').textContent =
       `Done: ${result.filename}\n` +

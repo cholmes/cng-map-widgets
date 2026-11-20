@@ -110,7 +110,7 @@ console.log('ceiling shown:', ceilingVisible, '|', ceilingText.trim().slice(0, 1
 
 // --- 3. a map-view-sized area: estimate, then really download ------------
 await page.evaluate(() => {
-  window.__cnmwLastResult = null;
+  window.__cngLastResult = null;
   // a ~9 x 11 km window over Oakland -- the window E11 validated with GDAL
   window.map.jumpTo({ center: [-122.25, 37.8], zoom: 12.4 });
 });
@@ -124,7 +124,7 @@ await page.waitForFunction(
 );
 const estimateInfo = await page.textContent('#estimateInfo');
 console.log('--- map-view estimate ---\n' + estimateInfo);
-const estimateObj = await page.evaluate(() => window.__cnmwLastEstimate);
+const estimateObj = await page.evaluate(() => window.__cngLastEstimate);
 
 await page.click('#downloadBtn');
 await page.waitForFunction(
@@ -134,7 +134,7 @@ await page.waitForFunction(
 );
 const downloadInfo = await page.textContent('#downloadInfo');
 console.log('--- download ---\n' + downloadInfo);
-const result = await page.evaluate(() => window.__cnmwLastResult);
+const result = await page.evaluate(() => window.__cngLastResult);
 console.log('result:', JSON.stringify({
   filename: result?.filename, bytes: result?.bytes, width: result?.width, height: result?.height,
   bands: result?.bands, dtype: result?.dtype, epsg: result?.epsg, requests: result?.requests,

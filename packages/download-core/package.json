@@ -12,7 +12,7 @@
     "spatial-filter",
     "row-group-pruning",
     "cloud-native",
-    "cnmw"
+    "cng"
   ],
   "license": "MIT",
   "type": "module",

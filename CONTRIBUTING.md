@@ -41,7 +41,7 @@ change that touches data access.
 If you add a widget to a page, copy the shape of an
 [`examples/*/verify.mjs`](examples/): navigate, wait on a visible status
 string, assert on the actual map source data
-(`map.getSource('cnmw-area-display')._data`) rather than a screenshot, and
+(`map.getSource('cng-area-display')._data`) rather than a screenshot, and
 fail on any console error. That pattern caught every real bug in this repo's
 history.
 
@@ -52,47 +52,48 @@ it is run against live published data by
 [`docs/verify-snippets.mjs`](docs/verify-snippets.mjs). **If you change a
 snippet, change it there too** — or the next run fails.
 
-## Strings you must not rename
+## Identifier naming
 
-`cnmw` survives in the source on purpose. It appears in several unrelated
-families, and only two were renamed to `cng`:
+Everything in this repo uses the `cng` prefix: the npm scope (`@cng/*`), the
+error class (`CngError`/`isCngError`), the CSS custom properties
+(`--cng-*`), the CSS classes and DOM ids (`.cng-geocoder`,
+`#cng-geocoder-style`), the map source ids (`cng-area-display`,
+`cng-area-filter`), the demo test hooks (`window.__cngDemo`), and the
+versioned argument shapes (`cng-dataset/1.0`, `cng-filter/1.0`,
+`cng-output/1.0`, `cng-request/1.0`, `cng-raster-dataset/1.0`).
 
-| Family | Example | Status |
-|---|---|---|
-| npm scope | `@cng/geocoder-core` | renamed from `@cnmw` 2026-11-17 |
-| error class | `CngError`, `isCngError` | renamed from `CnmwError` 2026-11-17 |
-| **published wire format** | `cnmw-index/1.0`, `cnmw:catalog_version` | **frozen** |
-| **client-side spec strings** | `cnmw-dataset/1.0`, `cnmw-filter/1.0`, `cnmw-output/1.0`, `cnmw-request/1.0`, `cnmw-raster-dataset/1.0` | **frozen** |
-| **cross-version registry key** | `Symbol.for('cnmw.spec')` | **frozen** |
-| **CSS custom properties** | all 14 `--cnmw-*` theming tokens | **frozen — public API** |
-| **CSS classes & DOM ids** | all 35 `.cnmw-*` classes, `#cnmw-geocoder-style` | **frozen — public API** |
-| **map source ids** | `cnmw-area-display`, `cnmw-area-filter` | **frozen** |
-| **demo test hooks** | `window.__cnmwDemo`, `__cnmwLastResult`, … | **frozen** |
+All of it was `cnmw` until 2026-11-17/20. If you find a stray `cnmw`
+anywhere **except** the one case below, it is a miss — please rename it.
 
-Why each one matters:
+### The one exception, and it is temporary
 
-- **`cnmw-index/1.0` and `cnmw:catalog_version` are the only two that appear
-  in data we do not control.** They are in live published catalogs on
-  `data.source.coop` right now — `packages/geocoder-core/src/index-loader.js`
-  rejects any manifest whose `spec` is not exactly `cnmw-index/1.0`. Renaming
-  either breaks every published gazetteer on contact.
-- The **client-side spec strings** never travel to object storage, but they
-  are documented in AGENTS.md and README.md as literal values users copy into
-  their own `DownloadRequest` objects, and `dataset-resolve.js` /
-  `raster-core/src/plan.js` validate them. Renaming silently invalidates
-  every request object anyone has written.
-- **`Symbol.for('cnmw.spec')`** is how two copies of `@cng/spec` recognise
-  each other across versions. Change it and they stop agreeing — silently.
-- **The CSS surface is public API, and nothing tests it.** The control's CSS
-  is injected as a string, and `packages/maplibre/README.md` tells host pages
-  to theme it by "targeting `.cnmw-geocoder` and its children" and by
-  redeclaring any `--cnmw-*` token. Rename those and every host page's theme
-  overrides stop applying, with **no test failure** — only `.cnmw-attribution`
-  and the `cnmw-area-display` source id are asserted anywhere. This is the
-  most dangerous family in the table precisely because it is the quietest.
+`cnmw-index/1.0` is still accepted, because it is the `spec` value inside
+gazetteer manifests **published on `data.source.coop`** —
+`packages/geocoder-core/src/index-loader.js` validates against it, and the
+live demo site runs deployed code. Flipping the validator and the catalogs
+independently breaks one or the other, so the rollout is: accept both →
+republish the catalogs → drop the old.
 
-If you are tempted to "finish the rename", this table is why it is already
-finished.
+Tracking: [#1](https://github.com/cholmes/cng-map-widgets/issues/1), which
+also proposes replacing this manifest entirely with a pair of STAC
+extensions, at which point the `spec` field goes away in favour of an
+extension URI in `stac_extensions[]`.
+
+### Things to be careful with, even though they are now `cng`
+
+Renaming these again would break consumers silently, with no test failure:
+
+- **The CSS surface is public API.** `packages/maplibre/README.md` tells host
+  pages to theme the control by targeting `.cng-geocoder` and its children
+  and by redeclaring any `--cng-*` token. Almost none of it is covered by a
+  test — only `.cng-attribution` and the `cng-area-display` source id are
+  asserted anywhere. This is the quietest breakage in the repo.
+- **`Symbol.for('cng.spec')`** is how two copies of `@cng/spec` recognise
+  each other across versions. Change it and they stop agreeing, silently.
+- **The versioned argument shapes** (`cng-filter/1.0` and friends) are
+  documented in AGENTS.md and README.md as literal values users copy into
+  their own request objects. They are not a published wire format — nobody
+  else serves one — but they are a copy-paste API.
 
 ## House style
 

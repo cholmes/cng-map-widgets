@@ -47,139 +47,139 @@ function scheduleIdle(fn) {
 // Dark mode: see @cng/maplibre's geocoder-control.js for the override
 // hook rationale; identical token set here under the `-ol` class names.
 const CSS = `
-.cnmw-geocoder-ol, .cnmw-attribution-ctrl-ol {
-  --cnmw-bg: #fff;
-  --cnmw-ink: #1a1a1a;
-  --cnmw-border: #ccc;
-  --cnmw-focus: #1a73e8;
-  --cnmw-meta: #666;
-  --cnmw-selected-bg: #e8f0fe;
-  --cnmw-highlight-ink: inherit;
-  --cnmw-highlight-bg: #fff3b0;
-  --cnmw-shadow: rgba(0,0,0,0.15);
-  --cnmw-error: #b3261e;
-  --cnmw-error-bg: #fdecea;
-  --cnmw-badge-bg: #f1f1ef;
-  --cnmw-badge-ink: #777;
-  position: absolute; top: 10px; left: 10px; font: 13px/1.4 system-ui, sans-serif; color: var(--cnmw-ink);
+.cng-geocoder-ol, .cng-attribution-ctrl-ol {
+  --cng-bg: #fff;
+  --cng-ink: #1a1a1a;
+  --cng-border: #ccc;
+  --cng-focus: #1a73e8;
+  --cng-meta: #666;
+  --cng-selected-bg: #e8f0fe;
+  --cng-highlight-ink: inherit;
+  --cng-highlight-bg: #fff3b0;
+  --cng-shadow: rgba(0,0,0,0.15);
+  --cng-error: #b3261e;
+  --cng-error-bg: #fdecea;
+  --cng-badge-bg: #f1f1ef;
+  --cng-badge-ink: #777;
+  position: absolute; top: 10px; left: 10px; font: 13px/1.4 system-ui, sans-serif; color: var(--cng-ink);
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  .cnmw-geocoder-ol, .cnmw-attribution-ctrl-ol {
-    --cnmw-bg: #1e1f22;
-    --cnmw-ink: #e8e8e6;
-    --cnmw-border: #46484d;
-    --cnmw-focus: #7ab2f5;
-    --cnmw-meta: #a3a3a0;
-    --cnmw-selected-bg: #2a3a52;
-    --cnmw-highlight-bg: #5a4a12;
-    --cnmw-shadow: rgba(0,0,0,0.5);
-    --cnmw-error: #ff8a80;
-    --cnmw-error-bg: #3a2323;
-    --cnmw-badge-bg: #2d2f33;
-    --cnmw-badge-ink: #b0b0ac;
+  .cng-geocoder-ol, .cng-attribution-ctrl-ol {
+    --cng-bg: #1e1f22;
+    --cng-ink: #e8e8e6;
+    --cng-border: #46484d;
+    --cng-focus: #7ab2f5;
+    --cng-meta: #a3a3a0;
+    --cng-selected-bg: #2a3a52;
+    --cng-highlight-bg: #5a4a12;
+    --cng-shadow: rgba(0,0,0,0.5);
+    --cng-error: #ff8a80;
+    --cng-error-bg: #3a2323;
+    --cng-badge-bg: #2d2f33;
+    --cng-badge-ink: #b0b0ac;
   }
 }
-.cnmw-geocoder-ol input[role="combobox"] {
-  width: 260px; padding: 8px 10px; border: 1px solid var(--cnmw-border); border-radius: 4px;
-  font: inherit; box-sizing: border-box; background: var(--cnmw-bg); color: var(--cnmw-ink);
+.cng-geocoder-ol input[role="combobox"] {
+  width: 260px; padding: 8px 10px; border: 1px solid var(--cng-border); border-radius: 4px;
+  font: inherit; box-sizing: border-box; background: var(--cng-bg); color: var(--cng-ink);
 }
-.cnmw-geocoder-ol input[role="combobox"]:focus { outline: 2px solid var(--cnmw-focus); outline-offset: -1px; }
-.cnmw-geocoder-ol .cnmw-listbox {
+.cng-geocoder-ol input[role="combobox"]:focus { outline: 2px solid var(--cng-focus); outline-offset: -1px; }
+.cng-geocoder-ol .cng-listbox {
   position: absolute; top: 100%; left: 0; right: 0; margin: 2px 0 0; padding: 2px;
-  list-style: none; background: var(--cnmw-bg); border: 1px solid var(--cnmw-border); border-radius: 4px;
-  max-height: 260px; overflow-y: auto; box-shadow: 0 2px 8px var(--cnmw-shadow); z-index: 10;
+  list-style: none; background: var(--cng-bg); border: 1px solid var(--cng-border); border-radius: 4px;
+  max-height: 260px; overflow-y: auto; box-shadow: 0 2px 8px var(--cng-shadow); z-index: 10;
 }
-.cnmw-geocoder-ol .cnmw-listbox[hidden] { display: none; }
-.cnmw-geocoder-ol .cnmw-option { padding: 6px 8px; border-radius: 3px; cursor: pointer; }
-.cnmw-geocoder-ol .cnmw-option[aria-selected="true"] { background: var(--cnmw-selected-bg); }
-.cnmw-geocoder-ol .cnmw-option-new { animation: cnmw-ol-fade-in 0.6s ease-out; }
-@keyframes cnmw-ol-fade-in { from { background: var(--cnmw-selected-bg); } to { background: transparent; } }
-.cnmw-geocoder-ol .cnmw-option-name { font-weight: 500; }
-.cnmw-geocoder-ol mark.cnmw-match {
-  background: var(--cnmw-highlight-bg); color: var(--cnmw-highlight-ink); border-radius: 2px; padding: 0 1px;
+.cng-geocoder-ol .cng-listbox[hidden] { display: none; }
+.cng-geocoder-ol .cng-option { padding: 6px 8px; border-radius: 3px; cursor: pointer; }
+.cng-geocoder-ol .cng-option[aria-selected="true"] { background: var(--cng-selected-bg); }
+.cng-geocoder-ol .cng-option-new { animation: cng-ol-fade-in 0.6s ease-out; }
+@keyframes cng-ol-fade-in { from { background: var(--cng-selected-bg); } to { background: transparent; } }
+.cng-geocoder-ol .cng-option-name { font-weight: 500; }
+.cng-geocoder-ol mark.cng-match {
+  background: var(--cng-highlight-bg); color: var(--cng-highlight-ink); border-radius: 2px; padding: 0 1px;
 }
-.cnmw-geocoder-ol .cnmw-alt-badge, .cnmw-geocoder-ol .cnmw-raw-badge {
-  font-size: 10px; color: var(--cnmw-badge-ink); background: var(--cnmw-badge-bg);
+.cng-geocoder-ol .cng-alt-badge, .cng-geocoder-ol .cng-raw-badge {
+  font-size: 10px; color: var(--cng-badge-ink); background: var(--cng-badge-bg);
   border-radius: 3px; padding: 1px 4px; margin-left: 4px; vertical-align: middle;
 }
-.cnmw-geocoder-ol .cnmw-option-meta { color: var(--cnmw-meta); font-size: 11px; margin-left: 6px; }
-.cnmw-geocoder-ol .cnmw-more { color: var(--cnmw-meta); cursor: default; }
-.cnmw-geocoder-ol .cnmw-empty, .cnmw-geocoder-ol .cnmw-loading, .cnmw-geocoder-ol .cnmw-searching {
-  padding: 8px; color: var(--cnmw-meta);
+.cng-geocoder-ol .cng-option-meta { color: var(--cng-meta); font-size: 11px; margin-left: 6px; }
+.cng-geocoder-ol .cng-more { color: var(--cng-meta); cursor: default; }
+.cng-geocoder-ol .cng-empty, .cng-geocoder-ol .cng-loading, .cng-geocoder-ol .cng-searching {
+  padding: 8px; color: var(--cng-meta);
 }
-.cnmw-geocoder-ol .cnmw-fuzzy-note {
-  padding: 4px 8px 5px; color: var(--cnmw-meta); font-size: 11px; font-style: italic; cursor: default;
-  border-bottom: 1px solid var(--cnmw-border); margin-bottom: 2px;
+.cng-geocoder-ol .cng-fuzzy-note {
+  padding: 4px 8px 5px; color: var(--cng-meta); font-size: 11px; font-style: italic; cursor: default;
+  border-bottom: 1px solid var(--cng-border); margin-bottom: 2px;
 }
-.cnmw-geocoder-ol .cnmw-error {
-  padding: 8px; color: var(--cnmw-error); background: var(--cnmw-error-bg);
+.cng-geocoder-ol .cng-error {
+  padding: 8px; color: var(--cng-error); background: var(--cng-error-bg);
   display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: default;
 }
-.cnmw-geocoder-ol .cnmw-retry {
+.cng-geocoder-ol .cng-retry {
   font: inherit; font-size: 11px; color: inherit; background: transparent; border: 1px solid currentColor;
   border-radius: 3px; padding: 2px 8px; cursor: pointer; flex: none;
 }
-.cnmw-geocoder-ol .cnmw-spinner {
+.cng-geocoder-ol .cng-spinner {
   display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px;
-  border: 2px solid var(--cnmw-border); border-top-color: var(--cnmw-focus); border-radius: 50%;
-  animation: cnmw-ol-spin 0.8s linear infinite;
+  border: 2px solid var(--cng-border); border-top-color: var(--cng-focus); border-radius: 50%;
+  animation: cng-ol-spin 0.8s linear infinite;
 }
-@keyframes cnmw-ol-spin { to { transform: rotate(360deg); } }
-.cnmw-geocoder-ol .cnmw-more-badge {
-  font-size: 11px; color: var(--cnmw-meta); margin-top: 2px; transition: opacity 0.3s ease;
+@keyframes cng-ol-spin { to { transform: rotate(360deg); } }
+.cng-geocoder-ol .cng-more-badge {
+  font-size: 11px; color: var(--cng-meta); margin-top: 2px; transition: opacity 0.3s ease;
 }
-.cnmw-geocoder-ol .cnmw-more-badge[hidden] { display: none; }
+.cng-geocoder-ol .cng-more-badge[hidden] { display: none; }
 /* Compact attribution (2026-11-13): bottom-left ⓘ + pill on the map;
    OL's own attribution is bottom-right. Standalone classes because the
-   host lives outside .cnmw-geocoder-ol. */
-.cnmw-attribution-ctrl-ol {
+   host lives outside .cng-geocoder-ol. */
+.cng-attribution-ctrl-ol {
   /* top: auto overrides the top: 10px this element inherits from sharing
-     the variable-scope rule with .cnmw-geocoder-ol. */
+     the variable-scope rule with .cng-geocoder-ol. */
   position: absolute; top: auto; left: 8px; bottom: 8px; z-index: 1;
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
 }
-.cnmw-attribution-toggle-ol {
+.cng-attribution-toggle-ol {
   width: 24px; height: 24px; border-radius: 50%; flex: none; cursor: pointer;
   font: 700 13px/1 Georgia, 'Times New Roman', serif; font-style: italic;
-  color: var(--cnmw-meta); background: var(--cnmw-bg); border: 1px solid var(--cnmw-border);
-  box-shadow: 0 1px 4px var(--cnmw-shadow); padding: 0;
+  color: var(--cng-meta); background: var(--cng-bg); border: 1px solid var(--cng-border);
+  box-shadow: 0 1px 4px var(--cng-shadow); padding: 0;
 }
-.cnmw-attribution-toggle-ol:hover, .cnmw-attribution-toggle-ol:focus { color: var(--cnmw-ink); }
-.cnmw-attribution-toggle-ol:focus { outline: 2px solid var(--cnmw-focus); outline-offset: 1px; }
-.cnmw-attribution-ctrl-ol .cnmw-attribution {
-  font-size: 11px; color: var(--cnmw-meta); background: var(--cnmw-bg);
-  border: 1px solid var(--cnmw-border); border-radius: 12px; box-shadow: 0 1px 4px var(--cnmw-shadow);
+.cng-attribution-toggle-ol:hover, .cng-attribution-toggle-ol:focus { color: var(--cng-ink); }
+.cng-attribution-toggle-ol:focus { outline: 2px solid var(--cng-focus); outline-offset: 1px; }
+.cng-attribution-ctrl-ol .cng-attribution {
+  font-size: 11px; color: var(--cng-meta); background: var(--cng-bg);
+  border: 1px solid var(--cng-border); border-radius: 12px; box-shadow: 0 1px 4px var(--cng-shadow);
   padding: 4px 10px; max-width: min(70vw, 480px); overflow-wrap: break-word;
 }
-.cnmw-attribution-ctrl-ol .cnmw-attribution[hidden] { display: none; }
-.cnmw-attribution-ctrl-ol .cnmw-attribution a { color: inherit; }
-.cnmw-geocoder-ol .cnmw-sharealike {
-  font-size: 9px; border: 1px solid var(--cnmw-border); border-radius: 2px; padding: 0 3px; margin-left: 2px;
+.cng-attribution-ctrl-ol .cng-attribution[hidden] { display: none; }
+.cng-attribution-ctrl-ol .cng-attribution a { color: inherit; }
+.cng-geocoder-ol .cng-sharealike {
+  font-size: 9px; border: 1px solid var(--cng-border); border-radius: 2px; padding: 0 3px; margin-left: 2px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .cnmw-geocoder-ol .cnmw-option-new { animation: none; }
-  .cnmw-geocoder-ol .cnmw-spinner { animation-duration: 1.6s; }
+  .cng-geocoder-ol .cng-option-new { animation: none; }
+  .cng-geocoder-ol .cng-spinner { animation-duration: 1.6s; }
 }
-.cnmw-geocoder-ol .cnmw-upgrade-notice {
-  margin-top: 4px; padding: 4px 6px; border-radius: 4px; background: var(--cnmw-badge-bg); color: var(--cnmw-meta);
+.cng-geocoder-ol .cng-upgrade-notice {
+  margin-top: 4px; padding: 4px 6px; border-radius: 4px; background: var(--cng-badge-bg); color: var(--cng-meta);
   font-size: 11px; display: flex; align-items: center; justify-content: space-between; gap: 6px;
 }
-.cnmw-geocoder-ol .cnmw-upgrade-notice[hidden] { display: none; }
-.cnmw-geocoder-ol .cnmw-upgrade-notice-cancel {
+.cng-geocoder-ol .cng-upgrade-notice[hidden] { display: none; }
+.cng-geocoder-ol .cng-upgrade-notice-cancel {
   font: inherit; font-size: 13px; line-height: 1; color: inherit; background: transparent; border: none;
   cursor: pointer; padding: 0 2px; border-radius: 2px; flex: none;
 }
-.cnmw-geocoder-ol .cnmw-upgrade-notice-cancel[hidden] { display: none; }
-.cnmw-geocoder-ol .cnmw-upgrade-notice-cancel:hover, .cnmw-geocoder-ol .cnmw-upgrade-notice-cancel:focus { color: var(--cnmw-ink); }
-.cnmw-geocoder-ol .cnmw-upgrade-notice-cancel:focus { outline: 2px solid var(--cnmw-focus); outline-offset: -1px; }
+.cng-geocoder-ol .cng-upgrade-notice-cancel[hidden] { display: none; }
+.cng-geocoder-ol .cng-upgrade-notice-cancel:hover, .cng-geocoder-ol .cng-upgrade-notice-cancel:focus { color: var(--cng-ink); }
+.cng-geocoder-ol .cng-upgrade-notice-cancel:focus { outline: 2px solid var(--cng-focus); outline-offset: -1px; }
 `;
 
 function injectCssOnce() {
   if (typeof document === 'undefined') return;
-  if (document.getElementById('cnmw-ol-geocoder-style')) return;
+  if (document.getElementById('cng-ol-geocoder-style')) return;
   const style = document.createElement('style');
-  style.id = 'cnmw-ol-geocoder-style';
+  style.id = 'cng-ol-geocoder-style';
   style.textContent = CSS;
   document.head.appendChild(style);
 }
@@ -201,12 +201,12 @@ function escapeHtml(s) {
 // @cng/maplibre's renderDefaultOption (see the DUPLICATION NOTE above).
 function renderDefaultOption(li, r, queryNorm) {
   const nameEl = document.createElement('span');
-  nameEl.className = 'cnmw-option-name';
+  nameEl.className = 'cng-option-name';
   const segments = splitMatchHighlight(r.name, queryNorm, r.rank?.matchClass);
   for (const seg of segments) {
     if (seg.matched) {
       const mark = document.createElement('mark');
-      mark.className = 'cnmw-match';
+      mark.className = 'cng-match';
       mark.textContent = seg.text;
       nameEl.appendChild(mark);
     } else {
@@ -215,7 +215,7 @@ function renderDefaultOption(li, r, queryNorm) {
   }
   if (r.rank?.isAlt) {
     const altBadge = document.createElement('span');
-    altBadge.className = 'cnmw-alt-badge';
+    altBadge.className = 'cng-alt-badge';
     altBadge.title = r.primaryName ? `Matched the alternate name "${r.name}" for ${r.primaryName}` : 'Matched an alternate name/spelling';
     altBadge.textContent = 'alt';
     nameEl.appendChild(document.createTextNode(' '));
@@ -223,18 +223,18 @@ function renderDefaultOption(li, r, queryNorm) {
   }
 
   const meta = document.createElement('span');
-  meta.className = 'cnmw-option-meta';
+  meta.className = 'cng-option-meta';
   const context = r.parentName ?? r.countryName;
   const friendly = friendlyLevelLabel(r.level, r.class);
   const parts = [context, r.country, friendly].filter(Boolean);
   meta.appendChild(document.createTextNode(`— ${parts.join(' · ')} `));
   const rawBadge = document.createElement('span');
-  rawBadge.className = 'cnmw-raw-badge';
+  rawBadge.className = 'cng-raw-badge';
   rawBadge.textContent = `ADM${r.level}`;
   meta.appendChild(rawBadge);
   if (r.moreCount) {
     const more = document.createElement('span');
-    more.className = 'cnmw-more';
+    more.className = 'cng-more';
     more.textContent = ` (+${r.moreCount} more)`;
     more.title = `${r.moreCount} additional near-identical match${r.moreCount === 1 ? '' : 'es'} collapsed here. Refine your search to tell them apart.`;
     meta.appendChild(more);
@@ -256,7 +256,7 @@ export class GeocoderControl extends Control {
   constructor(options = {}) {
     injectCssOnce();
     const container = document.createElement('div');
-    container.className = 'cnmw-geocoder-ol ol-unselectable ol-control';
+    container.className = 'cng-geocoder-ol ol-unselectable ol-control';
     super({ element: container, target: options.target });
 
     this._options = options;
@@ -265,7 +265,7 @@ export class GeocoderControl extends Control {
     this._listeners = new Map();
     this._results = [];
     this._activeIndex = -1;
-    this._instanceId = `cnmw-ol-geocoder-${++instanceCounter}`;
+    this._instanceId = `cng-ol-geocoder-${++instanceCounter}`;
     this._compositionGate = new CompositionGate();
     this._searchRequestId = 0;
     this._lastQueryNorm = '';
@@ -290,11 +290,11 @@ export class GeocoderControl extends Control {
     const listbox = document.createElement('ul');
     listbox.role = 'listbox';
     listbox.id = `${this._instanceId}-listbox`;
-    listbox.className = 'cnmw-listbox';
+    listbox.className = 'cng-listbox';
     listbox.hidden = true;
 
     const moreBadge = document.createElement('div');
-    moreBadge.className = 'cnmw-more-badge';
+    moreBadge.className = 'cng-more-badge';
     moreBadge.setAttribute('role', 'status');
     moreBadge.setAttribute('aria-live', 'polite');
     moreBadge.hidden = true;
@@ -303,19 +303,19 @@ export class GeocoderControl extends Control {
     // map (bottom-left; OL's own attribution is bottom-right) in setMap,
     // not inside this control's container -- same UX as @cng/maplibre.
     const attribution = document.createElement('div');
-    attribution.className = 'cnmw-attribution';
+    attribution.className = 'cng-attribution';
     attribution.id = `${this._instanceId}-attribution`;
     attribution.hidden = true;
 
     const upgradeNotice = document.createElement('div');
-    upgradeNotice.className = 'cnmw-upgrade-notice';
+    upgradeNotice.className = 'cng-upgrade-notice';
     upgradeNotice.setAttribute('role', 'status');
     upgradeNotice.setAttribute('aria-live', 'polite');
     upgradeNotice.hidden = true;
     const upgradeNoticeText = document.createElement('span');
     const upgradeNoticeCancel = document.createElement('button');
     upgradeNoticeCancel.type = 'button';
-    upgradeNoticeCancel.className = 'cnmw-upgrade-notice-cancel';
+    upgradeNoticeCancel.className = 'cng-upgrade-notice-cancel';
     upgradeNotice.appendChild(upgradeNoticeText);
     upgradeNotice.appendChild(upgradeNoticeCancel);
 
@@ -485,10 +485,10 @@ export class GeocoderControl extends Control {
     const listbox = this._listbox;
     listbox.innerHTML = '';
     const li = document.createElement('li');
-    li.className = kind === 'loading' ? 'cnmw-loading' : 'cnmw-searching';
+    li.className = kind === 'loading' ? 'cng-loading' : 'cng-searching';
     li.setAttribute('aria-hidden', 'true');
     const spinner = document.createElement('span');
-    spinner.className = 'cnmw-spinner';
+    spinner.className = 'cng-spinner';
     li.appendChild(spinner);
     li.appendChild(document.createTextNode(kind === 'loading' ? 'Loading places…' : 'Searching…'));
     listbox.appendChild(li);
@@ -500,12 +500,12 @@ export class GeocoderControl extends Control {
     const listbox = this._listbox;
     listbox.innerHTML = '';
     const li = document.createElement('li');
-    li.className = 'cnmw-error';
+    li.className = 'cng-error';
     const msg = document.createElement('span');
     msg.textContent = friendlyErrorMessage(err);
     const retry = document.createElement('button');
     retry.type = 'button';
-    retry.className = 'cnmw-retry';
+    retry.className = 'cng-retry';
     retry.textContent = 'Retry';
     retry.addEventListener('click', (e) => {
       e.preventDefault();
@@ -533,7 +533,7 @@ export class GeocoderControl extends Control {
       const query = this._input.value;
       if (query.length > 0) {
         const empty = document.createElement('li');
-        empty.className = 'cnmw-empty';
+        empty.className = 'cng-empty';
         empty.textContent = `No matches for "${query}".`;
         listbox.appendChild(empty);
         listbox.hidden = false;
@@ -551,7 +551,7 @@ export class GeocoderControl extends Control {
     // [role="option"] index space and the mousedown picker.
     if (results[0]?.rank?.matchClass === 'fuzzy') {
       const note = document.createElement('li');
-      note.className = 'cnmw-fuzzy-note';
+      note.className = 'cng-fuzzy-note';
       note.setAttribute('role', 'presentation');
       note.textContent = 'No exact matches — showing close matches.';
       listbox.appendChild(note);
@@ -561,11 +561,11 @@ export class GeocoderControl extends Control {
       const li = document.createElement('li');
       li.id = `${this._instanceId}-option-${i}`;
       li.role = 'option';
-      li.className = 'cnmw-option';
+      li.className = 'cng-option';
       li.dataset.index = String(i);
       li.dataset.featureId = r.featureId;
       li.setAttribute('aria-selected', 'false');
-      if (diff?.addedFeatureIds.has(r.featureId)) li.classList.add('cnmw-option-new');
+      if (diff?.addedFeatureIds.has(r.featureId)) li.classList.add('cng-option-new');
       if (this._options.renderItem) {
         const rendered = this._options.renderItem(r);
         if (typeof rendered === 'string') li.innerHTML = rendered;
@@ -685,11 +685,11 @@ export class GeocoderControl extends Control {
   _mountAttribution(map) {
     const pill = this._attributionEl;
     const host = document.createElement('div');
-    host.className = 'cnmw-attribution-ctrl-ol';
+    host.className = 'cng-attribution-ctrl-ol';
     host.hidden = true;
     const toggle = document.createElement('button');
     toggle.type = 'button';
-    toggle.className = 'cnmw-attribution-toggle-ol';
+    toggle.className = 'cng-attribution-toggle-ol';
     toggle.setAttribute('aria-label', 'Data attribution');
     toggle.setAttribute('aria-expanded', 'false');
     toggle.setAttribute('aria-controls', pill.id);
@@ -739,7 +739,7 @@ export class GeocoderControl extends Control {
         // @cng/maplibre's _renderAttribution and this package's
         // UX-polish report.
         const tag = a.shareAlike ?? a.share_alike
-          ? ` <span class="cnmw-sharealike" title="Share-alike license: data derived from this source must be republished under the same terms">ODbL</span>`
+          ? ` <span class="cng-sharealike" title="Share-alike license: data derived from this source must be republished under the same terms">ODbL</span>`
           : '';
         return label + tag;
       })

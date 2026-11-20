@@ -148,8 +148,8 @@ async function selectPlace(query, label) {
   console.log(`[${label}] status after select:`, await page.textContent('#status'));
 
   const sourceData = await page.evaluate(() => {
-    const map = window.__cnmwDemo.map;
-    const src = map.getSource('cnmw-area-display');
+    const map = window.__cngDemo.map;
+    const src = map.getSource('cng-area-display');
     return src ? src._data : null;
   });
   if (!sourceData || sourceData.features.length === 0) {

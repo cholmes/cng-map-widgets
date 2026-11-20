@@ -61,13 +61,13 @@ const selectStatus = await page.textContent('#status');
 console.log('After select:', selectStatus);
 
 const outline = await page.evaluate(() => {
-  const src = window.__cnmwQuickstart.map.getSource('cnmw-area-display');
+  const src = window.__cngQuickstart.map.getSource('cng-area-display');
   const data = src?._data;
   return data ? { features: data.features.length, type: data.features[0]?.geometry?.type } : null;
 });
 console.log('Outline source:', JSON.stringify(outline));
 
-const attribution = (await page.textContent('.cnmw-attribution'))?.trim();
+const attribution = (await page.textContent('.cng-attribution'))?.trim();
 console.log('Attribution:', attribution);
 
 await page.waitForTimeout(600); // let fitBounds settle
@@ -105,12 +105,12 @@ if (!fence) {
     await blockPage.keyboard.press('Enter');
     // The block's own `select` handler console.logs the area it received.
     await blockPage.waitForFunction(
-      () => document.querySelector('.cnmw-attribution')?.textContent?.trim().length > 0,
+      () => document.querySelector('.cng-attribution')?.textContent?.trim().length > 0,
       undefined,
       { timeout: 40_000 },
     );
     console.log('Page logged:', JSON.stringify(blockLogs));
-    console.log('Attribution:', (await blockPage.textContent('.cnmw-attribution'))?.slice(0, 48), '…');
+    console.log('Attribution:', (await blockPage.textContent('.cng-attribution'))?.slice(0, 48), '…');
 
     if (!blockLogs.some((l) => /Contra Costa/.test(l))) {
       blockFailures.push("the block's select handler never logged a selected area");

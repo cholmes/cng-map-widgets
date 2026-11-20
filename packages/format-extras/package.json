@@ -7,7 +7,7 @@
     "esri-json",
     "featureset",
     "download",
-    "cnmw"
+    "cng"
   ],
   "license": "MIT",
   "type": "module",

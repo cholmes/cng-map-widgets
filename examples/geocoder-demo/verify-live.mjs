@@ -100,8 +100,8 @@ async function selectPlace(query, label, expectLevel) {
   }
 
   const sourceData = await page.evaluate(() => {
-    const map = window.__cnmwDemo.map;
-    const src = map.getSource('cnmw-area-display');
+    const map = window.__cngDemo.map;
+    const src = map.getSource('cng-area-display');
     return src ? src._data : null;
   });
   if (!sourceData || sourceData.features.length === 0) {
@@ -126,10 +126,10 @@ const results = {};
 results.contraCosta = await selectPlace('contra costa', 'ADM2', 2);
 
 // GeocoderControl's own built-in attribution line (design call #11,
-// geocoder-control.js's .cnmw-attribution) populates after the first
+// geocoder-control.js's .cng-attribution) populates after the first
 // select(), from the manifest's `attribution` array -- check it here,
 // once, rather than duplicating that UI in the demo page itself.
-const attributionText = await page.textContent('.cnmw-attribution');
+const attributionText = await page.textContent('.cng-attribution');
 console.log('Attribution (GeocoderControl):', attributionText);
 if (!attributionText || attributionText.trim().length === 0) {
   throw new Error('Expected GeocoderControl to render a non-empty attribution line after select()');

@@ -25,7 +25,7 @@
   #notices li { margin-bottom: 2px; }
   .notice-warning { color: #8a5a00; }
   .notice-repair { color: #555; }
-  .ol-control.cnmw-geocoder-ol { z-index: 6; }
+  .ol-control.cng-geocoder-ol { z-index: 6; }
 </style>
 <!--
   Zero-build ESM, no bundler, same pattern as examples/geocoder-demo
@@ -36,7 +36,7 @@
   specifier) -- every `import ... from 'ol/xxx.js'` inside @cng/openlayers
   and in this page resolves through this one entry. `rbush` is `ol`'s own
   transitive dependency (ol/source/Vector.js's spatial index), not a
-  cnmw one -- pulled pre-bundled (its own `quickselect` dependency
+  cng one -- pulled pre-bundled (its own `quickselect` dependency
   included) via jsdelivr's `+esm` endpoint, same technique
   @cng/geocoder-core's cdn.js already uses for hyparquet-compressors.
 -->
@@ -178,7 +178,7 @@ fileInputEl.addEventListener('change', async () => {
   fileInputEl.value = '';
 });
 
-window.__cnmwUploadDemo = { map, geocoder, searchControl, uploadOutline };
+window.__cngUploadDemo = { map, geocoder, searchControl, uploadOutline };
 </script>
 </body>
 </html>

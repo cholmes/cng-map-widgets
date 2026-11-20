@@ -30,7 +30,7 @@ const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url));
 const FIXTURE_URL = `file://${FIXTURES}geo-metadata.parquet`;
 
 const DATASET = {
-  spec: 'cnmw-dataset/1.0',
+  spec: 'cng-dataset/1.0',
   id: 'fixture-cancellation',
   source: { kind: 'parquet', url: FIXTURE_URL },
   table: {
@@ -45,8 +45,8 @@ const DATASET = {
     ],
   },
 };
-const FILTER = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } };
-const OUTPUT = { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'out.geojson' };
+const FILTER = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } };
+const OUTPUT = { spec: 'cng-output/1.0', format: 'geojson', filename: 'out.geojson' };
 
 /** A `fetch` over the local fixture that ignores `signal` entirely, so each test controls exactly which stage throws. */
 async function fetchFixture(url) {

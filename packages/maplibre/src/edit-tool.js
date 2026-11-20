@@ -174,7 +174,7 @@ function featureCollection(features) {
  * }}
  */
 export function createEditTool(map, area, options = {}) {
-  const id = options.id ?? 'cnmw-edit';
+  const id = options.id ?? 'cng-edit';
   const outlineSourceId = `${id}-outline`;
   const outlineLayerId = `${id}-outline-line`;
   const vertexSourceId = `${id}-vertices`;

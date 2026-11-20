@@ -25,7 +25,7 @@ const LI_URL =
   'https://data.source.coop/ftw/global-data/predictions/vectors/alpha/results-by-admin-conf/admin:country_code=LI/Liechtenstein.parquet';
 
 const DATASET = {
-  spec: 'cnmw-dataset/1.0',
+  spec: 'cng-dataset/1.0',
   id: 'ftw-fields-li',
   title: 'FTW field boundaries — Liechtenstein',
   source: { kind: 'parquet', url: LI_URL },
@@ -61,7 +61,7 @@ function hasDuckdb() {
 }
 
 test('estimate() against the real Liechtenstein file reports honest, metadata-only numbers', { skip: !networkOk && 'no network access' }, async () => {
-  const filter = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' }, where: [{ col: 'confidence', op: '>=', value: 0.5 }] };
+  const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' }, where: [{ col: 'confidence', op: '>=', value: 0.5 }] };
   const est = await estimate(DATASET, null, filter);
 
   assert.equal(est.readBytes.exact, true); // metadata-derived column-chunk bytes (O12)
@@ -79,12 +79,12 @@ test(
   { skip: !networkOk && 'no network access' },
   async () => {
     const filter = {
-      spec: 'cnmw-filter/1.0',
+      spec: 'cng-filter/1.0',
       spatial: { mode: 'bbox' },
       where: [{ col: 'confidence', op: '>=', value: 0.5 }],
       limit: 50,
     };
-    const output = { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'li-fields.geojson' };
+    const output = { spec: 'cng-output/1.0', format: 'geojson', filename: 'li-fields.geojson' };
     const sink = memorySink();
     const handle = download(DATASET, null, filter, output, { sink });
 
@@ -117,19 +117,19 @@ test(
   { skip: !networkOk ? 'no network access' : !hasDuckdb() && 'duckdb CLI not installed' },
   async () => {
     const filter = {
-      spec: 'cnmw-filter/1.0',
+      spec: 'cng-filter/1.0',
       spatial: { mode: 'bbox' },
       where: [{ col: 'confidence', op: '>=', value: 0.5 }],
       limit: 100,
     };
-    const output = { spec: 'cnmw-output/1.0', format: 'geoparquet', filename: 'li-fields.parquet' };
+    const output = { spec: 'cng-output/1.0', format: 'geoparquet', filename: 'li-fields.parquet' };
     const sink = memorySink();
     const handle = download(DATASET, null, filter, output, { sink });
     const result = await handle.result;
     assert.equal(result.rows, 100);
 
     const buf = Buffer.concat(sink.chunks.map((c) => Buffer.from(c)));
-    const tmpPath = `/tmp/cnmw-download-core-test-${process.pid}.parquet`;
+    const tmpPath = `/tmp/cng-download-core-test-${process.pid}.parquet`;
     writeFileSync(tmpPath, buf);
     try {
       const countOut = execFileSync('duckdb', ['-csv', '-c', `SELECT count(*) FROM '${tmpPath}';`]).toString().trim();

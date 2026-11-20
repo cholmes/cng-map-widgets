@@ -59,7 +59,7 @@ async function snippet(doc, label, fn) {
 /** The one dataset descriptor the download + agents snippets share. */
 function ftwLiechtensteinDescriptor() {
   return {
-    spec: 'cnmw-dataset/1.0',
+    spec: 'cng-dataset/1.0',
     id: 'ftw-fields-li',
     title: 'Fields of The World — field boundaries (Liechtenstein)',
     source: { kind: 'parquet', url: FTW_LI_URL },
@@ -707,7 +707,7 @@ async function groupDownload() {
   const dataset = ftwLiechtensteinDescriptor();
   const area = await liechtensteinBoxArea();
   const filter = {
-    spec: 'cnmw-filter/1.0',
+    spec: 'cng-filter/1.0',
     spatial: { mode: 'intersects' },
     where: [{ col: 'confidence', op: '>=', value: 0.5 }],
     columns: { include: ['id', 'confidence'] },
@@ -739,7 +739,7 @@ async function groupDownload() {
 
   await snippet('download-core/README', 'download() to GeoJSON', async () => {
     const sink = memorySink();
-    const handle = download(dataset, area, filter, { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'fields.geojson' }, { sink });
+    const handle = download(dataset, area, filter, { spec: 'cng-output/1.0', format: 'geojson', filename: 'fields.geojson' }, { sink });
 
     assert.equal(handle.state, 'planning'); // the handle exists before any await
 
@@ -767,7 +767,7 @@ async function groupDownload() {
       dataset,
       area,
       filter,
-      { spec: 'cnmw-output/1.0', format: 'geoparquet', filename: 'fields.parquet' },
+      { spec: 'cng-output/1.0', format: 'geoparquet', filename: 'fields.parquet' },
       { sink },
     ).result;
 
@@ -793,14 +793,14 @@ async function groupDownload() {
       dataset,
       area,
       filter,
-      { spec: 'cnmw-output/1.0', format: 'geoparquet', options: { compression: 'zstd' } },
+      { spec: 'cng-output/1.0', format: 'geoparquet', options: { compression: 'zstd' } },
       { sink: memorySink() },
     );
     await assert.rejects(handle.result, (e) => e.code === 'FORMAT_CAPABILITY');
   });
 
   await snippet('download-core/README', 'an unregistered format refuses by name', async () => {
-    const handle = download(dataset, area, filter, { spec: 'cnmw-output/1.0', format: 'gpkg' }, { sink: memorySink() });
+    const handle = download(dataset, area, filter, { spec: 'cng-output/1.0', format: 'gpkg' }, { sink: memorySink() });
     await assert.rejects(handle.result, (e) => e.code === 'FORMAT_UNAVAILABLE');
   });
 
@@ -809,7 +809,7 @@ async function groupDownload() {
     // wait (which is what it used to do, forever -- the 2026-11-12 §3.4
     // "blocked handles reject" amendment). The error carries the estimate,
     // so a caller who only ever awaits `result` still gets the numbers.
-    const blocked = download(dataset, area, filter, { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink(), ceiling: { rows: 10 } });
+    const blocked = download(dataset, area, filter, { spec: 'cng-output/1.0', format: 'geojson' }, { sink: memorySink(), ceiling: { rows: 10 } });
     const err = await blocked.result.then(() => null, (e) => e);
     assert.equal(err.code, 'CEILING_EXCEEDED');
     assert.deepEqual(err.context.breaches, ['rows']);
@@ -825,7 +825,7 @@ async function groupDownload() {
     // (2) Accepted from the 'ceiling' event -- the auditable override.
     // `acceptCeiling()` returns the continued run's promise, because the
     // one above has already rejected.
-    const accepted = download(dataset, area, filter, { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink(), ceiling: { rows: 10 } });
+    const accepted = download(dataset, area, filter, { spec: 'cng-output/1.0', format: 'geojson' }, { sink: memorySink(), ceiling: { rows: 10 } });
     const continued = await new Promise((resolve) => {
       accepted.on('ceiling', () => resolve(accepted.acceptCeiling()));
     });
@@ -833,17 +833,17 @@ async function groupDownload() {
     assert.equal((await accepted.result).rows, 769); // `result` returns the same promise now
 
     // (3) Or pre-accepted, when a caller has already decided: never blocks.
-    const preAccepted = download(dataset, area, filter, { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink(), ceiling: { rows: 10 }, acceptCeiling: true });
+    const preAccepted = download(dataset, area, filter, { spec: 'cng-output/1.0', format: 'geojson' }, { sink: memorySink(), ceiling: { rows: 10 }, acceptCeiling: true });
     assert.equal((await preAccepted.result).rows, 769);
     return 'blocked -> result rejects CEILING_EXCEEDED; acceptCeiling() returns the continued run';
   });
 
   await snippet('download-core/README', 'downloadRequest() runs a serialized DownloadRequest', async () => {
     const request = {
-      spec: 'cnmw-request/1.0',
+      spec: 'cng-request/1.0',
       dataset,
       filter: { ...filter, area: toAreaDocument(area), limit: 25 },
-      output: { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'fields.geojson' },
+      output: { spec: 'cng-output/1.0', format: 'geojson', filename: 'fields.geojson' },
       generator: { name: 'docs/verify-snippets.mjs', version: '0.1.0', at: new Date().toISOString() },
     };
     // The Area travels inside the request, so the second argument is null.
@@ -854,7 +854,7 @@ async function groupDownload() {
   });
 
   await snippet('download-core/README', 'progress events', async () => {
-    const handle = download(dataset, area, filter, { spec: 'cnmw-output/1.0', format: 'geojson' }, { sink: memorySink() });
+    const handle = download(dataset, area, filter, { spec: 'cng-output/1.0', format: 'geojson' }, { sink: memorySink() });
     const phases = new Set();
     handle.on('progress', (p) => phases.add(p.phase));
     handle.on('estimate', (e) => phases.add(`estimate:${e.rows.max}`));
@@ -913,7 +913,7 @@ async function groupDownload() {
 
   await snippet('download-core/README', 'resolveDataset(): a Portolan collection -> a concrete descriptor', async () => {
     const resolved = await resolveDataset({
-      spec: 'cnmw-dataset/1.0',
+      spec: 'cng-dataset/1.0',
       id: 'firms-detections',
       source: { kind: 'portolan-collection', url: FIRMS_COLLECTION_URL },
     });
@@ -934,7 +934,7 @@ async function groupDownload() {
 
   await snippet('download-core/README', 'stac-geoparquet is recognized from table:columns', async () => {
     const resolved = await resolveDataset({
-      spec: 'cnmw-dataset/1.0',
+      spec: 'cng-dataset/1.0',
       source: { kind: 'portolan-collection', url: S2_COLLECTION_URL },
     });
     assert.equal(resolved.source.kind, 'stac-geoparquet');
@@ -970,10 +970,10 @@ async function groupDownload() {
 
   await snippet('download-core/README', 'every error carries a stable code', async () => {
     const handle = download(
-      { spec: 'cnmw-dataset/1.0', source: { kind: 'parquet', url: 'https://data.source.coop/does-not-exist-404.parquet' } },
+      { spec: 'cng-dataset/1.0', source: { kind: 'parquet', url: 'https://data.source.coop/does-not-exist-404.parquet' } },
       null,
-      { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } },
-      { spec: 'cnmw-output/1.0', format: 'geojson' },
+      { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } },
+      { spec: 'cng-output/1.0', format: 'geojson' },
       { sink: memorySink() },
     );
     await assert.rejects(handle.result, (err) => {
@@ -1114,17 +1114,17 @@ async function groupAgents() {
 
   await snippet('AGENTS.md', 'recipe 3a: DownloadRequest for a single GeoParquet file', async () => {
     const request = {
-      spec: 'cnmw-request/1.0',
+      spec: 'cng-request/1.0',
       dataset: ftwLiechtensteinDescriptor(),
       filter: {
-        spec: 'cnmw-filter/1.0',
+        spec: 'cng-filter/1.0',
         area: { ref: 'area' },
         spatial: { mode: 'intersects' },
         where: [{ col: 'confidence', op: '>=', value: 0.9 }],
         columns: { include: ['id', 'confidence'] },
         limit: 50,
       },
-      output: { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'ftw-liechtenstein.geojson' },
+      output: { spec: 'cng-output/1.0', format: 'geojson', filename: 'ftw-liechtenstein.geojson' },
     };
     const est = await estimate(request.dataset, area, request.filter);
     assert.ok(est.rows.max > 0);
@@ -1134,12 +1134,12 @@ async function groupAgents() {
 
   await snippet('AGENTS.md', 'recipe 3b: DownloadRequest for a hive-partitioned table', async () => {
     const dataset = await resolveDataset({
-      spec: 'cnmw-dataset/1.0',
+      spec: 'cng-dataset/1.0',
       id: 'firms-detections',
       source: { kind: 'portolan-collection', url: FIRMS_COLLECTION_URL },
     });
     const filter = {
-      spec: 'cnmw-filter/1.0',
+      spec: 'cng-filter/1.0',
       area: { ref: 'area' },
       spatial: { mode: 'intersects' },
       time: { column: 'acq_datetime', start: '2026-09-01T00:00:00Z', end: '2026-09-08T00:00:00Z', closed: '[)' },
@@ -1162,13 +1162,13 @@ async function groupAgents() {
 
   await snippet('AGENTS.md', 'recipe 3c: DownloadRequest for STAC-GeoParquet footprints', async () => {
     const dataset = await resolveDataset({
-      spec: 'cnmw-dataset/1.0',
+      spec: 'cng-dataset/1.0',
       id: 'sentinel-2-c1-l2a',
       source: { kind: 'portolan-collection', url: S2_COLLECTION_URL },
     });
     assert.equal(dataset.source.kind, 'stac-geoparquet');
     const filter = {
-      spec: 'cnmw-filter/1.0',
+      spec: 'cng-filter/1.0',
       area: { ref: 'area' },
       spatial: { mode: 'intersects' },
       time: { start: '2025-06-01T00:00:00Z', end: '2025-06-08T00:00:00Z', closed: '[)' },
@@ -1197,11 +1197,11 @@ async function groupAgents() {
   await snippet('AGENTS.md', 'recipe 4: run a download, handling the estimate and the ceiling', async () => {
     const dataset = ftwLiechtensteinDescriptor();
     const filter = {
-      spec: 'cnmw-filter/1.0',
+      spec: 'cng-filter/1.0',
       spatial: { mode: 'intersects' },
       columns: { include: ['id', 'confidence'] },
     };
-    const output = { spec: 'cnmw-output/1.0', format: 'geojson', filename: 'fields.geojson' };
+    const output = { spec: 'cng-output/1.0', format: 'geojson', filename: 'fields.geojson' };
 
     // Deliberately tiny ceiling, so the refusal path actually runs.
     const sink = memorySink();
@@ -1242,7 +1242,7 @@ async function groupAgents() {
       { name: 'box.geojson' },
     );
     const est = await estimate(ftwLiechtensteinDescriptor(), uploaded, {
-      spec: 'cnmw-filter/1.0',
+      spec: 'cng-filter/1.0',
       spatial: { mode: 'intersects' },
     });
     assert.ok(est.rows.max > 0);

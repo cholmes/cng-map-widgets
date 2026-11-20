@@ -136,7 +136,7 @@ export function createDrawTool(map, options = {}) {
   const tools = options.tools ?? ['rectangle', 'viewport'];
   const names = options.names ?? {};
 
-  const sourceId = options.id ? `${options.id}-preview` : 'cnmw-draw-preview';
+  const sourceId = options.id ? `${options.id}-preview` : 'cng-draw-preview';
   const fillLayerId = `${sourceId}-fill`;
   const lineLayerId = `${sourceId}-line`;
   const vertexLayerId = `${sourceId}-vertex`;

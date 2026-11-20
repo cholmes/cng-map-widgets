@@ -568,7 +568,7 @@ natural place to emit it (see §5.3).
 // @cng/spec — dataset.ts
 
 export interface DatasetDescriptor {
-  readonly spec: 'cnmw-dataset/1.0';
+  readonly spec: 'cng-dataset/1.0';
   /** Stable id for caching resolved descriptors and correlating estimates. */
   readonly id?: string;
   readonly title?: string;
@@ -740,7 +740,7 @@ export interface ColumnDescriptor {
 // @cng/spec — filter.ts
 
 export interface FilterSpec {
-  readonly spec: 'cnmw-filter/1.0';
+  readonly spec: 'cng-filter/1.0';
 
   /** The area. Inline `AreaDocument` keeps a DownloadRequest self-contained;
    *  `{ ref: 'area' }` means the runtime supplies it (the common case in a
@@ -846,7 +846,7 @@ export interface ColumnProjection {
 
 ```ts
 export interface OutputRequest {
-  readonly spec: 'cnmw-output/1.0';
+  readonly spec: 'cng-output/1.0';
   /** Format plugin id. `geojson` and `geoparquet` are in core; `gpkg`,
    *  `flatgeobuf`, `csv`, `duckdb` come from plugins. */
   readonly format: string;
@@ -855,7 +855,7 @@ export interface OutputRequest {
 }
 
 export interface DownloadRequest {
-  readonly spec: 'cnmw-request/1.0';
+  readonly spec: 'cng-request/1.0';
   readonly dataset: DatasetDescriptor;
   readonly filter: FilterSpec;
   readonly output: OutputRequest;
@@ -937,9 +937,9 @@ only, as GeoPackage.
 
 ```json
 {
-  "spec": "cnmw-request/1.0",
+  "spec": "cng-request/1.0",
   "dataset": {
-    "spec": "cnmw-dataset/1.0",
+    "spec": "cng-dataset/1.0",
     "id": "ftw-fields-nl",
     "title": "Fields of The World — field boundaries (Netherlands)",
     "source": {
@@ -965,7 +965,7 @@ only, as GeoPackage.
     ]
   },
   "filter": {
-    "spec": "cnmw-filter/1.0",
+    "spec": "cng-filter/1.0",
     "area": { "ref": "area" },
     "spatial": { "mode": "intersects" },
     "where": [
@@ -976,7 +976,7 @@ only, as GeoPackage.
     "requires": []
   },
   "output": {
-    "spec": "cnmw-output/1.0",
+    "spec": "cng-output/1.0",
     "format": "gpkg",
     "filename": "ftw-fields-contra-costa.gpkg",
     "options": { "layerName": "fields", "spatialIndex": true }
@@ -999,9 +999,9 @@ This is the real `firms-catalog` collection: 631M rows across
 
 ```json
 {
-  "spec": "cnmw-request/1.0",
+  "spec": "cng-request/1.0",
   "dataset": {
-    "spec": "cnmw-dataset/1.0",
+    "spec": "cng-dataset/1.0",
     "id": "firms-detections",
     "title": "FIRMS active fire detections",
     "source": {
@@ -1032,7 +1032,7 @@ This is the real `firms-catalog` collection: 631M rows across
     ]
   },
   "filter": {
-    "spec": "cnmw-filter/1.0",
+    "spec": "cng-filter/1.0",
     "area": { "ref": "area" },
     "spatial": { "mode": "intersects" },
     "time": {
@@ -1049,7 +1049,7 @@ This is the real `firms-catalog` collection: 631M rows across
     "requires": []
   },
   "output": {
-    "spec": "cnmw-output/1.0",
+    "spec": "cng-output/1.0",
     "format": "geoparquet",
     "filename": "firms-aug-2026.parquet",
     "options": { "compression": "zstd", "compressionLevel": 9, "writeCovering": true }
@@ -1079,9 +1079,9 @@ Pruning cascade, in order, each stage reported in the estimate:
 
 ```json
 {
-  "spec": "cnmw-request/1.0",
+  "spec": "cng-request/1.0",
   "dataset": {
-    "spec": "cnmw-dataset/1.0",
+    "spec": "cng-dataset/1.0",
     "id": "sentinel-2-c1-l2a",
     "title": "Sentinel-2 C1 L2A — STAC item footprints",
     "source": {
@@ -1112,7 +1112,7 @@ Pruning cascade, in order, each stage reported in the estimate:
     ]
   },
   "filter": {
-    "spec": "cnmw-filter/1.0",
+    "spec": "cng-filter/1.0",
     "area": { "ref": "area" },
     "spatial": { "mode": "intersects" },
     "time": { "start": "2025-06-01T00:00:00Z", "end": "2025-09-01T00:00:00Z", "closed": "[)" },
@@ -1125,7 +1125,7 @@ Pruning cascade, in order, each stage reported in the estimate:
     "requires": []
   },
   "output": {
-    "spec": "cnmw-output/1.0",
+    "spec": "cng-output/1.0",
     "format": "geojson",
     "filename": "s2-footprints-kenya-summer-2025.geojson",
     "options": { "precision": 6, "featureIdColumn": "id" }
@@ -1181,9 +1181,9 @@ npm scope **`@cng`** (cloud-native geospatial). Short matters here: these
 specifiers appear verbatim in CDN import URLs in every example, and
 `@cloud-native-map-widgets/download-core` makes a 90-character import line.
 
-*Amended 2026-11-17 (was `@cnmw`):* [O1](#7-open-items) is resolved. `@cng`
+*Amended 2026-11-17 (was `@cng`):* [O1](#7-open-items) is resolved. `@cng`
 is both short and expands to a term with currency in this community, where
-`cnmw` expanded to nothing on sight. Deliberately **not** matched to the repo
+`cng` expanded to nothing on sight. Deliberately **not** matched to the repo
 name `cng-map-widgets`: `@cng-map-widgets/download-core` is 31 characters, and
 "map-widgets" is wrong for `spec`, `download-core` and the `format-*`
 packages, which are not map widgets.
@@ -3940,7 +3940,7 @@ An adapter adds exactly five things:
    > mounted in MapLibre's bottom-left control corner / OL's stop-event
    > overlay container and removed on `onRemove`/`setMap(null)`.
    > `showAttribution: false` still suppresses it entirely. The pill
-   > content element keeps the `.cnmw-attribution` class, so existing
+   > content element keeps the `.cng-attribution` class, so existing
    > assertions on its text keep working.
 
    The default option renderer (overridable via
@@ -4495,8 +4495,8 @@ existed.
 must agree:
 
 1. the manifest's `catalog_version`;
-2. the index parquet's footer key-value metadata (`cnmw:catalog_version`);
-3. every boundary file's footer key-value metadata (`cnmw:catalog_version`).
+2. the index parquet's footer key-value metadata (`cng:catalog_version`);
+3. every boundary file's footer key-value metadata (`cng:catalog_version`).
 
 `select()` reads the boundary file's footer anyway — it needs the row-group
 offsets — so the check is free. On mismatch: `INDEX_VERSION_MISMATCH` carrying
@@ -4563,7 +4563,7 @@ background while they were still reading the dropdown.
 - a **separate display-simplified file** per level, same row order, same
   `shapeID`, same `catalog_version` — so `resolution: 'both'` is two range
   reads at the same row index, not a join;
-- `cnmw:catalog_version` in the footer metadata of each.
+- `cng:catalog_version` in the footer metadata of each.
 
 ---
 
@@ -4575,7 +4575,7 @@ implementation.
 
 | # | item | blocked on | **default I'd pick** |
 |---|---|---|---|
-| **O1** ✅ | npm scope. `@cnmw` is short (matters in CDN URLs) but cryptic; availability unverified. | an `npm view` check and Chris's preference | **RESOLVED 2026-11-17: `@cng`.** Registry checked — zero published packages under `@cnmw` *or* `@cng`, so the choice was free. `@cng` is equally short and actually expands ("cloud-native geospatial"). Package *names* (`geocoder-core`, `download-core`, …) were settled either way. |
+| **O1** ✅ | npm scope. `@cng` is short (matters in CDN URLs) but cryptic; availability unverified. | an `npm view` check and Chris's preference | **RESOLVED 2026-11-17: `@cng`.** Registry checked — zero published packages under `@cng` *or* `@cng`, so the choice was free. `@cng` is equally short and actually expands ("cloud-native geospatial"). Package *names* (`geocoder-core`, `download-core`, …) were settled either way. |
 | **O2** | `filterVertexCeiling = 10,000`. | E5 measuring per-row point-in-polygon cost at 1k/10k/50k vertices against a real FTW/FIRMS download | **10,000.** Raise it if E5 shows the cost is negligible; the mechanism (auto-simplify + reported `areaDeltaRatio`) does not change either way. |
 | **O3** | ~~`loadStrategy: 'auto'` threshold, 5 MB.~~ **Resolved by E1.** | — | **5 MB, confirmed.** E1: the 2.50 MB index full-loads in 203 ms (8 ms fetch + 196 ms decode, localhost) and answers warm keystrokes in 0.0–0.1 ms; the range path adds round trips for no benefit at this size. Extrapolated, a 300K-row index is ~16 MB and would full-load in ~1.2 s, already past the cold budget — so 5 MB sits correctly between the two. **Residual unknown:** E1's cold number is localhost; the 1 s budget is "on broadband", so the real cold-focus fetch of 2.5 MB over the public path is still unmeasured. Default stands; re-check in E6 against source.coop. |
 | **O4** | ~~Whether `searchSync` is worth its API surface.~~ **Resolved by E1.** | — | **Ship it.** E1 measured warm full-load search at **0.0 ms p50, 0.1 ms p95** — a binary search over an in-memory array. At that cost the promise is not an optimization detail, it *is* the per-keystroke cost, and an `await` per keystroke also forces the caller's render into a later microtask. Keep the `state`-guarded throw. |
@@ -4585,7 +4585,7 @@ implementation.
 | **O8** | Default `ceiling` numbers (5M rows / 2 GiB output / 500 files). | E5/E6 observing what a plausible FIRMS-month or S2-year request actually produces | **As tabled.** They are deliberately generous: the ceiling's job is to stop the accident, not to second-guess the user, and `acceptCeiling()` is one call away. |
 | **O9** | Partition enumeration where no `collection-mirror` exists and `item` links number in the hundreds (fieldmaps' 518 per-country collections is the live example). | E7 hitting it | **`stac-items` with a bounded concurrency of 8 and a hard cap of 200 item fetches**, above which the estimate reports `files.total` as unknown and pruning falls back to glob-expansion by declared `PartitionKey.values`. Also: advocate for `collection-mirror` as a Portolan best practice — it is the right fix, and it belongs upstream. |
 | **O10** | Multilingual rows in the default index (`name_lang`, `alt_of`). | E8, and design call #11's licensing question (Chris flagged it) | **Columns reserved in the schema now, unpopulated in the default CC-BY index.** Reserving them costs nothing; adding columns later forces an index-version bump and a geocoder release. The ODbL-enriched index is a separate artifact at a separate URL with `share_alike: true` attribution that the adapter is required to surface. |
-| **O11** | `@cng/spec` as a hard singleton. If two packages on one page resolve different `spec` versions, `instanceof` checks and `Area` validation diverge. | nothing — it is a design choice to make now | **Runtime guard:** `spec` registers itself on `globalThis[Symbol.for('cnmw.spec')]` with its version; a second, different version logs one loud warning and the later loader defers to the first for the validators. Ugly, and the only thing that actually catches this in a zero-build page. |
+| **O11** | `@cng/spec` as a hard singleton. If two packages on one page resolve different `spec` versions, `instanceof` checks and `Area` validation diverge. | nothing — it is a design choice to make now | **Runtime guard:** `spec` registers itself on `globalThis[Symbol.for('cng.spec')]` with its version; a second, different version logs one loud warning and the later loader defers to the first for the validators. Ugly, and the only thing that actually catches this in a zero-build page. |
 | **O12** | Whether `estimate()` should ever read data pages. Metadata-only is cheap and honest; it makes row estimates wide (`Bounded.exact: false`) when predicate selectivity is unknown. | E5 measuring how wide "wide" is on real requests | **Metadata-only, with an opt-in `sample: { rowGroups: 1 }`** that reads one admitted row group to calibrate selectivity. Report `estimate-wide` when `max/estimate > 10` so the UI can say "between 2,000 and 400,000 rows" instead of pretending to know. |
 | **O13** | deck.gl adapter. `PLAN.md` leaves it open; `portolan-browser` has deck.gl. | E7 finding MapLibre's GeoJSON source insufficient for a large outline | **Not now.** `addAreaLayer` on a MapLibre GeoJSON source handles one outline at the display vertex ceiling. A `@cng/deckgl` adapter is additive and needs no core change. |
 

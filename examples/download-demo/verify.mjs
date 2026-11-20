@@ -112,7 +112,7 @@ console.log('\n=== PART 0: skip estimate -- search then straight to download ===
   await page0.check('#formatPicker input[value="geojson"]');
   await page0.click('#downloadBtn'); // the Estimate button is never clicked in this whole PART
   await page0.waitForFunction(() => (document.getElementById('downloadInfo')?.textContent ?? '').startsWith('Done:'), undefined, { timeout: 60_000 });
-  const skipResult = await page0.evaluate(() => window.__cnmwLastResult);
+  const skipResult = await page0.evaluate(() => window.__cngLastResult);
   console.log('PART 0 download result:', await page0.textContent('#downloadInfo'));
   check(!!skipResult?.rows, `skip-estimate download produced rows (${skipResult?.rows ?? 'none'})`);
 
@@ -248,7 +248,7 @@ for (const fmt of FORMATS) {
   const loadError = await page.textContent('#formatLoadError');
   console.log(`${fmt.id} download info:`, downloadInfo, loadError ? `| formatLoadError: ${loadError}` : '');
 
-  const result = await page.evaluate(() => window.__cnmwLastResult ?? null);
+  const result = await page.evaluate(() => window.__cngLastResult ?? null);
   check(!!result?.rows, `${fmt.id}: download produced rows (${result?.rows ?? 'none'})`);
   check(result?.format === fmt.id, `${fmt.id}: result.format matches (${result?.format})`);
   results[fmt.id] = result;
@@ -415,7 +415,7 @@ console.log('\n=== PART 3: draw a box, then download it ===');
   await drawPage.waitForSelector('#drawBoxBtn', { timeout: 20_000 });
 
   await drawPage.click('#drawBoxBtn');
-  const armed = await drawPage.evaluate(() => window.__cnmwDownloadDemo.drawTool.armed);
+  const armed = await drawPage.evaluate(() => window.__cngDownloadDemo.drawTool.armed);
   check(armed === true, 'drawTool.armed is true after clicking "Draw box"');
   const armedBtnClass = await drawPage.$eval('#drawBoxBtn', (el) => el.className);
   check(/armed/.test(armedBtnClass), `"Draw box" button reflects the armed state (class="${armedBtnClass}")`);
@@ -437,8 +437,8 @@ console.log('\n=== PART 3: draw a box, then download it ===');
 
   await drawPage.mouse.move(x1, y1, { steps: 8 });
   await drawPage.mouse.up();
-  await drawPage.waitForFunction(() => window.__cnmwDownloadDemo.area?.provenance?.source === 'draw', undefined, { timeout: 15_000 });
-  const disarmedAfterDrag = await drawPage.evaluate(() => !window.__cnmwDownloadDemo.drawTool.armed);
+  await drawPage.waitForFunction(() => window.__cngDownloadDemo.area?.provenance?.source === 'draw', undefined, { timeout: 15_000 });
+  const disarmedAfterDrag = await drawPage.evaluate(() => !window.__cngDownloadDemo.drawTool.armed);
   check(disarmedAfterDrag, 'drawTool disarms itself once a non-degenerate rectangle is dragged out');
   const drawnAreaInfo = await drawPage.textContent('#areaInfo');
   console.log('areaInfo after draw:', drawnAreaInfo);
@@ -447,7 +447,7 @@ console.log('\n=== PART 3: draw a box, then download it ===');
   await drawPage.check('#formatPicker input[value="geojson"]');
   await drawPage.click('#downloadBtn');
   await drawPage.waitForFunction(() => (document.getElementById('downloadInfo')?.textContent ?? '').startsWith('Done:'), undefined, { timeout: 60_000 });
-  const drawResult = await drawPage.evaluate(() => window.__cnmwLastResult);
+  const drawResult = await drawPage.evaluate(() => window.__cngLastResult);
   console.log('PART 3 download result:', await drawPage.textContent('#downloadInfo'));
   check(!!drawResult?.rows, `drawn-box download produced rows (${drawResult?.rows ?? 'none'})`);
 
@@ -483,13 +483,13 @@ console.log('\n=== PART 4: edit a boundary, then prove the download changed ==='
   await editPage.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 5 });
   await editPage.mouse.move(x1, y1, { steps: 5 });
   await editPage.mouse.up();
-  await editPage.waitForFunction(() => window.__cnmwDownloadDemo.area?.provenance?.source === 'draw', undefined, { timeout: 15_000 });
+  await editPage.waitForFunction(() => window.__cngDownloadDemo.area?.provenance?.source === 'draw', undefined, { timeout: 15_000 });
 
   // Baseline: the un-edited drawn box.
   await editPage.check('#formatPicker input[value="geojson"]');
   await editPage.click('#downloadBtn');
   await editPage.waitForFunction(() => (document.getElementById('downloadInfo')?.textContent ?? '').startsWith('Done:'), undefined, { timeout: 60_000 });
-  const baselineResult = await editPage.evaluate(() => window.__cnmwLastResult);
+  const baselineResult = await editPage.evaluate(() => window.__cngLastResult);
   console.log('PART 4 baseline (un-edited drawn box) rows:', baselineResult?.rows);
   check(!!baselineResult?.rows, `baseline drawn-box download produced rows (${baselineResult?.rows ?? 'none'})`);
 
@@ -498,10 +498,10 @@ console.log('\n=== PART 4: edit a boundary, then prove the download changed ==='
   // vertex's screen pixel (project() otherwise reflects a mid-animation
   // camera that has moved again by the time the mouse gets there).
   await editPage.click('#editBtn');
-  await editPage.waitForFunction(() => !window.__cnmwDownloadDemo.map.isMoving(), undefined, { timeout: 10_000 });
+  await editPage.waitForFunction(() => !window.__cngDownloadDemo.map.isMoving(), undefined, { timeout: 10_000 });
 
   const vertices = await editPage.evaluate(() => {
-    const src = window.__cnmwDownloadDemo.map.getSource('cnmw-edit-vertices');
+    const src = window.__cngDownloadDemo.map.getSource('cng-edit-vertices');
     return src ? src._data.features.map((f) => ({ index: f.properties.index, coord: f.geometry.coordinates })) : null;
   });
   check(Array.isArray(vertices) && vertices.length === 4, `edit tool renders 4 vertex handles for the drawn rectangle (got ${vertices?.length})`);
@@ -524,10 +524,10 @@ console.log('\n=== PART 4: edit a boundary, then prove the download changed ==='
   const target = [v2[0] * 0.25 + center[0] * 0.75, v2[1] * 0.25 + center[1] * 0.75];
 
   const containerOrigin = await editPage.evaluate(() => {
-    const r = window.__cnmwDownloadDemo.map.getContainer().getBoundingClientRect();
+    const r = window.__cngDownloadDemo.map.getContainer().getBoundingClientRect();
     return { x: r.x, y: r.y };
   });
-  const project = (coord) => editPage.evaluate((c) => window.__cnmwDownloadDemo.map.project(c), coord);
+  const project = (coord) => editPage.evaluate((c) => window.__cngDownloadDemo.map.project(c), coord);
   const p2 = await project(v2);
   const pTarget = await project(target);
   const startX = containerOrigin.x + p2.x, startY = containerOrigin.y + p2.y;
@@ -535,7 +535,7 @@ console.log('\n=== PART 4: edit a boundary, then prove the download changed ==='
 
   await editPage.mouse.move(startX, startY);
   await editPage.mouse.down();
-  const cursorOnVertexDown = await editPage.evaluate(() => window.__cnmwDownloadDemo.map.getCanvas().style.cursor);
+  const cursorOnVertexDown = await editPage.evaluate(() => window.__cngDownloadDemo.map.getCanvas().style.cursor);
   check(cursorOnVertexDown === 'grabbing', `mousedown on the vertex handle starts a drag (cursor="${cursorOnVertexDown}")`);
   await editPage.mouse.move((startX + endX) / 2, (startY + endY) / 2, { steps: 8 });
   await editPage.mouse.move(endX, endY, { steps: 8 });
@@ -548,14 +548,14 @@ console.log('\n=== PART 4: edit a boundary, then prove the download changed ==='
 
   // Finish editing -- commits the edited Area as `area`, re-fits the camera.
   await editPage.click('#editBtn');
-  await editPage.waitForFunction(() => !window.__cnmwDownloadDemo.map.isMoving(), undefined, { timeout: 10_000 });
-  const editedProvenance = await editPage.evaluate(() => window.__cnmwDownloadDemo.area?.provenance);
+  await editPage.waitForFunction(() => !window.__cngDownloadDemo.map.isMoving(), undefined, { timeout: 10_000 });
+  const editedProvenance = await editPage.evaluate(() => window.__cngDownloadDemo.area?.provenance);
   check(editedProvenance?.source === 'edited', `the finished Area's provenance.source is "edited" (got "${editedProvenance?.source}")`);
   check(typeof editedProvenance?.edited?.parentAreaId === 'string', 'provenance.edited keeps the parent Area id');
 
   await editPage.click('#downloadBtn');
   await editPage.waitForFunction(() => (document.getElementById('downloadInfo')?.textContent ?? '').startsWith('Done:') || (document.getElementById('downloadInfo')?.textContent ?? '').startsWith('Error'), undefined, { timeout: 60_000 });
-  const editedResult = await editPage.evaluate(() => window.__cnmwLastResult);
+  const editedResult = await editPage.evaluate(() => window.__cngLastResult);
   console.log('PART 4 edited-area download result:', await editPage.textContent('#downloadInfo'));
 
   // THE proof: a real, strictly-smaller row count after an edit that

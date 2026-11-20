@@ -88,8 +88,8 @@ import { fileSystemSink } from '/packages/download-core/src/sinks.js';
 import { boundedExact } from '/packages/download-core/src/bounded.js';
 import { defaultCeiling } from '/packages/download-core/src/ceiling.js';
 
-const DATASET = { spec: 'cnmw-dataset/1.0', source: { kind: 'parquet', url: 'https://example.test/d.parquet' } };
-const FILTER = { spec: 'cnmw-filter/1.0', spatial: { mode: 'bbox' } };
+const DATASET = { spec: 'cng-dataset/1.0', source: { kind: 'parquet', url: 'https://example.test/d.parquet' } };
+const FILTER = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } };
 
 const PLAN = {
   geometryColumn: 'geometry',
@@ -176,7 +176,7 @@ async function clearOpfs() {
 async function happyPath(format, filename) {
   const handle = await opfsHandle(filename);
   const sink = await fileSystemSink({ handle });
-  const h = download(DATASET, null, FILTER, { spec: 'cnmw-output/1.0', format, filename }, {
+  const h = download(DATASET, null, FILTER, { spec: 'cng-output/1.0', format, filename }, {
     engine: fakeEngine(), sink, estimateOverride: estimate(),
   });
   const result = await h.result;
@@ -187,7 +187,7 @@ async function happyPath(format, filename) {
 async function ceilingAccept(format, filename) {
   const handle = await opfsHandle(filename);
   const sink = await fileSystemSink({ handle });
-  const h = download(DATASET, null, FILTER, { spec: 'cnmw-output/1.0', format, filename }, {
+  const h = download(DATASET, null, FILTER, { spec: 'cng-output/1.0', format, filename }, {
     engine: fakeEngine(), sink,
     estimateOverride: estimate({ ceiling: { exceeded: true, limits: defaultCeiling(), breaches: ['rows'] } }),
   });
@@ -217,7 +217,7 @@ async function pauseResume(format, filename) {
       }
     },
   });
-  h = download(DATASET, null, FILTER, { spec: 'cnmw-output/1.0', format, filename }, {
+  h = download(DATASET, null, FILTER, { spec: 'cng-output/1.0', format, filename }, {
     engine, sink, estimateOverride: estimate(),
   });
   const result = await h.result;
@@ -236,7 +236,7 @@ async function cancelThenRedownload(format, filename) {
     // in here would deadlock the test, not the library.
     between: (b) => { if (b === 0) h1.cancel('verify cancel'); },
   });
-  h1 = download(DATASET, null, FILTER, { spec: 'cnmw-output/1.0', format, filename }, {
+  h1 = download(DATASET, null, FILTER, { spec: 'cng-output/1.0', format, filename }, {
     engine, sink: firstSink, estimateOverride: estimate(),
   });
   try { await h1.result; } catch { /* cancelled, expected */ }
@@ -273,7 +273,7 @@ async function commitDiscipline(format, filename, batches) {
     },
   };
   const sink = await fileSystemSink({ handle });
-  const h = download(DATASET, null, FILTER, { spec: 'cnmw-output/1.0', format, filename }, {
+  const h = download(DATASET, null, FILTER, { spec: 'cng-output/1.0', format, filename }, {
     engine: fakeEngine({ batches }), sink, estimateOverride: estimate(),
   });
   const result = await h.result;

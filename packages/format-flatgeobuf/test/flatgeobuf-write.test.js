@@ -46,7 +46,7 @@ async function writeToTmpFile(batches, options = {}) {
   const writer = await format.open(ctx);
   for (const batch of batches) await writer.writeBatch(batch);
   const result = await writer.close();
-  const dir = mkdtempSync(join(tmpdir(), 'cnmw-fgb-'));
+  const dir = mkdtempSync(join(tmpdir(), 'cng-fgb-'));
   const path = join(dir, 'out.fgb');
   writeFileSync(path, Buffer.from(written));
   return { ...result, path };
