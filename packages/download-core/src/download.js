@@ -5,12 +5,13 @@
 
 import { CngError, CancelledError, CeilingExceededError, fromAreaDocument } from '@cng/spec';
 import { Emitter, LatestWinsStream } from './events.js';
-import { planRequest, finalizeEstimate } from './estimate.js';
+import { planRequest, finalizeEstimate, schemaFor } from './estimate.js';
 import { createHyparquetEngine } from './engine-hyparquet.js';
-import { resolveFormat, getFormat, formatLoadState } from './registry.js';
+import { resolveFormat, getFormat, formatLoadState, formats } from './registry.js';
 import { createGeoJsonFormat } from './formats/geojson.js';
 import { createGeoParquetFormat } from './formats/geoparquet.js';
 import { autoSink } from './sinks.js';
+import { effectiveCeiling } from './ceiling.js';
 
 /** Fallback when a caller imports download.js directly without index.js's default registration. */
 function builtinFormat(id) {
@@ -25,9 +26,44 @@ function generateHandleId() {
   return `dl_${Date.now().toString(36)}${idCounter.toString(36)}`;
 }
 
-function schemaFor(plan) {
-  const declared = new Map((plan.table.columns ?? []).map((c) => [c.name, c]));
-  return plan.outputColumns.map((name) => declared.get(name) ?? { name, type: 'unknown' });
+/**
+ * Registered formats whose OWN effective ceiling would accommodate this
+ * plan -- the lever `CeilingExceededError.context.suggestedFormats` names
+ * (design doc §7.3's example: "GeoParquet and GeoJSON ... have no such
+ * limit"). Runs each candidate's SYNCHRONOUS `estimateBytes` against the
+ * same plan/schema the breaching format used, and compares it to THAT
+ * candidate's own `effectiveCeiling` -- never the breaching format's
+ * `outputBytes` against another format's ceiling, which gives wrong
+ * answers whenever formats differ in size by more than their memory
+ * factors (the normal case). `formats()` lists a lazy descriptor without
+ * loading it, and `LazyFormatDescriptor.estimateBytes` is documented to
+ * work without `load()`, so this never fetches anything. `getFormat(id)`
+ * is tried first so an eager (or already-loaded-lazy) format's real
+ * `estimateBytes` is used -- `formats()`'s own eager listing strips that
+ * field.
+ * @param {Awaited<ReturnType<typeof planRequest>>} plan
+ * @param {readonly { name: string, type: string }[]} schema
+ * @param {{ avgGeometryBytes: number|null, geometryColumn: string }} estimateCtx
+ * @param {{ kind: string }|null} sink
+ * @param {import('./types.js').DownloadCoreOptions['ceiling']} overrides
+ * @returns {string[]}
+ */
+function suggestedFormatsFor(plan, schema, estimateCtx, sink, overrides) {
+  const fits = [];
+  for (const entry of formats()) {
+    const candidate = getFormat(entry.id) ?? entry;
+    const candidateBytes = candidate.estimateBytes(schema, plan.rows, estimateCtx);
+    const candidateCeiling = effectiveCeiling({ format: candidate, sink, overrides });
+    if (
+      plan.rows.max <= candidateCeiling.rows &&
+      candidateBytes.max <= candidateCeiling.outputBytes &&
+      plan.readBytes.max <= candidateCeiling.readBytes &&
+      plan.selectedParts.length <= candidateCeiling.files
+    ) {
+      fits.push(entry.id);
+    }
+  }
+  return fits;
 }
 
 /**
@@ -88,6 +124,15 @@ export function download(dataset, area, filter, output, options = {}) {
   });
   estimatePromise.catch(() => {});
 
+  // Hoisted above `run()`'s `try` (not a `const` inside it) so the outer
+  // `catch` below can abort it: a sink created during planning (see its
+  // new creation point below) must still be cleaned up if anything after
+  // that point throws, including a cancel while blocked on the ceiling
+  // gate -- `sink.abort()` is a safe no-op before `sink.open()` has ever
+  // been called (sinks.js's `managedWritable` guards it), so this never
+  // risks aborting a commit that already happened.
+  let sink;
+
   async function run() {
     try {
       // One microtask tick before anything else: `download()` returns the
@@ -133,15 +178,21 @@ export function download(dataset, area, filter, output, options = {}) {
       // `estimateBytes`'s third argument (design doc §3.4, item-7
       // amendment) is additive: a plugin that ignores it keeps working,
       // and this is the number that flows into `est.outputBytes` and from
-      // there into both the `outputBytes` ceiling check inside
-      // `finalizeEstimate` and the `blobBytes` check just below.
+      // there into the `outputBytes` ceiling check inside
+      // `finalizeEstimate`.
       const estimateCtx = { avgGeometryBytes: plan.avgGeometryBytes ?? null, geometryColumn: plan.geometryColumn };
-      const est = options.estimateOverride ?? (await finalizeEstimate(plan, area, filter, { ...options, outputBytesOverride: format.estimateBytes(schema, plan.rows, estimateCtx) }));
 
-      if (!format.streaming && est.outputBytes.max > (options.ceiling?.blobBytes ?? 256 * 1024 ** 2)) {
-        est.ceiling.breaches = [...new Set([...est.ceiling.breaches, 'blobBytes'])];
-        est.ceiling.exceeded = true;
-      }
+      // Design doc §7.8: the sink is created BEFORE the ceiling gate (it
+      // used to be created after), so `effectiveCeiling` (inside
+      // `finalizeEstimate`, via `options.sink` below) sees the REAL sink
+      // kind instead of guessing one -- guessing 'filesystem' while
+      // `autoSink` silently fell back to `blobSink` would have been
+      // exactly the anti-goal this ceiling exists to avoid. The cost is
+      // that a save dialog can now appear just before a refusal; that is
+      // recoverable, since `acceptCeiling()` continues on the same handle.
+      sink = options.sink ?? (await autoSink({ suggestedName: output.filename }));
+
+      const est = options.estimateOverride ?? (await finalizeEstimate(plan, area, filter, { ...options, output, sink, formatOverride: format, outputBytesOverride: format.estimateBytes(schema, plan.rows, estimateCtx) }));
 
       resolveEstimate(est);
       estimateSettled = true;
@@ -162,10 +213,11 @@ export function download(dataset, area, filter, output, options = {}) {
         //    any `.catch()` observes this error, the synchronous
         //    `setState('blocked')` below has already happened and
         //    `handle.state` reads `'blocked'`, as a caller expects.
+        const suggestedFormats = suggestedFormatsFor(plan, schema, estimateCtx, sink, options.ceiling);
         current.reject(
           new CeilingExceededError(
             `Estimated ${est.rows.estimate.toLocaleString()} rows / ${est.outputBytes.estimate.toLocaleString()} output bytes exceeds the ceiling (${est.ceiling.breaches.join(', ')}). Call acceptCeiling() for the continued run, or cancel().`,
-            { context: { breaches: est.ceiling.breaches, limits: est.ceiling.limits, estimate: est } },
+            { context: { breaches: est.ceiling.breaches, limits: est.ceiling.limits, estimate: est, suggestedFormats } },
           ),
         );
         // The gate is armed *before* `setState`/`emit` so a handler that
@@ -186,7 +238,6 @@ export function download(dataset, area, filter, output, options = {}) {
       setState('running');
       emitter.emit('progress', { phase: 'planning' });
 
-      const sink = options.sink ?? (await autoSink({ suggestedName: output.filename }));
       const writer = await sink.open({
         filename: output.filename ?? `download.${format.extension}`,
         mediaType: format.mediaType,
@@ -278,6 +329,16 @@ export function download(dataset, area, filter, output, options = {}) {
         estimateSettled = true;
         rejectEstimate(cngErr);
       }
+      // Covers every throw from here on out that the inner (engine.run)
+      // catch does not already handle -- planning failing after the sink
+      // was created, and a cancel while blocked on the ceiling gate among
+      // them. Safe even when `sink` was never assigned (planning failed
+      // before reaching its creation) or `sink.open()` was never called
+      // (blocked/cancelled before `setState('running')`): `sink.abort()`
+      // is a no-op in both cases (sinks.js's `managedWritable` guard), so
+      // this can never abort a commit that already happened, nor double
+      // an abort the inner catch already performed.
+      await sink?.abort(cancelReason ?? cngErr.message);
       // A no-op when the ceiling gate already rejected this deferred and
       // the caller then cancelled instead of accepting: the handle's
       // `state` becomes `'cancelled'`, but the promise a caller is holding

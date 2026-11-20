@@ -196,7 +196,7 @@ test('the geometry term reaches Estimate.outputBytes through download()', async 
   assert.deepEqual(est.outputBytes, expected);
 });
 
-test('the improved outputBytes is what the outputBytes and blobBytes ceilings check', async () => {
+test('the improved outputBytes is what the outputBytes ceiling checks, for a streaming or a buffering format', async () => {
   const hosted = await openFakeHostedParquet({ groups: 4, rowsPerGroup: 25 });
   const { rangeFetch } = await import('./helpers/fake-parquet-host.js');
   const fetchImpl = rangeFetch(hosted.bytes);
@@ -221,16 +221,23 @@ test('the improved outputBytes is what the outputBytes and blobBytes ceilings ch
   assert.ok(blockedEst.ceiling.breaches.includes('outputBytes'));
   await blocked.cancel('done asserting');
 
-  // Same for the non-streaming blobBytes check, which reads
-  // `est.outputBytes.max` directly in download.js.
-  const blobBlocked = download(dataset, null, filter, { spec: 'cng-output/1.0', format: 'geoparquet' }, {
+  // Same idea for a non-streaming (buffering) format, but through the
+  // lever that replaced the old hardcoded `!format.streaming &&
+  // outputBytes.max > blobBytes` check download.js used to apply by hand
+  // (task 4, design doc §7.3/§7.8): a buffering format's own ceiling is
+  // `memoryBudget / memoryFactor`, regardless of sink. `geoparquet`
+  // declares `memoryFactor: 2`, so a tiny `memoryBudget` forces a ceiling
+  // far below its real output and must breach on `outputBytes` -- there
+  // is no separate `blobBytes` breach code to check for anymore.
+  const bufferingBlocked = download(dataset, null, filter, { spec: 'cng-output/1.0', format: 'geoparquet' }, {
     sink: memorySink(),
     fetch: fetchImpl,
-    ceiling: { blobBytes: 1_000 },
+    ceiling: { memoryBudget: 2_000 }, // -> outputBytes ceiling of floor(2_000 / 2) = 1,000
   });
-  const blobEst = await blobBlocked.estimate;
-  assert.ok(blobEst.ceiling.breaches.includes('blobBytes'));
-  await blobBlocked.cancel('done asserting');
+  const bufferingEst = await bufferingBlocked.estimate;
+  assert.ok(bufferingEst.ceiling.breaches.includes('outputBytes'));
+  assert.equal(bufferingEst.ceiling.limits.outputBytes, 1_000);
+  await bufferingBlocked.cancel('done asserting');
 });
 
 test('a dataset whose geometry column has no chunks still estimates (null avgGeometryBytes)', async () => {

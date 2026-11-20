@@ -8,7 +8,8 @@ import { enumeratePartitions, partitionPruneCascade } from './partitions.js';
 import { openParquetFile } from './parquet-io.js';
 import { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, readBytesForRowGroups, coveringPaths, avgColumnBytesPerRow } from './prune.js';
 import { resolveOutputColumns, resolveReadColumns, geometryNeededForFilter } from './columns.js';
-import { defaultCeiling, requirementsOf } from './ceiling.js';
+import { effectiveCeiling, requirementsOf } from './ceiling.js';
+import { getFormat } from './registry.js';
 import { boundedExact, boundedRange, sumBounded, capBounded, isEstimateWide } from './bounded.js';
 import { sha256Hex } from './digest.js';
 import { bboxesIntersect } from '@cng/spec';
@@ -289,6 +290,18 @@ function boxOverlapRatio(box, areaBBoxes) {
   return Math.min(1, overlapArea / boxArea);
 }
 
+/**
+ * Builds the `{name,type}[]` schema array a `FormatPlugin.estimateBytes`
+ * expects, from a resolved plan's declared table columns and its output
+ * projection. Exported so `download.js` reuses exactly this shape rather
+ * than recomputing it.
+ * @param {Awaited<ReturnType<typeof planRequest>>} plan
+ */
+export function schemaFor(plan) {
+  const declared = new Map((plan.table.columns ?? []).map((c) => [c.name, c]));
+  return plan.outputColumns.map((name) => declared.get(name) ?? { name, type: 'unknown' });
+}
+
 /** Generic, format-agnostic bytes-per-row model used when `estimate()` is called standalone (no `OutputRequest` -- see module doc). */
 function genericOutputBytesModel(plan) {
   const avgReadBytesPerRow = plan.maxRowsBeforeLimit > 0 ? plan.readBytes.estimate / plan.maxRowsBeforeLimit : 200;
@@ -329,16 +342,50 @@ export async function estimate(dataset, area, filter, options = {}) {
  * plan its engine already produced, with the *real* output format's
  * `estimateBytes` in place of the generic model (see module doc comment).
  *
+ * `options.output` (an `OutputSpec`) and `options.sink` (`{ kind: string
+ * }|null`) are both optional and additive (design doc §7.3/§7.8): when
+ * `output.format` names a format `getFormat` can resolve *synchronously*
+ * (already registered, or already loaded if it was lazy -- this never
+ * triggers a `load()`), the ceiling this function judges the plan against
+ * is `effectiveCeiling({ format, sink, overrides: options.ceiling })`
+ * instead of one flat default, and -- absent an explicit
+ * `outputBytesOverride` -- `outputBytes` itself comes from that format's
+ * own `estimateBytes` rather than the generic per-row heuristic. Omitting
+ * `options.output` (a plain `estimate()` call with no `OutputRequest`)
+ * keeps the generic `outputBytes` model exactly as before; only the
+ * ceiling it is judged against changes, since `effectiveCeiling` replaces
+ * `defaultCeiling()` for every caller now, formatless or not (an absent
+ * `format` is `effectiveCeiling`'s already-conservative default: treated
+ * as buffering, `memoryFactorOf`'s factor-3 case).
+ *
+ * `options.formatOverride` is an internal-only seam (not part of
+ * `estimate()`'s documented options): `download()` has ALREADY resolved
+ * the real `FormatPlugin` by the time it calls this -- including through
+ * its `builtinFormat()` fallback for an unregistered 'geojson'/'geoparquet'
+ * -- and passes that exact object here so the ceiling this function
+ * derives is computed from the SAME format `outputBytesOverride` was
+ * computed from. Without it, a format resolved only through that
+ * fallback (never actually in the registry) would be invisible to the
+ * `getFormat(options.output.format)` lookup below and silently fall back
+ * to the conservative default factor -- wrong whenever the real format is
+ * streaming.
+ *
  * @param {Awaited<ReturnType<typeof planRequest>>} plan
  * @param {import('@cng/spec').Area|null} area
  * @param {import('./types.js').FilterSpec} filter
- * @param {import('./types.js').DownloadCoreOptions & { outputBytesOverride?: import('./bounded.js').Bounded }} options
+ * @param {import('./types.js').DownloadCoreOptions & { output?: import('./types.js').OutputRequest, sink?: { kind: string }|null, outputBytesOverride?: import('./bounded.js').Bounded, formatOverride?: import('./types.js').FormatPlugin }} options
  * @param {number} [t0]
  */
 export async function finalizeEstimate(plan, area, filter, options = {}, t0 = performance.now()) {
-  const ceiling = { ...defaultCeiling(), ...options.ceiling };
+  const format = options.formatOverride ?? (options.output ? getFormat(options.output.format) : undefined);
+  const sink = options.sink ?? null;
+  const ceiling = effectiveCeiling({ format, sink, overrides: options.ceiling });
 
-  const outputBytes = options.outputBytesOverride ?? genericOutputBytesModel(plan);
+  const outputBytes =
+    options.outputBytesOverride ??
+    (format
+      ? format.estimateBytes(schemaFor(plan), plan.rows, { avgGeometryBytes: plan.avgGeometryBytes ?? null, geometryColumn: plan.geometryColumn })
+      : genericOutputBytesModel(plan));
 
   /** @type {import('./types.js').EstimateWarning[]} */
   const warnings = [];
