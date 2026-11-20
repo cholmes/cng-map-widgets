@@ -93,7 +93,7 @@
         {
           "name": "shape_type",
           "type": "string",
-          "description": "Publisher-specific; not read by the spec."
+          "description": "Publisher extra; not read by the spec."
         },
         {
           "name": "country",
@@ -118,47 +118,22 @@
         {
           "name": "name_dupes",
           "type": "int32",
-          "description": "Count of same-name siblings; renders as \"(+N more)\"."
+          "description": "Publisher extra: count of same-name siblings; renders as \"(+N more)\"."
         },
         {
-          "name": "xmin",
-          "type": "float",
-          "description": "bbox west  -- four flat columns, NOT a struct."
+          "name": "bbox",
+          "type": "struct",
+          "description": "STRUCT<xmin,ymin,xmax,ymax: float>. Declared as a GeoParquet 1.1 covering in the file's `geo` metadata."
         },
         {
-          "name": "ymin",
-          "type": "float",
-          "description": "bbox south"
-        },
-        {
-          "name": "xmax",
-          "type": "float",
-          "description": "bbox east"
-        },
-        {
-          "name": "ymax",
-          "type": "float",
-          "description": "bbox north"
-        },
-        {
-          "name": "file",
-          "type": "string",
-          "description": "geometry_ref part 1 -- which boundary asset holds the polygon."
-        },
-        {
-          "name": "row_group",
-          "type": "int32",
-          "description": "geometry_ref part 2 -- checked against floor(row / row_group_rows)."
-        },
-        {
-          "name": "row",
-          "type": "int64",
-          "description": "geometry_ref part 3 -- row offset within the boundary file."
+          "name": "geometry_ref",
+          "type": "struct",
+          "description": "STRUCT<file: string, row_group: int32, row: int64>. The fast path into a boundary asset."
         },
         {
           "name": "geometry",
-          "type": "string",
-          "description": "Optional inline WKB for small features; absent or null otherwise."
+          "type": "binary",
+          "description": "Inline WKB point (a label point, not the boundary). Powers the pmtiles asset."
         }
       ],
       "gazetteer:row_groups": 35,

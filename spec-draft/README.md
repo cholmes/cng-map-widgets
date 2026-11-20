@@ -35,11 +35,17 @@ actual schema. Nothing is invented. Worth looking at for three things:
   meaningful: CGAZ ADM0 has no ID column at all, so resolution joins on
   `gazetteer:index_key_column: "country"` against `shapeGroup` instead. Any
   schema for this extension has to permit an explicit null.
-- The real index schema is **not** what AGENTS.md describes. The bbox is four
-  flat `FLOAT` columns (`xmin`/`ymin`/`xmax`/`ymax`), not a struct; the
-  `geometry_ref` is three flat columns (`file`/`row_group`/`row`); there is no
-  `source` column; and there is an unexpected `geometry` column. Writing the
-  spec down is how that drift got noticed.
+- The published schema **matches** the documented contract: `bbox` is a struct
+  with `xmin`/`ymin`/`xmax`/`ymax` and is declared as a GeoParquet 1.1
+  `covering` in the file's `geo` metadata, and `geometry_ref` is a struct with
+  `file`/`row_group`/`row`. (An earlier draft of this file claimed these were
+  flat columns. That was wrong — a leaf-only schema query had stripped the
+  struct parent from the path.) The only genuine gaps are small: the index
+  carries an undocumented `geometry` column holding an inline WKB label point,
+  plus `shape_type` and `name_dupes` as publisher extras. `source` and
+  `parent_name` are absent, but AGENTS.md already documents those as
+  defaultable and read-when-present respectively.
+
 - `attribution[]` with its `share_alike` boolean collapses into STAC `license`
   (an SPDX id) plus `providers[]`, which removes the casing hazard where
   `share_alike` and `shareAlike` disagreed and checking one silently
