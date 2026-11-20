@@ -263,16 +263,19 @@ export async function planRaw(dataset, area, filter, options = {}) {
   const { sizes, requests: headRequests } = await resolvePartSizes(selected, fetchImpl, signal);
   requests += headRequests;
 
-  // Reserved for a future plan-level warning (Task 8's `raw-size-unknown`/
-  // `raw-no-pruning`) that needs `sizes`/`stages` rather than `filter` --
-  // nothing is raised at the planning stage in this task.
   // `resolved` is the fully-concrete `DatasetDescriptor` `resolveDataset`
   // produced above -- carried through so `runRaw` (and `rawEstimate`'s
   // share-alike check, if it ever needs one) can read `resolved.attribution`
   // the same way `estimate.js`'s `plan.resolved.attribution` already does
   // for the decoded path. Additive: `raw-plan.test.js`'s existing
   // assertions on this object's other fields are unaffected.
-  return { parts, selected, sizes, requests, stages, warnings: [], resolved };
+  //
+  // `areaBBoxes` is carried through (rather than re-deriving `!!area` in
+  // `rawEstimate`) so Task 8's `raw-no-pruning` warning can tell "the
+  // caller asked for an area-narrowed selection" from "no area was passed
+  // at all" -- `partitionPruneCascade` above already computed exactly this
+  // value from `area`, so this just hands it onward instead of recomputing it.
+  return { parts, selected, sizes, requests, stages, warnings: [], resolved, areaBBoxes };
 }
 
 /**
@@ -290,11 +293,12 @@ export async function planRaw(dataset, area, filter, options = {}) {
  */
 export async function rawEstimate(rawPlan, filter, options = {}) {
   const t0 = performance.now();
-  const { parts, selected, sizes, requests, stages, warnings: planWarnings } = rawPlan;
+  const { parts, selected, sizes, requests, stages, warnings: planWarnings, areaBBoxes } = rawPlan;
 
   const knownSizes = selected.map((p) => sizes.get(p.url));
   const allSizesKnown = knownSizes.every((s) => typeof s === 'number');
   const sumKnownBytes = knownSizes.reduce((n, s) => n + (typeof s === 'number' ? s : 0), 0);
+  const partsWithoutSize = knownSizes.filter((s) => typeof s !== 'number').length;
 
   // `max` stays a genuine upper bound: when a part's size is unknown there
   // is no true ceiling on it, so `max` is `Infinity` rather than quietly
@@ -313,6 +317,38 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
   const rows = allRowsKnown ? boundedExact(rowCounts.reduce((n, r) => n + r, 0)) : null;
 
   const warnings = [...planWarnings];
+
+  // Case 1 (design doc §7.5): at least one selected part's size could not
+  // be resolved (no declared `bytes` and a failed/CORS-blocked/missing
+  // `content-length` HEAD -- `resolvePartSizes` above). This is the
+  // honesty layer for the headline guard-rail: without it, a dataset whose
+  // parts carry no size at all (every `enumerateStacItems`-built part)
+  // would reach this point with nothing to warn about, silently skipping
+  // "tell the user before anything is fetched that this is big". Flat
+  // fields per ruling R8 -- not nested under `context`.
+  if (partsWithoutSize > 0) {
+    warnings.push({ code: 'raw-size-unknown', partsWithoutSize, partsTotal: selected.length });
+  }
+
+  // Case 2 (design doc §7.5): the filter asked for an area and/or time
+  // narrowing, but partition-level pruning kept every file -- the
+  // `partitionPruneCascade`/§2.7 stages treat a part with no declared
+  // `bbox`/`interval` as "passes" (`if (!p.bbox) return true`), so a
+  // dataset whose parts carry no such declarations silently turns "just
+  // this area" into "the entire dataset". Fires only when something was
+  // actually asked for (a filter that narrowed nothing by request is not
+  // noise-worthy) and only when the surviving parts are the reason nothing
+  // was pruned, not a coincidental full match against real declared data.
+  const askedForAreaNarrowing = !!areaBBoxes;
+  const askedForTimeNarrowing = !!(filter.time && (filter.time.start || filter.time.end));
+  if (selected.length === parts.length && selected.length > 0 && (askedForAreaNarrowing || askedForTimeNarrowing)) {
+    if (askedForAreaNarrowing && selected.every((p) => !p.bbox)) {
+      warnings.push({ code: 'raw-no-pruning', basis: 'parts declare no bbox' });
+    } else if (askedForTimeNarrowing && selected.every((p) => !p.interval)) {
+      warnings.push({ code: 'raw-no-pruning', basis: 'parts declare no interval' });
+    }
+  }
+
   const dropped = [];
   if ((filter.where && filter.where.length > 0) || filter.whereSql) dropped.push('where');
   const columnsReq = filter.columns;
@@ -328,17 +364,26 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
   if (filter.spatial?.mode === 'intersects' || filter.spatial?.mode === 'clip') dropped.push('spatial-row-level');
   if (dropped.length > 0) warnings.push({ code: 'raw-passthrough-unfiltered', dropped });
 
-  // Same thresholds/constants `finalizeEstimate` uses, unconditionally --
-  // a later task adds the `outputBytes.exact &&` guard that suppresses
-  // these when the size is unknown; this task deliberately leaves that
-  // one-line change for it rather than anticipating it.
+  // Same thresholds/constants `finalizeEstimate` uses, with one addition:
+  // `outputBytes.exact &&` guards both warnings below. When any selected
+  // part's size is unknown, `outputBytes.estimate` is only the sum of the
+  // KNOWN part sizes (R9's model, above) -- presenting *that* partial sum
+  // as "the size" would imply small when the truth is unknown, which
+  // design doc §7.5 calls out as worse than saying nothing. `raw-size-unknown`
+  // (pushed above) is the honest replacement for this exact case, so these
+  // two are suppressed outright rather than fired on a guess. This mirrors
+  // (but does not call) `finalizeEstimate` in estimate.js, which has no
+  // such guard: on the normal decode path `outputBytes` is routinely
+  // non-exact (it's a selectivity model, not a guess born from a missing
+  // byte count), so gating there would wrongly silence `large-download` for
+  // ordinary downloads -- a different path, a different meaning of "not exact".
   const throughputBytesPerSecond = options.throughputBytesPerSecond ?? DEFAULT_THROUGHPUT_BYTES_PER_SECOND;
   const largeDownloadBytes = options.largeDownloadBytes ?? DEFAULT_LARGE_DOWNLOAD_BYTES;
   const estimatedSeconds = Math.round(outputBytes.estimate / throughputBytesPerSecond);
-  if (outputBytes.estimate > largeDownloadBytes) {
+  if (outputBytes.exact && outputBytes.estimate > largeDownloadBytes) {
     warnings.push({ code: 'large-download', bytes: outputBytes.estimate, estimatedSeconds });
   }
-  if (estimatedSeconds > SLOW_DOWNLOAD_SECONDS) {
+  if (outputBytes.exact && estimatedSeconds > SLOW_DOWNLOAD_SECONDS) {
     warnings.push({ code: 'slow-download', estimatedSeconds });
   }
 
