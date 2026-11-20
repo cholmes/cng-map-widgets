@@ -360,9 +360,28 @@ step of that issue remains out of scope.
 
 **Why it is in scope.** gpkg's ceiling is `memoryBudget / memoryFactor`
 (§7.3), so the factor is the lever. Of the three copies §1 describes,
-one is avoidable with a small change, which takes the factor from the
-measured 3.5 to an expected ~2.5 and the ceiling from ~290 MB to
-~410 MB.
+one is avoidable with a small change.
+
+**Measured outcome (2026-11-20), which fell short of this section's
+original projection.** The projection was 3.5 → ~2.5, lifting the ceiling
+from ~293 MiB to ~410 MiB. Matched old-vs-new measurement on one machine
+gave **3.07 → 2.82**, about an 8% improvement rather than the ~33%
+predicted. Declared factor **3.5 → 2.9**, so the ceiling moves
+**~293 MiB → ~353 MiB** — a 20% lift, not 40%.
+
+The measured gap is best read as a conservative floor rather than the
+whole saving, for a mechanical reason: sql.js's wasm linear memory can
+only *grow*, never shrink, within a `Database`'s lifetime, so the new
+writer's sampled peak is close to its true peak. The old writer's peak
+required catching the instant when both the V8-heap row array and the
+growing wasm heap were large at once — and V8, unlike wasm, can collect
+that array — so a 20 ms sampler is likelier to miss the old peak than
+the new one. The real saving is therefore probably larger than 8%, by an
+amount this method cannot establish.
+
+Either way, step 1 is a modest win, which is itself the useful finding:
+it is §7.7's step 1.5 and issue #3, not this change, that decide whether
+GeoPackage can handle large data.
 
 **The change.** `bufferedRows` exists only because two values are not
 known until the final batch: the geometry type name written to
@@ -381,14 +400,23 @@ Both are single-row `UPDATE`s on metadata tables. So:
 - `abort()` must now `db.close()`, since a database exists from `open()`
   onward.
 
-**Step 1.5, to investigate and not promise.** `db.export()` is the third
-copy. sql.js holds the database as a file in its emscripten MEMFS, so if
-`SQL.FS` can be used to open that file and stream it to the sink in
-chunks, the factor falls to ~1.5 and the ceiling to ~680 MB. This
-depends on sql.js internals that have **not** been verified. The builder
-should spike it, measure it, and either land it with a measured
-`memoryFactor` or drop it and say so — never ship an unmeasured factor,
-since the factor is what the ceiling is computed from.
+**Step 1.5 — investigated, and NOT feasible. Dropped.** `db.export()` is
+the third copy, and the idea was to stream the database out of sql.js's
+emscripten MEMFS in chunks instead. Measured against sql.js **1.13.0**:
+there is no MEMFS surface to use. `SQL.FS` is `undefined`, the Module
+carries no `FS`/`MEMFS`/`NODEFS` key at all, and `Database.prototype`
+exposes only `close, create_aggregate, create_function, each, exec,
+export, getRowsModified, handleError, iterateStatements, prepare, run,
+updateHook` — `export` and nothing chunked. This is a harder "no" than
+anticipated: the concern was depending on undocumented internals, but
+nothing is exposed to depend on. `memoryFactor` therefore stays at the
+step-1 measured value.
+
+**Consequence:** the two remaining copies (the database in the wasm heap
+plus `export()`'s `Uint8Array`) cannot be reduced within sql.js at all.
+Issue #3 — replacing sql.js with `@sqlite.org/sqlite-wasm` on the
+`opfs-sahpool` VFS — is therefore the *only* path to large GeoPackage,
+not one option among several.
 
 **Verification is the gate on the declared factor.** `memoryFactor` for
 gpkg must be *re-measured* after this change, with the same method as
