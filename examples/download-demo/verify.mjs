@@ -579,9 +579,14 @@ console.log('\n=== PART 4: edit a boundary, then prove the download changed ==='
 // --- PART 5: "Max rows" -- no cap by default, respects an explicit value --
 // The regression this whole task exists for: examples/download-demo used
 // to hardcode `limit: 2000` in buildFilter(), which is why a tester
-// couldn't get more than 2000 rows out of this demo. Asserts on the demo's
-// own `buildFilter` function (exposed on `window.__cngDownloadDemo` for
-// exactly this), per Ruling R4 -- not a reimplementation of its logic here. -
+// couldn't get more than 2000 rows out of this demo. Proven here on
+// OBSERVABLE behavior -- two real downloads of the smallest catalog entry
+// (ftw-li, Liechtenstein) against live data, the same shape PART 8 already
+// uses for its own, much larger, uncapped run. `buildFilter`/
+// `currentEntry` are NOT reached into here: the controller's Ruling R4
+// forbids exporting internals onto `window.__cngDownloadDemo` solely for
+// test reachability -- an earlier version of this PART did exactly that
+// and was rightly reverted. -------------------------------------------
 console.log('\n=== PART 5: Max rows input -- no cap by default, respects an explicit value ===');
 {
   const page5 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -591,21 +596,30 @@ console.log('\n=== PART 5: Max rows input -- no cap by default, respects an expl
 
   await page5.goto(url, { waitUntil: 'load' });
   await page5.waitForSelector('input[role="combobox"]', { timeout: 20_000 });
+  await page5.click('input[role="combobox"]');
+  await page5.type('input[role="combobox"]', 'liechtenstein', { delay: 20 });
+  await page5.waitForSelector('li[role="option"]', { timeout: 30_000 });
+  await page5.keyboard.press('ArrowDown');
+  await page5.keyboard.press('Enter');
+  await page5.waitForFunction(() => !document.getElementById('areaInfo')?.textContent?.startsWith('Search for a place'), undefined, { timeout: 40_000 });
 
-  const filterNoLimit = await page5.evaluate(() => {
-    const demo = window.__cngDownloadDemo;
-    return demo.buildFilter(demo.currentEntry());
-  });
-  console.log('buildFilter() with Max rows empty:', filterNoLimit);
-  check(!('limit' in filterNoLimit), `buildFilter() has no "limit" key at all when Max rows is empty (got keys: ${Object.keys(filterNoLimit).join(', ')})`);
+  // Run 1: Max rows left empty (the default) -- ftw-li's own natural,
+  // unlimited row count for this area/filter.
+  await page5.check('#formatPicker input[value="geojson"]');
+  await page5.click('#downloadBtn');
+  await page5.waitForFunction(() => (document.getElementById('downloadInfo')?.textContent ?? '').startsWith('Done:'), undefined, { timeout: 60_000 });
+  const resultNoLimit = await page5.evaluate(() => window.__cngLastResult);
+  console.log('PART 5 (Max rows empty) result:', await page5.textContent('#downloadInfo'));
+  check(typeof resultNoLimit?.rows === 'number' && resultNoLimit.rows > 10, `with Max rows empty, the real download returns its natural row count, well above 10 (got ${resultNoLimit?.rows})`);
 
+  // Run 2: Max rows = 10 -- the SAME area/dataset/format, only the limit changed.
   await page5.fill('#maxRows', '10');
-  const filterWithLimit = await page5.evaluate(() => {
-    const demo = window.__cngDownloadDemo;
-    return demo.buildFilter(demo.currentEntry());
-  });
-  console.log('buildFilter() with Max rows = 10:', filterWithLimit);
-  check(filterWithLimit.limit === 10, `buildFilter() carries the Max rows value through as filter.limit once set (got ${filterWithLimit.limit})`);
+  await page5.click('#downloadBtn');
+  await page5.waitForFunction(() => (document.getElementById('downloadInfo')?.textContent ?? '').startsWith('Done:'), undefined, { timeout: 60_000 });
+  const resultWithLimit = await page5.evaluate(() => window.__cngLastResult);
+  console.log('PART 5 (Max rows = 10) result:', await page5.textContent('#downloadInfo'));
+  check(resultWithLimit?.rows === 10, `with Max rows = 10, the real download is capped at exactly 10 rows (got ${resultWithLimit?.rows})`);
+  check(resultWithLimit?.truncated === true, `the capped download reports truncated: true (got ${resultWithLimit?.truncated})`);
   await page5.fill('#maxRows', '');
 
   check(errors5.length === 0, `no console errors on the Max rows path (${errors5.length}: ${errors5.join('; ')})`);

@@ -290,6 +290,17 @@ function sizeWarningOptions() {
   if (throughputOverride !== undefined) opts.throughputBytesPerSecond = throughputOverride;
   return opts;
 }
+// estimate.js's own documented default (DEFAULT_THROUGHPUT_BYTES_PER_SECOND,
+// not exported from the package) -- mirrored here only so describeWarning's
+// "assumed N MB/s" text can name the throughput actually in effect rather
+// than a hardcoded guess, consistent whether or not ?throughputBytesPerSecond=
+// overrode it.
+const EFFECTIVE_THROUGHPUT_BYTES_PER_SECOND = throughputOverride ?? 10_000_000;
+
+// The sink `estimate()` is told about for every pre-flight call in this
+// page -- startDownload() always hands download() a real memorySink(),
+// so this is what that sink's `.kind` actually is, not a guess.
+const MEMORY_SINK = { kind: 'memory' };
 
 let area = null; // null = "no area" (whole dataset)
 const map = new maplibregl.Map({
@@ -475,7 +486,7 @@ function describeWarning(w) {
     case 'raw-no-pruning':
       return `No source file could be excluded by area/time (${w.basis}) -- every matching file will be fetched in full.`;
     case 'large-download':
-      return `LARGE DOWNLOAD: about ${(w.bytes / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })} MB, roughly ${w.estimatedSeconds}s at an assumed 10 MB/s. Confirmation required before starting.`;
+      return `LARGE DOWNLOAD: about ${(w.bytes / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })} MB, roughly ${w.estimatedSeconds}s at an assumed ${(EFFECTIVE_THROUGHPUT_BYTES_PER_SECOND / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })} MB/s. Confirmation required before starting.`;
     case 'slow-download':
       return `SLOW: roughly ${w.estimatedSeconds}s at an assumed network speed.`;
     default:
@@ -537,7 +548,7 @@ document.getElementById('estimateBtn').addEventListener('click', async () => {
     // `@cng/download-core`'s public `estimate()` routes `output.format ===
     // RAW_FORMAT_ID` to the decode-free raw path internally (index.js) --
     // no special-casing needed here for any format, including parquet-raw.
-    const est = await estimate(entry.dataset, area, filter, { output: outputFor(entry, selectedFormat), sink: { kind: 'memory' }, ...sizeWarningOptions() });
+    const est = await estimate(entry.dataset, area, filter, { output: outputFor(entry, selectedFormat), sink: MEMORY_SINK, ...sizeWarningOptions() });
     lastEstimate = est;
     renderEstimateInfo(est);
   } catch (err) {
@@ -865,7 +876,7 @@ async function confirmAndDownload(formatId) {
     // internally (index.js), so this one call is correct -- and gets the
     // real raw-specific warnings (raw-passthrough-unfiltered etc.) -- for
     // every format, with no special-casing needed here.
-    preflight = await estimate(entry.dataset, area, filter, { output: outputFor(entry, formatId), sink: { kind: 'memory' }, ...sizeWarningOptions() });
+    preflight = await estimate(entry.dataset, area, filter, { output: outputFor(entry, formatId), sink: MEMORY_SINK, ...sizeWarningOptions() });
   } catch (err) {
     infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
     downloadBtn.disabled = false;
@@ -902,12 +913,6 @@ window.__cngDownloadDemo = {
   get area() { return area; },
   get lastEstimate() { return lastEstimate; },
   get editTool() { return editTool; },
-  // Testability only (verify.mjs): `buildFilter`/`currentEntry` are
-  // otherwise module-private. Asserting on the real object this page
-  // sends to estimate()/download() is the house style (AGENTS.md) --
-  // never re-implementing the same logic inside the verifier.
-  buildFilter,
-  currentEntry,
 };
 </script>
 </body>
