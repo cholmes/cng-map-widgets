@@ -35,13 +35,29 @@ test('memorySink is exempt from the memory budget', () => {
   assert.equal(c.outputBytes, 1024 ** 4);
 });
 
-test('gpkg declares the measured 3.5, not the default 3', async () => {
-  const { gpkgFormatDescriptor } = await import('@cng/format-gpkg');
-  assert.equal(memoryFactorOf(gpkgFormatDescriptor), 3.5);
+// A literal descriptor shape, not a cross-package import: download-core
+// doesn't depend on format-gpkg, and that import only ever worked here
+// via workspace hoisting. The "gpkg actually declares 3.5" assertion
+// lives in format-gpkg's own test suite instead, where that dependency
+// is natural (format-gpkg already has @cng/download-core as a
+// devDependency for memoryFactorOf itself).
+test('memoryFactorOf reads a declared capabilities.memoryFactor over the streaming-based default', () => {
+  assert.equal(memoryFactorOf({ streaming: false, capabilities: { memoryFactor: 3.5 } }), 3.5);
 });
 
 test('a buffering format is memoryBudget / memoryFactor regardless of sink', () => {
   const c = effectiveCeiling({ format: gpkgLike, sink: { kind: 'filesystem' } });
+  assert.equal(c.outputBytes, Math.floor(GiB / 3.5));
+});
+
+test('the memorySink exemption applies only to a streaming format, never to a buffering one', () => {
+  // A buffering format's own cost (JS row arrays, a wasm heap, ...) is
+  // spent inside the writer regardless of where the bytes end up -- a
+  // memorySink only ever exempted the SINK's own buffering, not the
+  // format's. Locks the ordering bug this test would have caught: the
+  // memory-sink check used to short-circuit ahead of memoryFactorOf,
+  // which would have returned UNBOUNDED_BYTES here instead.
+  const c = effectiveCeiling({ format: gpkgLike, sink: { kind: 'memory' } });
   assert.equal(c.outputBytes, Math.floor(GiB / 3.5));
 });
 

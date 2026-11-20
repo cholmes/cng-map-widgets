@@ -14,6 +14,8 @@ import { join } from 'node:path';
 import { initializedSqlJs } from './helpers/sqljs-setup.js';
 import { createGpkgFormat } from '../src/gpkg-writer.js';
 import { geojsonToWkb } from '../src/wkb.js';
+import { gpkgFormatDescriptor } from '../src/index.js';
+import { memoryFactorOf } from '@cng/download-core';
 
 function hasCli(bin, args = ['--version']) {
   try {
@@ -169,6 +171,15 @@ test('gpkg format: a source column literally named "geom" or "fid" is renamed, n
     assert.match(out, /fid_1 \(String\) = source-fid-value/);
     assert.match(out, /geom_1 \(String\) = source-geom-value/);
   }
+});
+
+test('gpkg declares the measured memoryFactor: 3.5 on both its lazy descriptor and its plugin, not the default 3', async () => {
+  // Both declaration sites (download-core's ceiling.js's module doc:
+  // "the registry reads whichever is used") must agree, so both are
+  // checked here rather than just one.
+  assert.equal(memoryFactorOf(gpkgFormatDescriptor), 3.5);
+  const SQL = await initializedSqlJs;
+  assert.equal(memoryFactorOf(createGpkgFormat(SQL)), 3.5);
 });
 
 test('(environment check) ogrinfo and duckdb are both available, so the assertions above actually ran', () => {

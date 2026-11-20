@@ -105,20 +105,21 @@ export function effectiveCeiling({ format, sink, overrides = {} } = {}) {
   let outputBytes;
   if (Object.prototype.hasOwnProperty.call(overrides, 'outputBytes')) {
     outputBytes = overrides.outputBytes;
-  } else if (sink?.kind === 'memory') {
-    // Exempt from the memory budget entirely -- a deliberate carve-out
-    // for a destination this package controls end-to-end (see module doc).
-    outputBytes = UNBOUNDED_BYTES;
   } else {
     const factor = memoryFactorOf(format);
     if (factor === 0) {
       // Streaming: the memory cost, if any, lives in the sink, not the
-      // format. `sink == null` is treated the same as `blob` -- the
-      // conservative choice when the real sink isn't known yet.
-      outputBytes = sink == null || sink.kind === 'blob' ? blobBytes : UNBOUNDED_BYTES;
+      // format. A `memory` sink is exempt from the budget entirely -- a
+      // deliberate carve-out for a destination this package controls
+      // end-to-end (see module doc) -- while `sink == null` is treated
+      // the same as `blob`, the conservative choice when the real sink
+      // isn't known yet.
+      outputBytes = sink?.kind === 'memory' ? UNBOUNDED_BYTES : sink == null || sink.kind === 'blob' ? blobBytes : UNBOUNDED_BYTES;
     } else {
-      // Buffering: the format's own memory cost dominates regardless of
-      // the sink.
+      // Buffering: the format's own memory cost (JS row arrays, a wasm
+      // heap, an exported copy, ...) is spent inside the writer and
+      // dominates regardless of the sink -- including a `memory` sink,
+      // which exempts only the sink's own buffering, not the format's.
       outputBytes = Math.floor(memoryBudget / factor);
     }
   }
