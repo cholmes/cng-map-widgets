@@ -247,3 +247,36 @@ test('attribution falls back to the provider name when there is no citation', ()
   assert.equal(a.shareAlike, true, 'ODbL is share-alike');
   assert.equal(a.doi, undefined);
 });
+
+// --- share-alike must distinguish "no" from "unknown" ---
+// isShareAlikeLicense() returns false for any unrecognised license string, so
+// `license: "other"` produced shareAlike:false -- asserting an absence of
+// obligation we have not established. Who's On First legitimately publishes
+// `license: "other"` (its docs: "no single SPDX identifier is true of" it),
+// and a catalog that is share-alike but non-SPDX would be reported as free of
+// obligation. Same silent-under-reporting hazard as AGENTS.md pitfall 3.
+test('an unrecognised license reports share-alike as undetermined, not as false', () => {
+  const base = {
+    type: 'Collection',
+    stac_extensions: ['https://cholmes.github.io/stac-gazetteer/gazetteer/v1.0.0/schema.json'],
+    id: 'x', 'gazetteer:levels': [0], 'gazetteer:normalization': 'nfd-strip-marks-lower/1', 'gazetteer:sort': 'name_norm',
+    providers: [{ name: 'P', roles: ['producer'], url: 'https://example.org/' }],
+    assets: { index: { href: './n.parquet', roles: ['gazetteer-index'], 'table:row_count': 1, 'file:size': 1, 'gazetteer:row_groups': 1 } },
+  };
+  const at = (license) => normalizeStacGazetteerCollection({ ...base, license }, 'https://example.org/c/collection.json').attribution[0];
+
+  const known = at('CC-BY-4.0');
+  assert.equal(known.shareAlike, false);
+  assert.equal(known.shareAlikeDetermined, true, 'a recognised SPDX id is a determination');
+
+  const sa = at('ODbL-1.0');
+  assert.equal(sa.shareAlike, true);
+  assert.equal(sa.shareAlikeDetermined, true);
+
+  for (const vague of ['other', 'proprietary', undefined, null]) {
+    const a = at(vague);
+    assert.equal(a.shareAlikeDetermined, false, `${JSON.stringify(vague)} is not a determination`);
+    assert.equal(a.shareAlike, false, 'the boolean stays false for back-compat');
+    assert.equal(a.share_alike, false, 'both spellings still agree');
+  }
+});

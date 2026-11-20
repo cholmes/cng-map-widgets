@@ -119,6 +119,25 @@ function isShareAlikeLicense(spdxId) {
   return spdxId.includes('-SA') || spdxId === 'ODbL-1.0';
 }
 
+/**
+ * Whether `license` is a value we can actually draw a share-alike conclusion
+ * from. STAC allows `"other"` and `"proprietary"`, and a real catalog uses
+ * them: Who's On First publishes `"other"` because its records inherit terms
+ * from 300+ upstream sources and no single SPDX id is true of the whole.
+ *
+ * Without this, `license: "other"` produced `shareAlike: false` -- asserting
+ * an absence of obligation nobody established. A share-alike catalog that
+ * does not use an SPDX id would be reported as free of obligation, which is
+ * the same silent-under-reporting failure as the attribution casing hazard.
+ * @param {unknown} spdxId
+ */
+function isDeterminateLicense(spdxId) {
+  if (typeof spdxId !== 'string') return false;
+  const v = spdxId.trim();
+  if (!v) return false;
+  return v !== 'other' && v !== 'proprietary' && v !== 'various' && v !== 'unknown';
+}
+
 /** `assets[*].roles` is documented as an array on every real STAC asset, but tolerate its absence. */
 function hasRole(asset, role) {
   return Array.isArray(asset?.roles) && asset.roles.includes(role);
@@ -233,6 +252,7 @@ export function normalizeStacGazetteerCollection(collection, collectionUrl) {
   const providers = Array.isArray(collection.providers) ? collection.providers : [];
   const attributionProvider = providers.find((p) => Array.isArray(p.roles) && (p.roles.includes('producer') || p.roles.includes('licensor')));
   const shareAlike = isShareAlikeLicense(collection.license);
+  const shareAlikeDetermined = isDeterminateLicense(collection.license);
   // `sci:citation` (the Scientific Citation extension) is the idiomatic home
   // for a full attribution string, and it is what a CC-BY licence actually
   // obliges a UI to display -- geoBoundaries' is a paper citation with a DOI.
@@ -257,6 +277,10 @@ export function normalizeStacGazetteerCollection(collection, collectionUrl) {
       ...(doi ? { doi } : {}),
       shareAlike,
       share_alike: shareAlike,
+      // false means "we could not tell from this license", NOT "no
+      // obligation". A UI should surface the license text rather than
+      // implying the output is obligation-free.
+      shareAlikeDetermined,
     },
   ];
 
