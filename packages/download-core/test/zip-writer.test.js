@@ -115,6 +115,13 @@ test('sanitizeEntryName strips traversal and absolute paths', () => {
   assert.equal(sanitizeEntryName('a\\b.parquet', taken), 'a/b.parquet');
 });
 
+test('sanitizeEntryName falls back to a placeholder instead of a zero-length name', () => {
+  const taken = new Set();
+  assert.equal(sanitizeEntryName('/', taken), 'entry');
+  assert.equal(sanitizeEntryName('..', taken), 'entry-1'); // also sanitizes to '', collides with the first
+  assert.equal(sanitizeEntryName('////', taken), 'entry-2'); // ditto
+});
+
 test('sanitizeEntryName suffixes a colliding name instead of overwriting', () => {
   const taken = new Set();
   assert.equal(sanitizeEntryName('part-0.parquet', taken), 'part-0.parquet');

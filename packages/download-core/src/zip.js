@@ -192,20 +192,30 @@ export function endOfCentralDirectory({ entryCount, centralSize, centralOffset }
   return out;
 }
 
+// Fallback for an input that sanitizes to nothing at all (e.g. '/', '..',
+// '////', '../..') -- these come from partition metadata in the raw
+// passthrough path, so one bad name must not corrupt the entry (a
+// zero-length name is malformed to most zip readers) or abort an
+// otherwise-fine multi-file download. It is deterministic, so repeated
+// occurrences fall through the same collision-suffix logic below.
+const EMPTY_NAME_PLACEHOLDER = 'entry';
+
 /**
  * Turn an arbitrary entry path into a safe, unique zip entry name: split on
  * both `/` and `\`, drop `.`, `..` and empty segments (which also strips any
  * leading separator, since splitting on it yields a leading empty segment),
- * then join with `/`. If the result collides with a name already in
- * `taken`, append `-1`, `-2`, ... before the last extension until it does
- * not. `taken` is mutated: the returned name is added to it.
+ * then join with `/`. An input with nothing left after that (e.g. '/', '..')
+ * becomes `EMPTY_NAME_PLACEHOLDER` rather than a zero-length name. If the
+ * result collides with a name already in `taken`, append `-1`, `-2`, ...
+ * before the last extension until it does not. `taken` is mutated: the
+ * returned name is added to it.
  * @param {string} name
  * @param {Set<string>} taken names already used in this archive
  * @returns {string}
  */
 export function sanitizeEntryName(name, taken) {
   const segments = name.split(/[\\/]+/).filter((seg) => seg !== '' && seg !== '.' && seg !== '..');
-  const clean = segments.join('/');
+  const clean = segments.join('/') || EMPTY_NAME_PLACEHOLDER;
 
   if (!taken.has(clean)) {
     taken.add(clean);
