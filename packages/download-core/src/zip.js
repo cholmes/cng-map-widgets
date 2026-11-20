@@ -191,3 +191,116 @@ export function endOfCentralDirectory({ entryCount, centralSize, centralOffset }
   out.set(legacy, record.length + locator.length);
   return out;
 }
+
+/**
+ * Turn an arbitrary entry path into a safe, unique zip entry name: split on
+ * both `/` and `\`, drop `.`, `..` and empty segments (which also strips any
+ * leading separator, since splitting on it yields a leading empty segment),
+ * then join with `/`. If the result collides with a name already in
+ * `taken`, append `-1`, `-2`, ... before the last extension until it does
+ * not. `taken` is mutated: the returned name is added to it.
+ * @param {string} name
+ * @param {Set<string>} taken names already used in this archive
+ * @returns {string}
+ */
+export function sanitizeEntryName(name, taken) {
+  const segments = name.split(/[\\/]+/).filter((seg) => seg !== '' && seg !== '.' && seg !== '..');
+  const clean = segments.join('/');
+
+  if (!taken.has(clean)) {
+    taken.add(clean);
+    return clean;
+  }
+
+  const lastSlash = clean.lastIndexOf('/');
+  const dir = lastSlash >= 0 ? clean.slice(0, lastSlash + 1) : '';
+  const base = lastSlash >= 0 ? clean.slice(lastSlash + 1) : clean;
+  const dotIndex = base.lastIndexOf('.');
+  const stem = dotIndex > 0 ? base.slice(0, dotIndex) : base;
+  const ext = dotIndex > 0 ? base.slice(dotIndex) : '';
+
+  let n = 1;
+  let candidate;
+  do {
+    candidate = `${dir}${stem}-${n}${ext}`;
+    n++;
+  } while (taken.has(candidate));
+  taken.add(candidate);
+  return candidate;
+}
+
+/**
+ * A streaming zip64 writer over a non-seekable `WritableStreamDefaultWriter`.
+ * Entries are written in call order; nothing is buffered -- each chunk of
+ * an entry's `AsyncIterable` is written straight through to `writer` as it
+ * arrives, folding it into a running CRC-32 and byte count, so no header is
+ * ever rewritten (sizes go out in the trailing data descriptor instead).
+ * @param {WritableStreamDefaultWriter<Uint8Array>} writer
+ */
+export function createZipWriter(writer) {
+  const taken = new Set();
+  /** @type {{ name: string, crc: number, size: number, offset: number }[]} */
+  const central = [];
+  let offset = 0;
+  let closed = false;
+
+  async function writeBytes(bytes) {
+    await writer.write(bytes);
+    offset += bytes.byteLength;
+  }
+
+  /**
+   * @param {string} name
+   * @param {AsyncIterable<Uint8Array>} chunks
+   * @returns {Promise<{ name: string, bytes: number }>}
+   */
+  async function addEntry(name, chunks) {
+    if (closed) {
+      throw new Error('createZipWriter: addEntry() called after close()');
+    }
+    const entryName = sanitizeEntryName(name, taken);
+    const entryOffset = offset;
+    await writeBytes(localHeader({ name: entryName }));
+
+    let crc = 0;
+    let size = 0;
+    for await (const chunk of chunks) {
+      crc = crc32(chunk, crc);
+      size += chunk.byteLength;
+      await writeBytes(chunk);
+    }
+
+    await writeBytes(dataDescriptor({ crc, size }));
+    central.push({ name: entryName, crc, size, offset: entryOffset });
+    return { name: entryName, bytes: size };
+  }
+
+  /**
+   * @param {string} name
+   * @param {Uint8Array} bytes
+   * @returns {Promise<{ name: string, bytes: number }>}
+   */
+  async function addFile(name, bytes) {
+    async function* single() {
+      yield bytes;
+    }
+    return addEntry(name, single());
+  }
+
+  /** @returns {Promise<{ bytes: number, entries: number }>} */
+  async function close() {
+    if (closed) {
+      throw new Error('createZipWriter: close() called twice');
+    }
+    closed = true;
+    const centralOffset = offset;
+    for (const entry of central) {
+      await writeBytes(centralHeader(entry));
+    }
+    const centralSize = offset - centralOffset;
+    await writeBytes(endOfCentralDirectory({ entryCount: central.length, centralSize, centralOffset }));
+    return { bytes: offset, entries: central.length };
+  }
+
+  return { addEntry, addFile, close };
+}

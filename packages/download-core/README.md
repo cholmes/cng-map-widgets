@@ -963,14 +963,21 @@ not recognize gets no explicit type and is inferred, which is the same trap.
 node --test packages/download-core/test/*.test.js
 ```
 
-10 files: `Bounded` arithmetic, collection→descriptor derivation, the
+11 files: `Bounded` arithmetic, collection→descriptor derivation, the
 `DownloadHandle` state machine (ceiling/accept/cancel/pause, via a fake engine
 so the math is tested without a network), GeoParquet decode and write,
 partition enumeration and pruning, predicates, row-group pruning, spatial
-tests, WKB geometry, and a real-network integration test.
+tests, WKB geometry, the streaming zip64 writer (round-tripped through
+Python's `zipfile` and, when present, `unzip -t`), and a real-network
+integration test.
 
 End-to-end against live catalogs:
 [`examples/download-demo/verify.mjs`](../../examples/download-demo/verify.mjs),
 [`examples/firms-explorer/verify.mjs`](../../examples/firms-explorer/verify.mjs),
 [`examples/s2-footprints/verify.mjs`](../../examples/s2-footprints/verify.mjs),
 and `docs/verify-snippets.mjs`.
+
+Opt-in, not run by `npm test` (writes a >4 GiB file to a temp directory and
+is slow): `node packages/download-core/test/zip-large.verify.mjs` checks
+the zip writer's zip64 path past the 32-bit size/offset limits, asserting
+both entries' sizes through Python's `zipfile`.
