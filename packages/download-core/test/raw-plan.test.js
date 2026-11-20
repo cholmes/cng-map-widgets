@@ -1,0 +1,171 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { planRaw, rawEstimate } from '../src/raw.js';
+
+function neverFetch() {
+  return async () => {
+    throw new Error('planRaw must not fetch here');
+  };
+}
+
+test('planRaw uses only the whole-file stages and makes no footer reads', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    const method = init.method ?? 'GET';
+    calls.push({ url: String(url), method });
+    if (method === 'HEAD') {
+      return { ok: true, headers: { get: (k) => (k === 'content-length' ? '4096' : null) } };
+    }
+    throw new Error(`unexpected non-HEAD fetch (would be a footer read): ${url}`);
+  };
+
+  const parts = Array.from({ length: 27 }, (_, i) => {
+    const day = String(i + 1).padStart(2, '0');
+    return {
+      url: `https://example.test/day=${day}/data.parquet`,
+      interval: [`2026-01-${day}T00:00:00Z`, `2026-01-${day}T23:59:59Z`],
+    };
+  });
+  const dataset = { source: { kind: 'hive', parts } };
+  const filter = { time: { start: '2026-01-15T00:00:00Z', end: '2026-01-15T23:59:59Z' } };
+
+  const plan = await planRaw(dataset, null, filter, { fetch: fetchImpl });
+
+  assert.equal(plan.selected.length, 1);
+  assert.equal(plan.selected[0].url, 'https://example.test/day=15/data.parquet');
+  assert.equal(calls.filter((c) => c.method !== 'HEAD').length, 0, 'no footer reads / body GETs');
+  assert.equal(calls.filter((c) => c.method === 'HEAD').length, 1, 'exactly one HEAD, for the one sizeless selected part');
+  assert.equal(plan.requests, 1);
+  assert.ok(plan.stages.some((s) => s.stage === 'part-time'));
+});
+
+test('planRaw tests every box of a split area, not the signed bbox', async () => {
+  // A part sitting at lon -177 would be excluded by the SIGNED bbox
+  // [170,-20,-175,-10] (w > e, since bbox is signed and wraps), but must
+  // be selected when tested against each of area.bboxes individually.
+  const part = { url: 'https://example.test/antimeridian.parquet', bbox: [-178, -15, -176, -12], bytes: 500 };
+  const dataset = { source: { kind: 'parquet-set', parts: [part] } };
+  const area = { bboxes: [[170, -20, 180, -10], [-180, -20, -175, -10]], bbox: [170, -20, -175, -10] };
+
+  const plan = await planRaw(dataset, area, {}, { fetch: neverFetch() });
+
+  assert.deepEqual(plan.selected.map((p) => p.url), [part.url]);
+});
+
+test('zero selected parts throws FILTER_NO_MATCH before any fetch', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    throw new Error('must not fetch');
+  };
+  const part = { url: 'https://example.test/only.parquet', bbox: [0, 0, 1, 1], bytes: 10 };
+  const dataset = { source: { kind: 'parquet-set', parts: [part] } };
+  const area = { bboxes: [[50, 50, 51, 51]] };
+
+  await assert.rejects(
+    planRaw(dataset, area, {}, { fetch: fetchImpl }),
+    (err) => err.code === 'FILTER_NO_MATCH',
+  );
+  assert.equal(calls.length, 0);
+});
+
+test('planRaw leaves a sizeless part null when its HEAD fails or omits content-length, without throwing', async () => {
+  const fetchImpl = async (url) => {
+    if (url === 'https://example.test/a.parquet') throw new Error('network down');
+    if (url === 'https://example.test/b.parquet') return { ok: true, headers: { get: () => null } };
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+  const parts = [
+    { url: 'https://example.test/a.parquet' },
+    { url: 'https://example.test/b.parquet' },
+  ];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: fetchImpl });
+
+  assert.equal(plan.sizes.get('https://example.test/a.parquet'), null);
+  assert.equal(plan.sizes.get('https://example.test/b.parquet'), null);
+  assert.equal(plan.requests, 2);
+});
+
+test('rawEstimate sums declared part sizes and is exact', async () => {
+  const parts = [
+    { url: 'https://example.test/a.parquet', bytes: 100 },
+    { url: 'https://example.test/b.parquet', bytes: 200 },
+    { url: 'https://example.test/c.parquet', bytes: 300 },
+  ];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
+  const est = await rawEstimate(plan, {}, {});
+
+  assert.equal(est.readBytes.exact, true);
+  assert.equal(est.readBytes.estimate, 600);
+  assert.equal(est.outputBytes.exact, true);
+});
+
+test('rawEstimate includes the computable zip container overhead for >1 part', async () => {
+  const parts = [
+    { url: 'https://example.test/a.parquet', bytes: 100 },
+    { url: 'https://example.test/b.parquet', bytes: 200 },
+  ];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
+  const est = await rawEstimate(plan, {}, {});
+
+  assert.equal(est.readBytes.estimate, 300);
+  assert.ok(est.outputBytes.estimate > 300, `expected zip overhead on top of 300, got ${est.outputBytes.estimate}`);
+});
+
+test('rawEstimate omits zip overhead for exactly one part', async () => {
+  const parts = [{ url: 'https://example.test/a.parquet', bytes: 100 }];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
+  const est = await rawEstimate(plan, {}, {});
+
+  assert.equal(est.outputBytes.estimate, 100);
+});
+
+test('rawEstimate reports rows exactly when every part declares rowCount, else null', async () => {
+  const withRows = [
+    { url: 'https://example.test/a.parquet', bytes: 10, rowCount: 5 },
+    { url: 'https://example.test/b.parquet', bytes: 10, rowCount: 7 },
+  ];
+  const plan1 = await planRaw({ source: { kind: 'parquet-set', parts: withRows } }, null, {}, { fetch: neverFetch() });
+  const est1 = await rawEstimate(plan1, {}, {});
+  assert.equal(est1.rows.exact, true);
+  assert.equal(est1.rows.estimate, 12);
+
+  const missingRows = [
+    { url: 'https://example.test/a.parquet', bytes: 10, rowCount: 5 },
+    { url: 'https://example.test/b.parquet', bytes: 10 },
+  ];
+  const plan2 = await planRaw({ source: { kind: 'parquet-set', parts: missingRows } }, null, {}, { fetch: neverFetch() });
+  const est2 = await rawEstimate(plan2, {}, {});
+  assert.equal(est2.rows, null);
+});
+
+test('rawEstimate warns raw-passthrough-unfiltered listing what was dropped', async () => {
+  const parts = [{ url: 'https://example.test/a.parquet', bytes: 10 }];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
+  const filter = {
+    where: [{ col: 'confidence', op: '>=', value: 0.9 }],
+    columns: { include: ['confidence'] },
+    spatial: { mode: 'intersects' },
+  };
+  const est = await rawEstimate(plan, filter, {});
+
+  const w = est.warnings.find((x) => x.code === 'raw-passthrough-unfiltered');
+  assert.ok(w, 'expected a raw-passthrough-unfiltered warning');
+  assert.deepEqual(w.dropped, ['where', 'columns', 'spatial-row-level']);
+});
+
+test('rawEstimate omits raw-passthrough-unfiltered when nothing row-level was requested', async () => {
+  const parts = [{ url: 'https://example.test/a.parquet', bytes: 10 }];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
+  const est = await rawEstimate(plan, { spatial: { mode: 'bbox' } }, {});
+
+  assert.equal(est.warnings.some((x) => x.code === 'raw-passthrough-unfiltered'), false);
+});
+
+test('planRaw refuses an unsupported source kind with FORMAT_CAPABILITY', async () => {
+  const dataset = { source: { kind: 'pmtiles', url: 'https://example.test/x.pmtiles' } };
+  await assert.rejects(
+    planRaw(dataset, null, {}, { fetch: neverFetch() }),
+    (err) => err.code === 'FORMAT_CAPABILITY',
+  );
+});
