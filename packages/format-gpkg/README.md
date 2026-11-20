@@ -128,15 +128,46 @@ from 3.5 to **2.9** for. sql.js has no incremental-export mode, so this
 is not yet a flat-memory writer; GitHub issue #3's OPFS-backed-SQLite
 step is what gets there.)
 
-For the row counts this system's download ceiling targets (see the main
-design doc's `Ceiling.outputBytes` default, 2 GiB) that's tens of MB in
-practice, not hundreds — but it is real, and `download-core`'s own
-ceiling check (`est.outputBytes.max > ceiling.blobBytes` for a
-non-streaming format) is what actually protects a page from a GeoPackage
-download large enough for this to matter. See
-`test/memory-factor.verify.mjs` for the measurement method (run by hand,
-not part of `npm test`) and its own notes on why the smallest measured
-case is excluded from the declared factor.
+**A chunked/incremental `export()` was investigated as a follow-up
+(bigger-downloads task 10) and is not possible on this sql.js build.**
+`sql.js@1.13.0` exposes no `FS`/`MEMFS`/`NODEFS` surface at all: `SQL.FS`
+is `undefined`, and `Database.prototype` has exactly `close`,
+`constructor`, `create_aggregate`, `create_function`, `each`, `exec`,
+`export`, `getRowsModified`, `handleError`, `iterateStatements`,
+`prepare`, `run`, `updateHook` — `export` and nothing chunked to depend
+on. So **GitHub issue #3 (OPFS-backed SQLite) is the only path to a
+GeoPackage writer whose peak memory doesn't scale with the output, not
+one option among several** for getting there.
+
+**`memoryFactor: 2.9` is measured, not estimated**, by
+`test/memory-factor.verify.mjs`: synthetic WKB polygons at 2,000 rows ×
+{100, 5,000, 20,000} vertices/row, one row-count/vertex-count case per
+Node **process** (so one case's sql.js wasm heap can never carry into the
+next), `process.memoryUsage().rss` sampled on a ~20 ms interval and kept
+at its peak. The declared `2.9` comes from the 20,000-vertices/row case
+**alone**, not the maximum across all three cases: at the 100-vertex case
+the output is only ~4 MB while the fixed Node + sql.js-wasm baseline RSS
+is ~110–150 MB, so that case's ratio (28–38×, before and after this
+change alike — confirmed by re-running against the pre-task-9 writer)
+is baseline overhead swamping a tiny output, not a per-byte buffering
+cost, which is what `memoryFactor` is meant to measure. Rounded up from a
+measured max of 2.82× over 10 runs at the 20,000-vertex case; rounding up
+is the safe direction, since a higher factor means a *lower*, more
+conservative ceiling.
+
+For the row counts this system's download ceiling targets that's tens of
+MB in practice, not hundreds — but it is real, and it is what
+`download-core`'s own `effectiveCeiling({ format, sink })` actually
+protects a page against: because this plugin declares
+`capabilities.memoryFactor: 2.9` on a `streaming: false` format, its
+`outputBytes` ceiling is `memoryBudget / 2.9` — **≈353 MiB** at the 1 GiB
+default `memoryBudget` — regardless of which sink the download writes to,
+including a `memorySink` (the sink-exemption applies only to a format
+whose `memoryFactor` is `0`; see `@cng/download-core`'s README/AGENTS.md
+for the full derivation). See `test/memory-factor.verify.mjs` for the
+measurement script itself (run by hand, not part of `npm test`) and its
+own in-script notes on why the smallest measured case is excluded from
+the declared factor.
 
 ## Output-size estimates: the geometry term
 

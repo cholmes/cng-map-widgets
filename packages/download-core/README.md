@@ -251,7 +251,26 @@ came from metadata, not a model.**
 
 Warning codes: `no-covering`, `no-statistics`, `single-row-group`,
 `degraded-to-bbox`, `antimeridian-split`, `estimate-wide` (`max/estimate > 10`),
-`share-alike`.
+`share-alike`, `large-download` (`{ bytes, estimatedSeconds }`, fires over
+`largeDownloadBytes`, 1 GiB by default), `slow-download` (`{ estimatedSeconds
+}`, fires over `SLOW_DOWNLOAD_SECONDS`, 120 s, at an assumed
+`DEFAULT_THROUGHPUT_BYTES_PER_SECOND`, 10 MB/s). **Every field above is FLAT
+on the warning object** — `w.bytes`, never `w.context.bytes` — all eleven
+codes agree on this shape.
+
+Raw passthrough (`output.format: 'parquet-raw'`, below) adds three more, with
+the same flat-field rule: `raw-passthrough-unfiltered` (`{ dropped }` — which
+of `where` / `columns` / `spatial-row-level` this path did NOT apply, since
+nothing is decoded to apply them to), `raw-size-unknown` (`{
+partsWithoutSize, partsTotal }` — at least one selected file's size could not
+be resolved; `large-download`/`slow-download` are suppressed on that same
+estimate rather than computed from a partial sum), `raw-no-pruning` (`{ basis
+}` — the filter narrowed by area or time but every surviving file declares
+no bbox/interval to prune by). `raw-no-pruning` checks `selected.every(...)`:
+on a dataset where some files genuinely matched a declared bbox/interval and
+others passed only because they declare none, neither this warning nor any
+other signal fires for the second group — a known gap, not a correctness
+bug.
 
 Prune stages, in order: `partition` (explicit `filter.partitions`), `part-time`,
 `part-bbox`, `row-group-bbox`, `row-group-stats` (the time column),
@@ -308,7 +327,7 @@ be cancelled during planning, which is exactly when a user changes their mind.
 |---|---|---|
 | `sink` | `await autoSink({ suggestedName: output.filename })` | |
 | `acceptCeiling` | `false` | `true` pre-authorizes a breach. |
-| `ceiling` | `defaultCeiling()` | Partial override. |
+| `ceiling` | `effectiveCeiling({ format, sink })` | Partial override, merged in via `overrides`; see below. **Not** `defaultCeiling()` — that flat-`outputBytes` helper is unchanged but no longer what `estimate()`/`download()` use. |
 | `engine` | the built-in hyparquet engine | |
 | `fetch` | `globalThis.fetch` | |
 | `signal` | — | Aborts reads; see the cancel gotcha below. |
@@ -387,19 +406,73 @@ Two consequences worth knowing:
 `result` never settled at all, and this README told automated callers to
 inspect `handle.estimate` first to avoid deadlocking. That rule is gone.*
 
-`defaultCeiling()`:
+**A save dialog can appear moments before a refusal.** `effectiveCeiling`
+needs the real sink kind (`blob` vs `filesystem` vs `memory` change the
+number — see below), so `download()` now resolves/opens the sink —
+including `autoSink`'s `showSaveFilePicker` — *before* the ceiling gate, not
+after. A caller can see the picker, choose a file, and immediately get
+`CEILING_EXCEEDED`. Mitigation: call `estimate()` with the same `output`
+first and confirm before calling `download()` at all, so `download()`'s own
+gate is only ever reached on a plan already approved.
+
+`CeilingExceededError.context.suggestedFormats` lists other registered
+formats whose own `effectiveCeiling` would fit this exact plan (`[]` when
+none do). It is computed by running each candidate's synchronous
+`estimateBytes` against the breaching plan and comparing it to *that*
+candidate's own ceiling — never the breaching format's bytes against
+another format's limit. It never names `parquet-raw`: that descriptor has
+no `estimateBytes` (its size comes from file metadata, not a schema+rows
+model), so the comparison loop skips it; a breach on the raw path itself
+reports `suggestedFormats: []` outright, since no candidate loop runs there
+at all. Don't read either list as exhaustive — call `formats()` directly if
+an unusual format might actually serve the request.
+
+### The ceiling: derived from the format and the sink, not one flat number
+
+Since 2026-11-20, `estimate()`/`download()` compute the ceiling with
+`effectiveCeiling({ format, sink, overrides: options.ceiling })` — a format's
+own memory cost and the sink it is writing into, not one flat
+`outputBytes` for every format. `defaultCeiling()` is **unchanged** (kept for
+any existing caller that built on its flat shape directly) but is no longer
+what the public functions use.
+
+Flat limits, the same for every format (raised from `defaultCeiling()`'s
+values now that `outputBytes` carries its own weight):
 
 | limit | default |
 |---|---|
-| `rows` | 5,000,000 |
-| `outputBytes` | 2 GiB |
-| `readBytes` | 4 GiB |
-| `files` | 500 |
-| `blobBytes` | 256 MiB — Blob-sink only, because a Blob is held in memory. |
+| `rows` | 50,000,000 |
+| `readBytes` | 64 GiB |
+| `files` | 10,000 |
+| `blobBytes` | 256 MiB — the budget for a streaming format's `outputBytes` on a `blob` sink, or when `sink` is not yet known. |
 
-A non-streaming format (`geoparquet`) whose `outputBytes.max` exceeds
-`blobBytes` also breaches `blobBytes`, regardless of sink, because it buffers
-in memory.
+`outputBytes` is derived from `memoryFactorOf(format)` — `format.capabilities.memoryFactor`,
+read without needing the format's `load()` to have run, defaulting to `0` for
+a `streaming` format and `3` otherwise:
+
+- **`memoryFactor === 0`** (streaming — `geojson`, `parquet-raw`): the format
+  holds nothing of its own, so `outputBytes` is the 1 TiB sentinel
+  `UNBOUNDED_BYTES` on a disk-backed (`filesystem`) sink or a `memory` sink,
+  and `blobBytes` on a `blob` sink or `sink: null` (not yet created — the
+  conservative choice when the real sink isn't known).
+- **`memoryFactor > 0`** (buffering — `geoparquet` declares `2`, `@cng/format-gpkg`'s
+  `gpkg` declares `2.9`): `outputBytes = Math.floor(memoryBudget / memoryFactor)`,
+  where `memoryBudget` defaults to **1 GiB** (`MEMORY_BUDGET_DEFAULT`) —
+  **regardless of sink**, because the cost (row arrays, a wasm heap, an
+  export copy) is spent inside the writer itself, not wherever the bytes
+  land.
+
+**The `memory`-sink exemption applies only when `memoryFactor === 0`.** A
+buffering format is `memoryBudget / memoryFactor` on a `memorySink` exactly
+as on any other sink — it is not a loophole, because the format's own
+buffering cost doesn't care where the output ends up. (An earlier draft of
+this derivation waived the budget for *any* format on a memory sink, which
+left `gpkg` unbounded there; fixed before release.)
+
+An explicit `overrides.outputBytes` (i.e. `options.ceiling.outputBytes`)
+always wins over either derivation. Import `effectiveCeiling`,
+`memoryFactorOf`, `UNBOUNDED_BYTES`, `MEMORY_BUDGET_DEFAULT` to compute the
+same numbers a UI would show before calling `download()`.
 
 ### `downloadRequest(request, area, options?) => DownloadHandle`
 
@@ -491,6 +564,7 @@ exported for direct use.
 |---|---|---|---|---|---|
 | built in | `geojson` | `.geojson` | `application/geo+json` | **yes** | `precision` (7), `newlineDelimited` (false → RFC 8142 sequences), `featureIdColumn` |
 | built in | `geoparquet` | `.parquet` | `application/vnd.apache.parquet` | **no** | `compression` (`'snappy'`), `rowGroupSize` (50,000), `writeCovering` (true) |
+| built in | `parquet-raw` | `.parquet` (or `.zip`, multi-file) | `application/vnd.apache.parquet` (`application/zip` for the multi-file case) | **yes** | none — see "Raw GeoParquet passthrough" below |
 
 #### `estimateBytes(schema, rows, ctx?)` — the output-size model
 
@@ -640,6 +714,74 @@ download(dataset, area, filter,
 `'none'`. The design doc defaults to zstd; that is not achievable today, and
 guessing would produce a file that claims a codec it did not use.
 
+### Raw GeoParquet passthrough (`parquet-raw`)
+
+`output.format: 'parquet-raw'` is not a decode-and-re-encode format like the
+two above — it streams the **original published parquet bytes** straight
+through: one selected file verbatim, never zipped even for a share-alike
+license ("just get people the file"), or several files plus a generated
+`ATTRIBUTION.txt` streamed into a zip64 archive when more than one survives
+pruning. Nothing is read beyond the HTTP response bodies themselves: no
+footer, no row group, no row-level filter.
+
+Supported `dataset.source.kind`: `parquet`, `parquet-set`, `hive`,
+`stac-geoparquet`. Not `portolan-collection` directly — call `resolveDataset()`
+first, same as every other recipe. Only whole-file pruning runs (the
+existing partition/time/bbox stages against a file's own declared metadata),
+and `area.bboxes` is what gets compared, never the signed, antimeridian-
+wrapping `area.bbox`.
+
+```js
+import { estimate, download, memorySink } from '@cng/download-core';
+
+const output = { spec: 'cng-output/1.0', format: 'parquet-raw' };
+const est = await estimate(dataset, area, filter, { output });
+est.rowGroups;   // { total: 0, selected: 0 } -- none is ever examined
+est.columns;     // [] -- no projection; every column of every file passes through
+est.rows;        // null when any selected file has no declared rowCount (the common
+                // case for STAC-sourced parts) -- an honest unknown, not a model
+
+const handle = download(dataset, area, filter, output, { sink: memorySink() });
+const result = await handle.result;
+result.bytes;    // the ORIGINAL file's byte count, for a single selected file
+```
+
+Zero matching files throws `FILTER_NO_MATCH`, not an empty result — there is
+no "0 rows, still a valid file" state on this path.
+
+Because nothing is decoded, `outputBytes`/`readBytes` can be **exact**
+instead of modeled — the reason this path exists — but only when every
+selected file's size is resolvable (its own declared `bytes`, else one
+`HEAD` per sizeless file, never allowed to throw). When at least one size is
+unknown: the reported `Bounded` keeps `max: Infinity` and `exact: false` (an
+honest upper bound, never a guess), but the ceiling's `outputBytes`/
+`readBytes` breach checks are judged against the sum of **known** sizes
+only, so an unknown size alone can never manufacture a breach — a deliberate
+choice (warn, then always proceed) over the alternative (warn, then require
+explicit acceptance), because every STAC-sourced file publishes no size at
+all and that is the common case this path serves, not an edge case. `files`
+(the file count) is the one ceiling dimension that stays a hard backstop
+regardless of size knowledge. See the warning codes above
+(`raw-size-unknown`, `raw-no-pruning`, `raw-passthrough-unfiltered`).
+
+`estimate()` (the public one, from this package's `index.js`) routes
+`output.format === 'parquet-raw'` to `planRaw`/`rawEstimate` (both exported)
+instead of the normal decode-path `estimate()`, and reads **no parquet
+footers at all** — routing matters because the normal path would otherwise
+both throw (`rawFormatDescriptor` deliberately has no `estimateBytes`) and,
+even without the throw, do exactly the footer reads this path exists to
+avoid. `estimate` imported directly from `src/estimate.js` (as that module's
+own unit tests do) does **not** route; only this package's public entry
+point does.
+
+`parquet-raw` is registered (so `formats()` lists it) but never resolved
+into the normal decode pipeline — `download()` branches to the raw path on
+`output.format === RAW_FORMAT_ID` before any `getFormat()`/`resolveFormat()`
+call. It is also never a `CeilingExceededError.context.suggestedFormats`
+candidate for a *different* format's breach, because it has no
+`estimateBytes` to compare; a breach on the raw path's own ceiling reports
+`suggestedFormats: []` outright.
+
 ### Sinks
 
 | export | notes |
@@ -749,6 +891,7 @@ be reworded.**
 | `FILTER_UNKNOWN_COLUMN` | no | Name the column and the nearest match. |
 | `FILTER_UNSUPPORTED_PREDICATE` | no | The engine cannot express the predicate. |
 | `FILTER_REQUIRES_ENGINE` | no | "This filter needs the DuckDB engine plugin." Names the requirement (`sql`, `exact-clip`, `dissolve`). |
+| `FILTER_NO_MATCH` | no | Raw passthrough only (`output.format: 'parquet-raw'`): no file in the dataset matches the area/time/partition filter. `context.files` is how many files existed before the filter — there is no "0 rows, still a valid file" state on this path. |
 | `AREA_ANTIMERIDIAN_CLIP` | no | "Exact clip is not available across the antimeridian. Use intersects." |
 | `CEILING_EXCEEDED` | no | **The refusal path.** Show the estimate, the limit, and a "download anyway" that calls `acceptCeiling()`. |
 | `FORMAT_UNAVAILABLE` | no | No plugin registered for that format id. "GeoPackage output needs the @cng/format-gpkg plugin." |
@@ -903,10 +1046,14 @@ This is why the project built an optimized mirror instead.
 
 ### `geoparquet` output buffers everything in memory
 
-`streaming: false`. `hyparquet-writer`'s `parquetWriteBuffer` wants the whole
-column-oriented dataset up front, so the whole result is held before a byte is
-written. The `blobBytes` ceiling check applies regardless of sink. Use
-`geojson` with `newlineDelimited: true` for anything genuinely large.
+`streaming: false`, `capabilities.memoryFactor: 2`. `hyparquet-writer`'s
+`parquetWriteBuffer` wants the whole column-oriented dataset up front, so the
+whole result is held before a byte is written. `effectiveCeiling` sets its
+`outputBytes` to `memoryBudget / 2` (≈ 512 MiB at the 1 GiB default budget)
+**regardless of sink** — a buffering format's memory cost is spent inside the
+writer, not wherever the bytes land, so a `memory` sink does not exempt it
+the way it exempts a streaming format. Use `geojson` with
+`newlineDelimited: true` for anything genuinely large.
 
 ### Parallel reads are ordered, and the win depends on the query
 

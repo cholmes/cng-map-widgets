@@ -690,9 +690,15 @@ async function groupDownload() {
 
   await snippet('download-core/README', 'VERSION + the built-in registries', async () => {
     assert.equal(VERSION, '0.2.0');
-    assert.deepEqual(formats().map((f) => f.id).sort(), ['geojson', 'geoparquet']);
+    // `parquet-raw` (recipe 3e / the raw-passthrough format) is registered
+    // as a side effect of this package's index.js alongside geojson and
+    // geoparquet -- listed by `formats()` for a picker, but never resolved
+    // into the normal decode pipeline (download() branches to it before any
+    // getFormat()/resolveFormat() call).
+    assert.deepEqual(formats().map((f) => f.id).sort(), ['geojson', 'geoparquet', 'parquet-raw']);
     assert.equal(formats().find((f) => f.id === 'geojson').streaming, true);
     assert.equal(formats().find((f) => f.id === 'geoparquet').streaming, false);
+    assert.equal(formats().find((f) => f.id === 'parquet-raw').streaming, true);
     assert.deepEqual(engines().map((e) => e.id), ['hyparquet']);
     assert.deepEqual([...engines()[0].capabilities], ['bbox', 'intersects']);
     assert.deepEqual(defaultCeiling(), {
@@ -1192,6 +1198,33 @@ async function groupAgents() {
     // CC-BY-SA-3.0-IGO: the estimate tells you the output carries share-alike.
     assert.ok(est.warnings.some((w) => w.code === 'share-alike'));
     return `${est.files.selected}/${est.files.total} year partitions, ${est.rowGroups.selected}/${est.rowGroups.total} row groups, ${est.requests} requests`;
+  });
+
+  await snippet('AGENTS.md', 'recipe 3e: parquet-raw passthrough (original bytes, not decoded)', async () => {
+    const dataset = ftwLiechtensteinDescriptor();
+    const filter = { spec: 'cng-filter/1.0', spatial: { mode: 'intersects' } };
+    const output = { spec: 'cng-output/1.0', format: 'parquet-raw' };
+
+    const est = await estimate(dataset, area, filter, { output });
+    assert.deepEqual(est.rowGroups, { total: 0, selected: 0 }, 'no row group is ever examined on this path');
+    assert.deepEqual(est.columns, [], 'no projection -- every column of every file passes through');
+    assert.equal(est.files.selected, 1);
+    assert.equal(est.rows, null, 'the source parquet declares no rowCount, so this is an honest unknown, not a model');
+    assert.ok(
+      est.warnings.some((w) => w.code === 'raw-passthrough-unfiltered' && w.dropped.includes('spatial-row-level')),
+      'the intersects filter asked for row-level filtering this path never applies',
+    );
+
+    const sink = memorySink();
+    const handle = download(dataset, area, filter, output, { sink });
+    const result = await handle.result;
+    assert.equal(result.truncated, false);
+
+    const original = new Uint8Array(await fetch(FTW_LI_URL).then((r) => r.arrayBuffer()));
+    const written = Buffer.concat(sink.chunks.map(Buffer.from));
+    assert.equal(written.length, original.byteLength, 'single selected file -- the ORIGINAL bytes, unmodified');
+    assert.ok(written.equals(Buffer.from(original)), 'byte-for-byte identical to the published file');
+    return `${written.length} bytes, byte-for-byte identical to the published file`;
   });
 
   await snippet('AGENTS.md', 'recipe 4: run a download, handling the estimate and the ceiling', async () => {

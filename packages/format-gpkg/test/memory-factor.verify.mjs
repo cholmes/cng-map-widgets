@@ -21,10 +21,15 @@
 //
 // It re-execs itself once per case (with --expose-gc, so each case's
 // process can force a GC sample right before reporting) and prints the
-// per-case ratio plus the measured maximum, which is the number that
-// belongs in `memoryFactor` (rounded up to one decimal) on both
+// per-case ratio, plus TWO summary lines -- read both, not just the
+// first: the max across ALL cases (includes the 100-vertex case, whose
+// huge ratio is fixed Node+wasm baseline RSS swamping a ~4 MB output,
+// NOT a per-byte buffering cost) and the max across the large/realistic
+// cases alone, which is the number that actually belongs in
+// `memoryFactor` (rounded up to one decimal) on both
 // `gpkgFormatDescriptor.capabilities` (src/index.js) and the plugin's
-// own `capabilities` (src/gpkg-writer.js).
+// own `capabilities` (src/gpkg-writer.js). A reader skimming only the
+// first summary line will get the wrong number -- see the printed NOTE.
 
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -143,12 +148,16 @@ async function main() {
 
   console.log('\nrows\tvertices/row\toutput\t\tpeak RSS\tpeakRss/outputBytes');
   let maxFactor = 0;
+  let maxFactorExcludingOutlier = 0;
+  const OUTLIER_VERTICES = 100; // see the NOTE below -- baseline RSS, not a buffering cost
   for (const r of results) {
     const factor = r.peakRss / r.outputBytes;
     maxFactor = Math.max(maxFactor, factor);
+    if (r.vertices !== OUTLIER_VERTICES) maxFactorExcludingOutlier = Math.max(maxFactorExcludingOutlier, factor);
     console.log(`${r.rows}\t${r.vertices}\t\t${fmtMB(r.outputBytes)}\t${fmtMB(r.peakRss)}\t${factor.toFixed(2)}x`);
   }
-  console.log(`\nmeasured maximum factor across all cases: ${maxFactor.toFixed(2)}x`);
+  console.log(`\nmeasured maximum factor across ALL cases (including the excluded ${OUTLIER_VERTICES}-vertex baseline-RSS outlier -- see NOTE below, do NOT use this number for memoryFactor): ${maxFactor.toFixed(2)}x`);
+  console.log(`measured maximum factor EXCLUDING that outlier (this is the number that belongs in memoryFactor, rounded up): ${maxFactorExcludingOutlier.toFixed(2)}x`);
   console.log(
     '\nNOTE: the smallest case (100 vertices/row, ~4 MB output) carries a large,\n' +
     'repeatable ratio that is NOT a per-byte buffering cost -- it is the fixed\n' +
