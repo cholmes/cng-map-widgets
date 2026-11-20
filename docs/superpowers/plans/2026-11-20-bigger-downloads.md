@@ -182,6 +182,7 @@ git commit -m "feat(download-core): streaming zip64 writer for non-seekable sink
 - Modify: `packages/download-core/src/formats/geojson.js:73-74`, `packages/download-core/src/formats/geoparquet.js:93-94`
 - Modify: `packages/download-core/src/registry.js:38` (the `capabilities` typedef)
 - Modify: `packages/format-shapefile/src/index.js`, `packages/format-flatgeobuf/src/index.js` (declare or document the factor)
+- Modify: `packages/format-gpkg/src/index.js` and `packages/format-gpkg/src/gpkg-writer.js` (declare `memoryFactor: 3.5`)
 - Test: `packages/download-core/test/ceiling.test.js`
 
 **Interfaces:**
@@ -212,6 +213,11 @@ test('a streaming format on a blob sink is capped at blobBytes', () => {
 test('memorySink is exempt from the memory budget', () => {
   const c = effectiveCeiling({ format: streaming, sink: { kind: 'memory' } });
   assert.equal(c.outputBytes, 1024 ** 4);
+});
+
+test('gpkg declares the measured 3.5, not the default 3', async () => {
+  const { gpkgFormatDescriptor } = await import('@cng/format-gpkg');
+  assert.equal(memoryFactorOf(gpkgFormatDescriptor), 3.5);
 });
 
 test('a buffering format is memoryBudget / memoryFactor regardless of sink', () => {
@@ -246,6 +252,8 @@ Expected: FAIL — `effectiveCeiling` is not exported.
 - [ ] **Step 3: Implement `effectiveCeiling` and `memoryFactorOf` in `packages/download-core/src/ceiling.js`**
 
 An explicit `overrides.outputBytes` wins over any derivation. `sink: null` (not yet created) is treated as memory-backed, the conservative direction. Add `memoryFactor: 0` to `geojson.js`'s capabilities and `memoryFactor: 2` to `geoparquet.js`'s, and document the field in `registry.js`'s `capabilities` typedef.
+
+`format-gpkg` must declare `memoryFactor: 3.5` — the value measured in spec §1 for the *current* writer — on both `gpkgFormatDescriptor.capabilities` and the plugin's. Leaving it absent would apply the default of 3, understating gpkg's real cost and raising its ceiling above what memory can take: spec anti-goal §4.1. Task 9 revises this to the post-change measured value.
 
 For `format-shapefile` and `format-flatgeobuf` (spec §8): either measure the factor with the same method as Task 9 Step 5 and declare it, or leave the field absent so the default of 3 applies and add one line to that package's README saying the factor is unmeasured. Do not declare a guessed number — the ceiling is computed from it.
 
