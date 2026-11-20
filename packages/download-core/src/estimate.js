@@ -65,6 +65,28 @@ function topLevelSchemaColumns(schema) {
   return out;
 }
 
+/**
+ * Default byte threshold above which `finalizeEstimate` raises
+ * `large-download` (`options.largeDownloadBytes` overrides it). Strictly
+ * exceeded, not reached: exactly this many bytes does not warn -- see the
+ * boundary test in download-size-warnings.test.js.
+ */
+export const DEFAULT_LARGE_DOWNLOAD_BYTES = 1024 ** 3; // 1 GiB
+
+/**
+ * Default assumed throughput (`options.throughputBytesPerSecond`) that
+ * `finalizeEstimate` divides `outputBytes.estimate` by to produce
+ * `estimatedSeconds` on both the `large-download` and `slow-download`
+ * warnings. This is NOT a measurement of anything this request did --
+ * it is a fixed, rough assumption about network speed, so a UI must
+ * present `estimatedSeconds` as an approximation ("about N seconds, at an
+ * assumed 10 MB/s"), never as a countdown or a promise.
+ */
+export const DEFAULT_THROUGHPUT_BYTES_PER_SECOND = 10_000_000;
+
+/** Seconds above which `finalizeEstimate` raises `slow-download`. */
+export const SLOW_DOWNLOAD_SECONDS = 120;
+
 /** Guess a minimal `DatasetTable` from a parquet schema when the descriptor didn't declare one. @param {{ schema: readonly { name: string, num_children?: number }[] }} metadata */
 export function inferTableFromSchema(metadata) {
   const topLevel = topLevelSchemaColumns(metadata.schema);
@@ -416,6 +438,19 @@ export async function finalizeEstimate(plan, area, filter, options = {}, t0 = pe
   // rather than letting a full scan look like an unselective predicate.
   if (plan.whereDecidable && !plan.whereStatsSeen) {
     warnings.push({ code: 'no-statistics', message: 'No column statistics for the where[] predicate columns; the predicate could not prune row groups and is applied per row after the read.' });
+  }
+  // `estimatedSeconds` is a rough ETA from a fixed, assumed throughput --
+  // never a measurement of this request -- shared by both warnings below
+  // so a UI showing one can't disagree with the other (see module doc on
+  // `DEFAULT_THROUGHPUT_BYTES_PER_SECOND`).
+  const throughputBytesPerSecond = options.throughputBytesPerSecond ?? DEFAULT_THROUGHPUT_BYTES_PER_SECOND;
+  const largeDownloadBytes = options.largeDownloadBytes ?? DEFAULT_LARGE_DOWNLOAD_BYTES;
+  const estimatedSeconds = Math.round(outputBytes.estimate / throughputBytesPerSecond);
+  if (outputBytes.estimate > largeDownloadBytes) {
+    warnings.push({ code: 'large-download', context: { bytes: outputBytes.estimate, estimatedSeconds } });
+  }
+  if (estimatedSeconds > SLOW_DOWNLOAD_SECONDS) {
+    warnings.push({ code: 'slow-download', context: { estimatedSeconds } });
   }
 
   const breaches = [];
