@@ -190,7 +190,13 @@ const pickerRows = await page.$$eval('#formatPicker .format-option', (rows) =>
   })),
 );
 console.log('Format picker rows (before any selection):', pickerRows);
-check(pickerRows.length === FORMATS.length, `format picker lists all ${FORMATS.length} formats (got ${pickerRows.length})`);
+// +1: `parquet-raw` (Task 11) is listed here too, but deliberately not in
+// `FORMATS` -- the decode-every-format loop below asserts `result.rows` is
+// truthy and matches an ogrinfo/duckdb feature count, neither of which
+// holds for a raw passthrough of a dataset whose source declares no
+// `rowCount` (see PART 6 below, which exercises parquet-raw on its own
+// terms: a real byte-for-byte proof instead).
+check(pickerRows.length === FORMATS.length + 1, `format picker lists all ${FORMATS.length} decode formats plus parquet-raw (got ${pickerRows.length})`);
 const gpkgRow = pickerRows.find((r) => r.id === 'gpkg');
 check(!!gpkgRow && /loads ~339 KB on first use/.test(gpkgRow.text), `GeoPackage shows its weight before selection ("${gpkgRow?.text}")`);
 const fgbRow = pickerRows.find((r) => r.id === 'flatgeobuf');
@@ -568,6 +574,205 @@ console.log('\n=== PART 4: edit a boundary, then prove the download changed ==='
 
   check(errors4.length === 0, `no console errors on the edit-boundary path (${errors4.length}: ${errors4.join('; ')})`);
   await editPage.close();
+}
+
+// --- PART 5: "Max rows" -- no cap by default, respects an explicit value --
+// The regression this whole task exists for: examples/download-demo used
+// to hardcode `limit: 2000` in buildFilter(), which is why a tester
+// couldn't get more than 2000 rows out of this demo. Asserts on the demo's
+// own `buildFilter` function (exposed on `window.__cngDownloadDemo` for
+// exactly this), per Ruling R4 -- not a reimplementation of its logic here. -
+console.log('\n=== PART 5: Max rows input -- no cap by default, respects an explicit value ===');
+{
+  const page5 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const errors5 = [];
+  page5.on('pageerror', (e) => errors5.push(e.message));
+  page5.on('console', (m) => { if (m.type() === 'error') errors5.push(m.text()); });
+
+  await page5.goto(url, { waitUntil: 'load' });
+  await page5.waitForSelector('input[role="combobox"]', { timeout: 20_000 });
+
+  const filterNoLimit = await page5.evaluate(() => {
+    const demo = window.__cngDownloadDemo;
+    return demo.buildFilter(demo.currentEntry());
+  });
+  console.log('buildFilter() with Max rows empty:', filterNoLimit);
+  check(!('limit' in filterNoLimit), `buildFilter() has no "limit" key at all when Max rows is empty (got keys: ${Object.keys(filterNoLimit).join(', ')})`);
+
+  await page5.fill('#maxRows', '10');
+  const filterWithLimit = await page5.evaluate(() => {
+    const demo = window.__cngDownloadDemo;
+    return demo.buildFilter(demo.currentEntry());
+  });
+  console.log('buildFilter() with Max rows = 10:', filterWithLimit);
+  check(filterWithLimit.limit === 10, `buildFilter() carries the Max rows value through as filter.limit once set (got ${filterWithLimit.limit})`);
+  await page5.fill('#maxRows', '');
+
+  check(errors5.length === 0, `no console errors on the Max rows path (${errors5.length}: ${errors5.join('; ')})`);
+  await page5.close();
+}
+
+// --- PART 6: parquet-raw -- downloads the real, original, unfiltered
+// bytes, with the raw-passthrough-unfiltered warning rendered prominently
+// and a copyable list of the real source URL(s) shown beside the option. -
+console.log('\n=== PART 6: parquet-raw -- downloads the real, original, unfiltered bytes ===');
+{
+  const page6 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const errors6 = [];
+  page6.on('pageerror', (e) => errors6.push(e.message));
+  page6.on('console', (m) => { if (m.type() === 'error') errors6.push(m.text()); });
+
+  await page6.goto(url, { waitUntil: 'load' });
+  await page6.waitForSelector('input[role="combobox"]', { timeout: 20_000 });
+
+  const formatOptionValues = await page6.$$eval('#formatPicker .format-option input', (els) => els.map((e) => e.value));
+  console.log('Format option values:', formatOptionValues);
+  check(formatOptionValues.includes('parquet-raw'), `format picker includes parquet-raw (${formatOptionValues.join(', ')})`);
+  const rawLabel = await page6.$eval('#formatPicker .format-option[data-format-id="parquet-raw"] .format-label', (el) => el.textContent);
+  check(/original files/i.test(rawLabel) && /unfiltered/i.test(rawLabel), `parquet-raw's picker label names it as original/unfiltered ("${rawLabel}")`);
+
+  const rawUrlsText = await page6.$eval('#rawSourceUrls textarea', (el) => el.value);
+  console.log('raw source URLs box (before any format is selected):', rawUrlsText);
+  check(/Liechtenstein\.parquet/.test(rawUrlsText), `the raw-format source URL list names the real source file for the default dataset ("${rawUrlsText}")`);
+
+  // ftw-li's own `where`/`columns` filter (set regardless of format, plus
+  // the spatial intersects filter once an area is picked) is what trips
+  // raw-passthrough-unfiltered: none of it applies on this path.
+  await page6.click('input[role="combobox"]');
+  await page6.type('input[role="combobox"]', 'liechtenstein', { delay: 20 });
+  await page6.waitForSelector('li[role="option"]', { timeout: 30_000 });
+  await page6.keyboard.press('ArrowDown');
+  await page6.keyboard.press('Enter');
+  await page6.waitForFunction(() => !document.getElementById('areaInfo')?.textContent?.startsWith('Search for a place'), undefined, { timeout: 40_000 });
+
+  await page6.check('#formatPicker input[value="parquet-raw"]');
+  await page6.click('#downloadBtn');
+
+  await page6.waitForFunction(
+    () => {
+      const t = document.getElementById('downloadInfo')?.textContent ?? '';
+      return t.startsWith('Done:') || t.startsWith('Error');
+    },
+    undefined,
+    { timeout: 60_000 },
+  );
+  const downloadInfo6 = await page6.textContent('#downloadInfo');
+  console.log('parquet-raw download info:', downloadInfo6);
+  check(downloadInfo6.startsWith('Done:'), `parquet-raw download completed (${downloadInfo6})`);
+
+  const prominentText = await page6.textContent('#prominentWarnings');
+  console.log('prominent warnings box:', prominentText);
+  check(/RAW PASSTHROUGH/.test(prominentText ?? ''), `raw-passthrough-unfiltered is rendered in the prominent warnings box ("${prominentText}")`);
+
+  const result6 = await page6.evaluate(() => window.__cngLastResult);
+  check(result6?.format === 'parquet-raw', `result.format is parquet-raw (${result6?.format})`);
+
+  // THE strong proof: the downloaded bytes are byte-for-byte the real,
+  // live, original published source file -- nothing decoded or re-encoded.
+  const downloadedBase64 = await page6.evaluate(async () => {
+    const link = document.getElementById('downloadLink');
+    const resp = await fetch(link.href);
+    const buf = await resp.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  });
+  const downloadedBytes = Buffer.from(downloadedBase64, 'base64');
+  const originalRes = await fetch(
+    'https://data.source.coop/ftw/global-data/predictions/vectors/alpha/results-by-admin-conf/admin:country_code=LI/Liechtenstein.parquet',
+  );
+  const originalBytes = Buffer.from(await originalRes.arrayBuffer());
+  check(
+    downloadedBytes.length === originalBytes.length,
+    `downloaded parquet-raw file is the same size as the live original (${downloadedBytes.length} vs ${originalBytes.length})`,
+  );
+  check(downloadedBytes.equals(originalBytes), 'downloaded parquet-raw bytes are byte-for-byte identical to the live original source file');
+
+  check(errors6.length === 0, `no console errors on the parquet-raw path (${errors6.length}: ${errors6.join('; ')})`);
+  await page6.close();
+}
+
+// --- PART 7: a large-download warning gates the download behind an
+// explicit confirm click, BEFORE anything is fetched -- using a real,
+// live, tiny Liechtenstein download against an artificially low
+// `largeDownloadBytes` threshold (a documented estimate()/download()
+// option, overridable here only via a `?largeDownloadBytes=` query param
+// this page reads for exactly this reason) so the warning is reachable
+// without needing a multi-GB live file. -----------------------------------
+console.log('\n=== PART 7: large-download triggers an explicit confirm gate before anything starts ===');
+{
+  const page7 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const errors7 = [];
+  page7.on('pageerror', (e) => errors7.push(e.message));
+  page7.on('console', (m) => { if (m.type() === 'error') errors7.push(m.text()); });
+
+  await page7.goto(`${url}?largeDownloadBytes=1000`, { waitUntil: 'load' });
+  await page7.waitForSelector('input[role="combobox"]', { timeout: 20_000 });
+  await page7.click('input[role="combobox"]');
+  await page7.type('input[role="combobox"]', 'liechtenstein', { delay: 20 });
+  await page7.waitForSelector('li[role="option"]', { timeout: 30_000 });
+  await page7.keyboard.press('ArrowDown');
+  await page7.keyboard.press('Enter');
+  await page7.waitForFunction(() => !document.getElementById('areaInfo')?.textContent?.startsWith('Search for a place'), undefined, { timeout: 40_000 });
+
+  await page7.check('#formatPicker input[value="geojson"]');
+  await page7.click('#downloadBtn');
+
+  // The confirm box must appear BEFORE any download result -- the only
+  // real network activity so far is a metadata-only footer read.
+  await page7.waitForFunction(() => document.getElementById('confirmBox')?.style.display === 'block', undefined, { timeout: 30_000 });
+  const statusText = await page7.textContent('#confirmBox');
+  console.log('confirm box text:', statusText);
+  check(/confirm/i.test(statusText ?? ''), `an artificially small largeDownloadBytes threshold gates the download behind an explicit confirm ("${statusText}")`);
+  const downloadInfoBeforeConfirm = await page7.textContent('#downloadInfo');
+  check(!downloadInfoBeforeConfirm?.startsWith('Done:'), 'nothing has completed yet while the confirm box is showing -- the user has not acted');
+
+  await page7.click('#confirmDownloadBtn');
+  await page7.waitForFunction(() => (document.getElementById('downloadInfo')?.textContent ?? '').startsWith('Done:'), undefined, { timeout: 60_000 });
+  const result7 = await page7.evaluate(() => window.__cngLastResult);
+  console.log('PART 7 post-confirm result:', await page7.textContent('#downloadInfo'));
+  check(!!result7?.rows, `after confirming, the download actually runs and produces rows (${result7?.rows ?? 'none'})`);
+
+  check(errors7.length === 0, `no console errors on the confirm-gate path (${errors7.length}: ${errors7.join('; ')})`);
+  await page7.close();
+}
+
+// --- PART 8: the headline regression -- a real download, no Max rows set,
+// exceeding the old hardcoded 2000-row cap on real, live data. CGAZ ADM2
+// (DATASETS' `cgaz-adm2` entry) is 49,349 units in one file; "no area"
+// means the whole dataset, so this is guaranteed to exceed 2000 without
+// depending on how many units happen to fall inside some search result. ---
+console.log('\n=== PART 8: no Max rows set -- a real download exceeds the old 2000-row cap ===');
+{
+  const page8 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const errors8 = [];
+  page8.on('pageerror', (e) => errors8.push(e.message));
+  page8.on('console', (m) => { if (m.type() === 'error') errors8.push(m.text()); });
+
+  await page8.goto(url, { waitUntil: 'load' });
+  await page8.waitForSelector('#dataset', { timeout: 20_000 });
+  await page8.selectOption('#dataset', 'cgaz-adm2');
+  // Deliberately no area, no Max rows value: the whole 49,349-row file.
+  await page8.check('#formatPicker input[value="geojson"]');
+  await page8.click('#downloadBtn');
+
+  await page8.waitForFunction(
+    () => {
+      const t = document.getElementById('downloadInfo')?.textContent ?? '';
+      return t.startsWith('Done:') || t.startsWith('Error');
+    },
+    undefined,
+    { timeout: 180_000 },
+  );
+  const downloadInfo8 = await page8.textContent('#downloadInfo');
+  console.log('PART 8 (cgaz-adm2, no area, no Max rows) download info:', downloadInfo8);
+  const result8 = await page8.evaluate(() => window.__cngLastResult);
+  check(downloadInfo8.startsWith('Done:'), `the uncapped cgaz-adm2 download completed (${downloadInfo8})`);
+  check(typeof result8?.rows === 'number' && result8.rows > 2000, `the real row count (${result8?.rows}) exceeds the old hardcoded 2000-row cap`);
+
+  check(errors8.length === 0, `no console errors on the uncapped-download path (${errors8.length}: ${errors8.join('; ')})`);
+  await page8.close();
 }
 
 await browser.close();

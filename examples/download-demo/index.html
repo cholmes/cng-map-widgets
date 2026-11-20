@@ -27,6 +27,10 @@
   .cng-draw-ctrl button.armed { background: #1a73e8; color: #fff; }
   #areaInfo, #estimateInfo, #downloadInfo { font-size: 12px; background: #f7f7f7; border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
   #ceilingBox { display: none; background: #fff3cd; border: 1px solid #c99; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 12px; }
+  #confirmBox { display: none; background: #fde2e2; border: 1px solid #c33; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 12px; }
+  #prominentWarnings { display: none; background: #fff3cd; border: 1px solid #c99; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 12px; font-weight: 600; color: #7a4a00; white-space: pre-wrap; word-break: break-word; }
+  #rawSourceUrls { margin: 0 6px 6px 24px; }
+  #rawSourceUrls textarea { width: 100%; font-size: 10px; font-family: ui-monospace, monospace; box-sizing: border-box; }
   .row { display: flex; gap: 6px; }
   .row > button { flex: 1; }
   progress { width: 100%; margin-top: 6px; }
@@ -86,10 +90,21 @@
     <button id="estimateBtn">Estimate (optional preview)</button>
   </div>
   <div id="estimateInfo" style="display:none;"></div>
+  <div id="prominentWarnings"></div>
   <div id="ceilingBox">
     <div id="ceilingText"></div>
     <button id="acceptCeilingBtn">Download anyway</button>
   </div>
+  <div id="confirmBox">
+    <div id="confirmText"></div>
+    <div class="row">
+      <button id="confirmDownloadBtn" class="primary">Confirm download</button>
+      <button id="cancelConfirmBtn">Cancel</button>
+    </div>
+  </div>
+
+  <label for="maxRows">Max rows (optional — blank = no limit)</label>
+  <input type="number" id="maxRows" min="1" step="1" placeholder="no limit">
 
   <label>Download format</label>
   <div id="formatPicker"></div>
@@ -113,6 +128,7 @@ import {
   CeilingExceededError,
   registerLazyFormat,
   formats as listFormats,
+  RAW_FORMAT_ID,
 } from '@cng/download-core';
 
 // Heavy/lazy output formats (design doc §3.4 amendment,
@@ -259,6 +275,22 @@ const indexUrl = indexParam === 'local'
   : indexParam && indexParam.includes('/') ? indexParam
   : DEFAULT_INDEX_URL;
 
+// Test-only knobs (never surfaced in the UI): `estimate()`/`download()` both
+// already accept `largeDownloadBytes`/`throughputBytesPerSecond` overrides
+// (estimate.js, raw.js) so the `large-download`/`slow-download` warnings
+// are reachable with real, small, live data in a verifier -- none of this
+// demo's real datasets are anywhere near the 1 GiB default threshold.
+// Absent these params, the library's real production defaults apply.
+const testParams = new URLSearchParams(location.search);
+const largeDownloadBytesOverride = testParams.has('largeDownloadBytes') ? Number(testParams.get('largeDownloadBytes')) : undefined;
+const throughputOverride = testParams.has('throughputBytesPerSecond') ? Number(testParams.get('throughputBytesPerSecond')) : undefined;
+function sizeWarningOptions() {
+  const opts = {};
+  if (largeDownloadBytesOverride !== undefined) opts.largeDownloadBytes = largeDownloadBytesOverride;
+  if (throughputOverride !== undefined) opts.throughputBytesPerSecond = throughputOverride;
+  return opts;
+}
+
 let area = null; // null = "no area" (whole dataset)
 const map = new maplibregl.Map({
   container: 'map',
@@ -393,19 +425,79 @@ map.on('error', (e) => setStatus('Map style failed to load (offline?) — the re
 
 // --- Estimate ------------------------------------------------------------
 
+/** The new "Max rows" input: empty/invalid -> `undefined`, which
+ *  `buildFilter` then omits entirely (no `limit` key at all) rather than
+ *  substituting some other default cap -- the brief is explicit that
+ *  empty means NO limit, not a smaller hardcoded one. */
+function maxRowsLimit() {
+  const raw = document.getElementById('maxRows').value.trim();
+  if (raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
 function buildFilter(entry, spatialMode = 'intersects') {
-  return {
+  const filter = {
     spec: 'cng-filter/1.0',
     spatial: { mode: area ? spatialMode : 'bbox' },
     where: entry.where,
     columns: entry.outputColumns,
-    limit: 2000,
   };
+  const limit = maxRowsLimit();
+  if (limit !== undefined) filter.limit = limit;
+  return filter;
+}
+
+/** Shared by the manual Estimate button, the pre-download confirm gate,
+ *  AND startDownload's own auto-fill from `handle.estimate`. */
+function outputFor(entry, formatId) {
+  const fmtInfo = listFormats().find((f) => f.id === formatId);
+  const extension = fmtInfo?.extension ?? formatId;
+  return { spec: 'cng-output/1.0', format: formatId, filename: `${entry.key}.${extension}` };
 }
 
 function formatBounded(b, unit = '') {
   if (b.exact) return `${Math.round(b.estimate).toLocaleString()}${unit}`;
-  return `~${Math.round(b.estimate).toLocaleString()}${unit} (range ${Math.round(b.min).toLocaleString()}–${Math.round(b.max).toLocaleString()}${unit})`;
+  const max = Number.isFinite(b.max) ? Math.round(b.max).toLocaleString() : '∞ (unknown)';
+  return `~${Math.round(b.estimate).toLocaleString()}${unit} (range ${Math.round(b.min).toLocaleString()}–${max}${unit})`;
+}
+
+/** Human text for one `EstimateWarning` -- the five new, flat-field codes
+ *  get a specific, prominent sentence; every older code (already in this
+ *  demo before this task) falls back to its own `.message`, same as the
+ *  one-line `w.code` list this replaces. */
+function describeWarning(w) {
+  switch (w.code) {
+    case 'raw-passthrough-unfiltered':
+      return `RAW PASSTHROUGH: the COMPLETE, UNFILTERED original source file(s) will be downloaded. NOT applied: ${w.dropped.join(', ')}.`;
+    case 'raw-size-unknown':
+      return `Size unknown for ${w.partsWithoutSize} of ${w.partsTotal} source file(s) -- the real download may be bigger than shown here.`;
+    case 'raw-no-pruning':
+      return `No source file could be excluded by area/time (${w.basis}) -- every matching file will be fetched in full.`;
+    case 'large-download':
+      return `LARGE DOWNLOAD: about ${(w.bytes / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })} MB, roughly ${w.estimatedSeconds}s at an assumed 10 MB/s. Confirmation required before starting.`;
+    case 'slow-download':
+      return `SLOW: roughly ${w.estimatedSeconds}s at an assumed network speed.`;
+    default:
+      return w.message ?? w.code;
+  }
+}
+
+/** The five new warning codes get their own prominent callout box, in
+ *  addition to appearing in the generic estimateInfo text below -- the
+ *  brief's bar for `raw-passthrough-unfiltered` especially, since the user
+ *  is getting complete, unfiltered files and must know it. */
+const PROMINENT_WARNING_CODES = new Set(['raw-passthrough-unfiltered', 'raw-size-unknown', 'raw-no-pruning', 'large-download', 'slow-download']);
+function renderProminentWarnings(est) {
+  const box = document.getElementById('prominentWarnings');
+  const prominent = est.warnings.filter((w) => PROMINENT_WARNING_CODES.has(w.code));
+  if (prominent.length === 0) {
+    box.style.display = 'none';
+    box.textContent = '';
+    return;
+  }
+  box.style.display = 'block';
+  box.textContent = prominent.map(describeWarning).join('\n');
 }
 
 /** Shared by the manual Estimate button AND by startDownload's own
@@ -413,17 +505,23 @@ function formatBounded(b, unit = '') {
  *  preview, never a gate -- download() runs this exact same estimate
  *  internally for its ceiling check regardless of whether a user ever
  *  clicks this button, so showing it here is free once a download starts
- *  anyway). */
+ *  anyway). `est.rows` is `null` on the raw-passthrough path whenever any
+ *  selected file doesn't declare its own row count (raw.js's `rawEstimate`
+ *  -- it is never modeled/guessed on that path, only summed from declared
+ *  counts). */
 function renderEstimateInfo(est) {
   const infoEl = document.getElementById('estimateInfo');
   infoEl.style.display = 'block';
+  const rowsText = est.rows ? formatBounded(est.rows) : 'not counted (raw passthrough — original files, no row count read)';
+  const warningsText = est.warnings.length ? est.warnings.map((w) => `  - ${describeWarning(w)}`).join('\n') : '  (none)';
   infoEl.textContent =
-    `Rows: ${formatBounded(est.rows)}\n` +
+    `Rows: ${rowsText}\n` +
     `Read from storage: ${formatBounded(est.readBytes, ' B')}\n` +
-    `Output (generic model): ${formatBounded(est.outputBytes, ' B')}\n` +
+    `Output: ${formatBounded(est.outputBytes, ' B')}\n` +
     `Files: ${est.files.selected}/${est.files.total}  Row groups: ${est.rowGroups.selected}/${est.rowGroups.total}  HTTP requests: ${est.requests}\n` +
-    `Warnings: ${est.warnings.map((w) => w.code).join(', ') || '(none)'}\n` +
+    `Warnings:\n${warningsText}\n` +
     `Ceiling exceeded: ${est.ceiling.exceeded}`;
+  renderProminentWarnings(est);
 }
 
 let lastEstimate = null;
@@ -433,15 +531,23 @@ document.getElementById('estimateBtn').addEventListener('click', async () => {
   infoEl.style.display = 'block';
   infoEl.textContent = 'Estimating… (reads parquet footer metadata only, no row data)';
   document.getElementById('ceilingBox').style.display = 'none';
+  document.getElementById('confirmBox').style.display = 'none';
   try {
     const filter = buildFilter(entry);
-    const est = await estimate(entry.dataset, area, filter);
+    // See confirmAndDownload's own comment: the public estimate() has no
+    // raw-passthrough fast path (rawFormatDescriptor has no
+    // estimateBytes), so `output` is omitted for that format id rather
+    // than passed and crashing.
+    const est = selectedFormat === RAW_FORMAT_ID
+      ? await estimate(entry.dataset, area, filter, { sink: { kind: 'memory' }, ...sizeWarningOptions() })
+      : await estimate(entry.dataset, area, filter, { output: outputFor(entry, selectedFormat), sink: { kind: 'memory' }, ...sizeWarningOptions() });
     lastEstimate = est;
     renderEstimateInfo(est);
   } catch (err) {
     infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
   }
 });
+document.getElementById('maxRows').addEventListener('input', resetDownloadUi);
 
 // --- Format picker ---------------------------------------------------------
 //
@@ -482,6 +588,45 @@ function captionFor(entry) {
   return est > 0 ? `loads ${formatWeightText(est)} on first use` : 'loads instantly on first use (no CDN fetch)';
 }
 
+/** `formats()`'s eager-format branch (registry.js) reports `label: p.id`
+ *  for every eagerly-registered plugin -- true for geojson/geoparquet
+ *  (which have no nicer label of their own anyway) but it silently drops
+ *  `rawFormatDescriptor`'s own `label` field. Overridden here, in the demo
+ *  layer, rather than in registry.js (out of this task's scope). */
+function labelFor(entry) {
+  if (entry.id === RAW_FORMAT_ID) return 'GeoParquet — original files (complete, unfiltered)';
+  return entry.label ?? entry.id;
+}
+
+/** The dataset's own source URL(s) -- shown, copyable, beside the raw
+ *  format option so a user can see exactly which file(s) a raw-passthrough
+ *  download will fetch verbatim, before ever starting it. This demo's own
+ *  datasets are all single-file `kind: 'parquet'` sources; a real
+ *  `hive`/`stac-geoparquet` collection would need `planRaw`'s own partition
+ *  enumeration (an internal, unexported seam -- see confirmAndDownload's
+ *  comment) to list real per-file URLs, which is out of scope for this
+ *  static preview list. */
+function sourceUrlsFor(entry) {
+  const src = entry.dataset.source;
+  if (src.kind === 'parquet') return [src.url];
+  if (src.kind === 'parquet-set') return (src.parts ?? src.urls.map((url) => ({ url }))).map((p) => p.url ?? p);
+  return [];
+}
+
+function renderRawSourceUrls() {
+  const wrap = document.createElement('div');
+  wrap.id = 'rawSourceUrls';
+  const urls = sourceUrlsFor(currentEntry());
+  const box = document.createElement('textarea');
+  box.readOnly = true;
+  box.rows = Math.min(4, Math.max(1, urls.length));
+  box.value = urls.length ? urls.join('\n') : '(this dataset kind has no static source URL list -- see collectionDownloadSupport)';
+  box.title = 'Click to select, then copy.';
+  box.addEventListener('click', () => box.select());
+  wrap.appendChild(box);
+  return wrap;
+}
+
 function renderFormatPicker() {
   const picker = document.getElementById('formatPicker');
   const entries = listFormats();
@@ -501,7 +646,7 @@ function renderFormatPicker() {
 
     const labelSpan = document.createElement('span');
     labelSpan.className = 'format-label';
-    labelSpan.textContent = entry.label ?? entry.id;
+    labelSpan.textContent = labelFor(entry);
 
     const weightSpan = document.createElement('span');
     weightSpan.className = 'format-weight';
@@ -509,6 +654,8 @@ function renderFormatPicker() {
 
     row.append(input, labelSpan, weightSpan);
     picker.appendChild(row);
+
+    if (entry.id === RAW_FORMAT_ID) picker.appendChild(renderRawSourceUrls());
   }
 }
 renderFormatPicker();
@@ -519,7 +666,9 @@ let activeHandle = null;
 
 function resetDownloadUi() {
   document.getElementById('estimateInfo').style.display = 'none';
+  document.getElementById('prominentWarnings').style.display = 'none';
   document.getElementById('ceilingBox').style.display = 'none';
+  document.getElementById('confirmBox').style.display = 'none';
   document.getElementById('downloadInfo').style.display = 'none';
   document.getElementById('downloadLink').style.display = 'none';
   document.getElementById('progressBar').style.display = 'none';
@@ -535,12 +684,16 @@ function resetDownloadUi() {
   renderFormatPicker();
 }
 
-function startDownload(formatId) {
+function startDownload(formatId, filter) {
   const entry = currentEntry();
-  const filter = buildFilter(entry);
+  // `filter` is the SAME object confirmAndDownload already built and
+  // estimated against for the confirm gate (including whatever "Max rows"
+  // held at that moment) -- rebuilding it here from the live inputs could
+  // disagree with what the user actually confirmed if they edited a field
+  // during the confirm dialog.
+  filter = filter ?? buildFilter(entry);
   const fmtInfo = listFormats().find((f) => f.id === formatId);
-  const extension = fmtInfo?.extension ?? formatId;
-  const output = { spec: 'cng-output/1.0', format: formatId, filename: `${entry.key}.${extension}` };
+  const output = outputFor(entry, formatId);
 
   // The demo uses memorySink() + a <a download> link rather than
   // autoSink()'s File System Access picker, so this page is drivable
@@ -549,7 +702,7 @@ function startDownload(formatId) {
   window.__cngLastError = null;
 
   const sink = memorySink();
-  const handle = download(entry.dataset, area, filter, output, { sink });
+  const handle = download(entry.dataset, area, filter, output, { sink, ...sizeWarningOptions() });
   activeHandle = handle;
 
   // Feature 1 auto-fill: download() runs its own internal estimate
@@ -667,7 +820,92 @@ function startDownload(formatId) {
   });
 }
 
-document.getElementById('downloadBtn').addEventListener('click', () => startDownload(selectedFormat));
+/**
+ * Decision 1 (task brief): `download()` now resolves the sink -- which,
+ * through `autoSink()`, can pop a native `showSaveFilePicker()` dialog --
+ * BEFORE its internal ceiling gate runs (design doc §7.8), so a dialog can
+ * appear moments before a `CEILING_EXCEEDED` refusal. This demo always
+ * hands `download()` an explicit `memorySink()` (never `autoSink()`), so
+ * that exact race can't show a dialog HERE -- but the mitigation is run
+ * anyway, deliberately: a separate, stand-alone `estimate()` call (this
+ * function), confirmed by the user, BEFORE `download()` is ever called.
+ * That is the pattern anyone copying this demo and swapping in
+ * `autoSink()` needs, and it is also decision 2: any estimate carrying a
+ * `large-download` warning requires an explicit confirm click before a
+ * download starts, independent of the hard ceiling gate `handle.on('ceiling', ...)`
+ * below already enforces.
+ */
+async function confirmAndDownload(formatId) {
+  const entry = currentEntry();
+  const filter = buildFilter(entry);
+  const infoEl = document.getElementById('estimateInfo');
+  const confirmBox = document.getElementById('confirmBox');
+  const downloadBtn = document.getElementById('downloadBtn');
+  confirmBox.style.display = 'none';
+  downloadBtn.disabled = true;
+
+  // Clear the PREVIOUS run's state synchronously, before the `await
+  // estimate(...)` below -- otherwise a caller polling downloadInfo/
+  // __cngLastResult for "the new download finished" (this demo's own
+  // verify.mjs among them) can observe the stale PRIOR download's "Done:"
+  // text and result during the window this preflight estimate is in
+  // flight, and wrongly conclude the new run already completed.
+  window.__cngLastResult = null;
+  window.__cngLastError = null;
+  const downloadInfoEl = document.getElementById('downloadInfo');
+  downloadInfoEl.style.display = 'none';
+  downloadInfoEl.textContent = '';
+  document.getElementById('downloadLink').style.display = 'none';
+
+  let preflight;
+  try {
+    infoEl.style.display = 'block';
+    infoEl.textContent = 'Checking estimated size before starting… (reads parquet footer metadata only, no row data)';
+    preflight = formatId === RAW_FORMAT_ID
+      // The public estimate() has no raw-passthrough fast path:
+      // rawFormatDescriptor (raw.js) has no estimateBytes/schema model at
+      // all -- it is decode-free by design -- so finalizeEstimate's
+      // `format.estimateBytes(...)` call would throw TypeError if `output`
+      // named this format id. Omitting `output` falls back to
+      // estimate.js's generic per-row model instead, which is a reasonable
+      // (if anything, conservative -- it assumes decoded/expanded text
+      // output, not raw compressed bytes) stand-in for THIS pre-flight
+      // size check. The real, raw-specific estimate (raw-passthrough-
+      // unfiltered, raw-size-unknown, raw-no-pruning, and the real byte
+      // count) is computed by download()'s own internal rawEstimate() once
+      // the confirmed run actually starts, and rendered the same way below
+      // via handle.estimate.
+      ? await estimate(entry.dataset, area, filter, { sink: { kind: 'memory' }, ...sizeWarningOptions() })
+      : await estimate(entry.dataset, area, filter, { output: outputFor(entry, formatId), sink: { kind: 'memory' }, ...sizeWarningOptions() });
+  } catch (err) {
+    infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
+    downloadBtn.disabled = false;
+    return;
+  }
+  lastEstimate = preflight;
+  renderEstimateInfo(preflight);
+
+  const needsConfirm = preflight.warnings.some((w) => w.code === 'large-download');
+  if (needsConfirm) {
+    confirmBox.style.display = 'block';
+    document.getElementById('confirmText').textContent =
+      `This download is estimated to be large -- nothing has been fetched yet. ${preflight.warnings.map(describeWarning).join(' ')}`;
+    const proceed = await new Promise((resolve) => {
+      document.getElementById('confirmDownloadBtn').onclick = () => resolve(true);
+      document.getElementById('cancelConfirmBtn').onclick = () => resolve(false);
+    });
+    confirmBox.style.display = 'none';
+    if (!proceed) {
+      downloadBtn.disabled = false;
+      infoEl.textContent = 'Cancelled before starting (large download not confirmed). No bytes were fetched.';
+      return;
+    }
+  }
+
+  startDownload(formatId, filter);
+}
+
+document.getElementById('downloadBtn').addEventListener('click', () => confirmAndDownload(selectedFormat));
 document.getElementById('cancelBtn').addEventListener('click', () => activeHandle?.cancel('user cancelled'));
 
 window.__cngDownloadDemo = {
@@ -675,6 +913,12 @@ window.__cngDownloadDemo = {
   get area() { return area; },
   get lastEstimate() { return lastEstimate; },
   get editTool() { return editTool; },
+  // Testability only (verify.mjs): `buildFilter`/`currentEntry` are
+  // otherwise module-private. Asserting on the real object this page
+  // sends to estimate()/download() is the house style (AGENTS.md) --
+  // never re-implementing the same logic inside the verifier.
+  buildFilter,
+  currentEntry,
 };
 </script>
 </body>
