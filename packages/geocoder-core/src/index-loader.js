@@ -76,12 +76,190 @@ export async function loadManifest(url, fetchImpl) {
       context: { status: res.status, url },
     });
   }
-  const manifest = await res.json();
-  if (!isAcceptedIndexSpec(manifest.spec)) {
-    throw new CngError('Index manifest has an unrecognized spec version.', 'INDEX_SCHEMA_MISMATCH', {
-      context: { spec: manifest.spec },
-    });
+  const doc = await res.json();
+  if (isAcceptedIndexSpec(doc.spec)) {
+    return doc;
   }
+  if (isStacGazetteerCollection(doc)) {
+    return normalizeStacGazetteerCollection(doc, url);
+  }
+  throw new CngError('Index manifest has an unrecognized spec version.', 'INDEX_SCHEMA_MISMATCH', {
+    context: { spec: doc.spec, type: doc.type },
+  });
+}
+
+/**
+ * The `gazetteer` extension's identifying URI shape (design doc / issue #1):
+ * any `stac_extensions[]` entry containing the literal path segment
+ * `/gazetteer/` -- not an exact-match list, because the extension is
+ * versioned (`.../gazetteer/v1.0.0/schema.json`) and a future minor version
+ * must keep matching without this file changing. `gazetteer-boundaries` is
+ * a *different* extension URI (`/gazetteer-boundaries/...`) and does not
+ * match this on its own, but every published worked example that has
+ * boundaries also declares the base `gazetteer` extension, which is the one
+ * this loader actually keys off: boundaries are optional per-level assets
+ * layered onto a `gazetteer`-declaring Collection, never a replacement for
+ * it.
+ * @param {unknown} doc
+ * @returns {boolean}
+ */
+export function isStacGazetteerCollection(doc) {
+  return (
+    typeof doc === 'object' &&
+    doc !== null &&
+    doc.type === 'Collection' &&
+    Array.isArray(doc.stac_extensions) &&
+    doc.stac_extensions.some((uri) => typeof uri === 'string' && uri.includes('/gazetteer/'))
+  );
+}
+
+/** SPDX license identifiers (or fragments of them) that carry a share-alike obligation. */
+function isShareAlikeLicense(spdxId) {
+  if (typeof spdxId !== 'string') return false;
+  return spdxId.includes('-SA') || spdxId === 'ODbL-1.0';
+}
+
+/** `assets[*].roles` is documented as an array on every real STAC asset, but tolerate its absence. */
+function hasRole(asset, role) {
+  return Array.isArray(asset?.roles) && asset.roles.includes(role);
+}
+
+/**
+ * Normalise a STAC Collection declaring the `gazetteer`/`gazetteer-boundaries`
+ * extensions (issue #1) into the bespoke internal manifest shape that the
+ * rest of geocoder-core already consumes (`REQUIRED_COLUMNS`/`assertSchema`
+ * above, and every `manifest.*` read in geocoder.js/geometry-resolver.js).
+ * This is the ONLY place that shape-shifts: nothing downstream of
+ * `loadManifest` needs to know a Collection was ever involved.
+ *
+ * @param {Record<string, unknown>} collection
+ * @param {string} collectionUrl the URL the Collection document was fetched
+ *   from -- relative asset `href`s are resolved against this, per the STAC
+ *   spec (an asset href is relative to the document that declares it).
+ * @returns {Record<string, unknown>} the internal manifest shape
+ */
+export function normalizeStacGazetteerCollection(collection, collectionUrl) {
+  const assets = collection.assets ?? {};
+  const assetList = Object.values(assets);
+
+  const indexCandidates = assetList.filter((a) => hasRole(a, 'gazetteer-index'));
+  const indexAsset = indexCandidates.find((a) => !hasRole(a, 'prominent'));
+  const prominentAsset = indexCandidates.find((a) => hasRole(a, 'prominent'));
+
+  if (!indexAsset) {
+    throw new CngError(
+      'STAC Collection declares the gazetteer extension but has no asset with roles including "gazetteer-index".',
+      'INDEX_SCHEMA_MISMATCH',
+      { context: { collectionId: collection.id, missing: 'gazetteer-index asset' } },
+    );
+  }
+
+  const resolveHref = (href) => resolveManifestUrl(collectionUrl, href);
+
+  const manifest = {
+    source: collection.id,
+    rows: indexAsset['table:row_count'],
+    levels: collection['gazetteer:levels'],
+    index: {
+      url: resolveHref(indexAsset.href),
+      size: indexAsset['file:size'],
+      row_groups: indexAsset['gazetteer:row_groups'],
+      row_group_rows: indexAsset['gazetteer:row_group_rows'],
+      feature_id_column: indexAsset['gazetteer:feature_id_column'] ?? 'feature_id',
+      footer_metadata_bytes: indexAsset['gazetteer:footer_metadata_bytes'],
+    },
+  };
+
+  if (collection.version !== undefined) {
+    manifest.index_version = collection.version;
+    manifest.catalog_version = collection.version;
+  }
+  if (collection['gazetteer:stats_truncated'] !== undefined) {
+    manifest.stats_truncated = collection['gazetteer:stats_truncated'];
+  }
+  if (collection['gazetteer:dropped_unnamed'] !== undefined) {
+    manifest.dropped_unnamed = collection['gazetteer:dropped_unnamed'];
+  }
+
+  if (prominentAsset) {
+    manifest.prominent_index = {
+      url: resolveHref(prominentAsset.href),
+      size: prominentAsset['file:size'],
+      row_count: prominentAsset['table:row_count'],
+      row_groups: prominentAsset['gazetteer:row_groups'],
+      row_group_rows: prominentAsset['gazetteer:row_group_rows'],
+      feature_id_column: prominentAsset['gazetteer:feature_id_column'] ?? 'feature_id',
+      footer_metadata_bytes: prominentAsset['gazetteer:footer_metadata_bytes'],
+    };
+  }
+
+  // Boundaries: one source asset per level x variant, flattened in the
+  // extension's own shape; grouped back into this loader's nested
+  // `{ level, ..., full: {...}, display: {...} }` shape, one entry per
+  // level.
+  const boundaryAssets = assetList.filter((a) => hasRole(a, 'gazetteer-boundaries'));
+  const byLevel = new Map();
+  for (const asset of boundaryAssets) {
+    const level = asset['gazetteer:level'];
+    let entry = byLevel.get(level);
+    if (!entry) {
+      entry = {
+        level,
+        geometry_column: asset['gazetteer:geometry_column'],
+        // `null` is a legal, meaningful value (CGAZ ADM0 has no id column
+        // at all) and must be preserved exactly -- never coerced to
+        // `undefined` (which would silently fall back to the
+        // `'feature_id'` default elsewhere) and never defaulted here.
+        feature_id_column: 'gazetteer:feature_id_column' in asset ? asset['gazetteer:feature_id_column'] : undefined,
+        index_key_column: asset['gazetteer:index_key_column'],
+        country_column: asset['gazetteer:country_column'],
+        row_group_rows: asset['gazetteer:row_group_rows'],
+      };
+      byLevel.set(level, entry);
+    }
+    const variant = asset['gazetteer:variant'];
+    entry[variant] = {
+      url: resolveHref(asset.href),
+      size: asset['file:size'],
+      row_count: asset['table:row_count'],
+      row_groups: asset['gazetteer:row_groups'],
+      footer_metadata_bytes: asset['gazetteer:footer_metadata_bytes'],
+    };
+  }
+  manifest.boundaries = [...byLevel.values()].sort((a, b) => a.level - b.level);
+
+  // Attribution: one entry, derived from the Collection's `license` plus
+  // `providers[]` (design doc / issue #1, "What this lets us delete").
+  const providers = Array.isArray(collection.providers) ? collection.providers : [];
+  const attributionProvider = providers.find((p) => Array.isArray(p.roles) && (p.roles.includes('producer') || p.roles.includes('licensor')));
+  const shareAlike = isShareAlikeLicense(collection.license);
+  // `sci:citation` (the Scientific Citation extension) is the idiomatic home
+  // for a full attribution string, and it is what a CC-BY licence actually
+  // obliges a UI to display -- geoBoundaries' is a paper citation with a DOI.
+  // STAC's `providers[].name` cannot hold that, so prefer the citation and
+  // fall back to the provider only when there is none. Losing this would be
+  // a licence-compliance regression, not a cosmetic one: AGENTS.md calls
+  // `provenance.attribution` "what your UI MUST display".
+  const citation = typeof collection['sci:citation'] === 'string' ? collection['sci:citation'].trim() : '';
+  const textParts = [];
+  if (citation) {
+    textParts.push(citation);
+  } else {
+    if (attributionProvider?.name) textParts.push(attributionProvider.name);
+    if (attributionProvider?.description) textParts.push(attributionProvider.description);
+  }
+  const doi = typeof collection['sci:doi'] === 'string' ? collection['sci:doi'] : undefined;
+  manifest.attribution = [
+    {
+      text: textParts.join(' — '),
+      license: collection.license,
+      url: attributionProvider?.url,
+      ...(doi ? { doi } : {}),
+      shareAlike,
+      share_alike: shareAlike,
+    },
+  ];
+
   return manifest;
 }
 
