@@ -158,7 +158,7 @@ a new warning:
 
 ```
 { code: 'raw-passthrough-unfiltered',
-  context: { dropped: ['where', 'columns', 'spatial-row-level'] } }
+  dropped: ['where', 'columns', 'spatial-row-level'] }
 ```
 
 This is a warning, not an error: the user asked for the whole partition
@@ -287,9 +287,18 @@ Two new estimate warning codes, emitted through the existing `warning`
 event and `est.warnings`:
 
 - `large-download` — `outputBytes.estimate` exceeds `largeDownloadBytes`
-  (default **1 GiB**, overridable). Context:
+  (default **1 GiB**, overridable). Carries flat fields
   `{ bytes, estimatedSeconds }`.
-- `slow-download` — `estimatedSeconds` exceeds **120**.
+- `slow-download` — `estimatedSeconds` exceeds **120**, flat
+  `{ estimatedSeconds }`.
+
+**Warning payload shape** (corrected 2026-11-20, ruling R8): every new
+warning code here uses FLAT fields, not a nested `context` object, because
+all nine incumbent codes in `estimate.js` are flat
+(`single-row-group{files}`, `antimeridian-split{boxes}`,
+`estimate-wide{ratio}`, `share-alike{attribution}`). `est.warnings` is a
+public array whose consumers switch on `code` and read fields directly; a
+mixed convention would force every consumer to special-case the new codes.
 
 The time estimate uses a documented, conservative default throughput of
 **10 MB/s**, overridable as `options.throughputBytesPerSecond`. It is a
@@ -309,8 +318,8 @@ refuses.
   no size, and a cross-origin `HEAD` may be blocked or may not expose
   `content-length`. Then `outputBytes.exact` is `false`, `bytesTotal` is
   absent from `copying` progress, and a new warning
-  `raw-size-unknown` fires, with
-  `context: { partsWithoutSize, partsTotal }`. `large-download` and
+  `raw-size-unknown` fires, with flat
+  `{ partsWithoutSize, partsTotal }`. `large-download` and
   `slow-download` cannot fire; the UI must say "size unknown" rather
   than imply small.
 - **Pruning kept everything.** `partitionPruneCascade` keeps any part
@@ -318,8 +327,8 @@ refuses.
   so an area selection against a dataset whose parts carry no declared
   bbox selects *every* file. A new warning `raw-no-pruning` fires
   whenever `files.selected === files.total` **and** the filter asked for
-  a narrowing (an area, or a time range), with
-  `context: { basis: 'parts declare no bbox' | 'parts declare no interval' }`.
+  a narrowing (an area, or a time range), with flat
+  `{ basis: 'parts declare no bbox' | 'parts declare no interval' }`.
   The demo renders it as "Your area did not narrow this down — this is
   the whole dataset."
 

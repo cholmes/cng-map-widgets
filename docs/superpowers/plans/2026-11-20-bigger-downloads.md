@@ -336,7 +336,7 @@ git commit -m "feat(download-core): wire derived ceilings into estimate and down
 - Test: `packages/download-core/test/download-size-warnings.test.js`
 
 **Interfaces:**
-- Produces: two `EstimateWarning` codes, `large-download` with `context: { bytes, estimatedSeconds }` and `slow-download` with `context: { estimatedSeconds }`. New option `throughputBytesPerSecond` (default `10_000_000`) and `largeDownloadBytes` (default 1 GiB) on `DownloadCoreOptions`.
+- Produces: two `EstimateWarning` codes, `large-download` with FLAT fields `{ bytes, estimatedSeconds }` and `slow-download` with `{ estimatedSeconds }` — flat, matching the nine incumbent warning codes in `estimate.js` (ruling R8; the original `context: {...}` wording was wrong). New option `throughputBytesPerSecond` (default `10_000_000`) and `largeDownloadBytes` (default 1 GiB) on `DownloadCoreOptions`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -403,7 +403,7 @@ test('rawEstimate reports rows exactly when every part declares rowCount, else n
 
 test('rawEstimate warns raw-passthrough-unfiltered listing what was dropped', async () => {
   // filter with where + columns + spatial.mode 'intersects'
-  assert.deepEqual(w.context.dropped, ['where', 'columns', 'spatial-row-level']);
+  assert.deepEqual(w.dropped, ['where', 'columns', 'spatial-row-level']);
 });
 
 test('planRaw refuses an unsupported source kind with FORMAT_CAPABILITY', async () => { /* kind: 'pmtiles' */ });
@@ -499,18 +499,19 @@ git commit -m "feat(download-core): execute raw GeoParquet passthrough downloads
 - Test: `packages/download-core/test/raw-guardrails.test.js`
 
 **Interfaces:**
-- Produces: `raw-size-unknown` with `context: { partsWithoutSize, partsTotal }`; `raw-no-pruning` with `context: { basis }` where `basis` is `'parts declare no bbox'` or `'parts declare no interval'`.
+- Produces: `raw-size-unknown` with FLAT fields `{ partsWithoutSize, partsTotal }`; `raw-no-pruning` with `{ basis }` where `basis` is `'parts declare no bbox'` or `'parts declare no interval'`. Flat, per ruling R8.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```js
 test('raw-size-unknown fires when any part size is unobtainable, and the estimate is inexact', async () => {
   assert.equal(est.outputBytes.exact, false);
-  assert.deepEqual(w.context, { partsWithoutSize: 2, partsTotal: 5 });
+  assert.equal(w.partsWithoutSize, 2);
+  assert.equal(w.partsTotal, 5);
 });
 test('raw-size-unknown suppresses large-download rather than guessing', async () => { /* no large-download code present */ });
 test('raw-no-pruning fires when an area narrowed nothing because parts declare no bbox', async () => {
-  assert.equal(w.context.basis, 'parts declare no bbox');
+  assert.equal(w.basis, 'parts declare no bbox');
 });
 test('raw-no-pruning does not fire when the filter asked for no narrowing', async () => { /* no area, no time => absent */ });
 test('neither warning is a ceiling breach: the download still runs', async () => {
