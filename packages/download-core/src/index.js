@@ -25,11 +25,13 @@ export { boundedExact, boundedRange, addBounded, sumBounded, scaleBounded, capBo
 export { enumeratePartitions, partitionPruneCascade, resolveMirrorPartUrl } from './partitions.js';
 export { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, predicateExcludesRowGroup, avgColumnBytesPerRow, STATS_PRUNABLE_OPS } from './prune.js';
 export { CngError, CancelledError, CeilingExceededError, isCngError } from '@cng/spec';
+export { RAW_FORMAT_ID, rawFormatDescriptor } from './raw.js';
 
 import { registerFormat, registerEngine, getFormat, getEngine } from './registry.js';
 import { createGeoJsonFormat } from './formats/geojson.js';
 import { createGeoParquetFormat } from './formats/geoparquet.js';
 import { createHyparquetEngine, HYPARQUET_ENGINE_ID } from './engine-hyparquet.js';
+import { RAW_FORMAT_ID, rawFormatDescriptor } from './raw.js';
 
 // Built-in defaults (design doc §3.4: "geojson and geoparquet are in
 // core"; design call #2: hyparquet is the default engine). Registered as a
@@ -37,3 +39,12 @@ import { createHyparquetEngine, HYPARQUET_ENGINE_ID } from './engine-hyparquet.j
 if (!getFormat('geojson')) registerFormat(createGeoJsonFormat());
 if (!getFormat('geoparquet')) registerFormat(createGeoParquetFormat());
 if (!getEngine(HYPARQUET_ENGINE_ID)) registerEngine(createHyparquetEngine());
+// Task 6 left this unregistered deliberately (its own file has no
+// `registerFormat` call); Task 7 registers it here so `formats()` lists
+// it for a UI to offer, same as geojson/geoparquet above. It is listed,
+// never `getFormat()`-resolved into the normal decode pipeline: `download()`
+// branches to the raw path on `output.format === RAW_FORMAT_ID` before any
+// `getFormat()`/`resolveFormat()` call is reached (download.js), and
+// `suggestedFormatsFor()` skips any registered entry with no
+// `estimateBytes` (this descriptor has none -- it has no schema/rows model).
+if (!getFormat(RAW_FORMAT_ID)) registerFormat(rawFormatDescriptor);

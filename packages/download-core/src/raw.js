@@ -27,11 +27,11 @@
 // `area.bboxes` (never the signed, antimeridian-wrapping `area.bbox`) is
 // what gets compared against each part's declared bbox.
 
-import { CngError } from '@cng/spec';
+import { CngError, CancelledError } from '@cng/spec';
 import { resolveDataset } from './dataset-resolve.js';
 import { enumeratePartitions, partitionPruneCascade } from './partitions.js';
 import { boundedExact, boundedRange, addBounded } from './bounded.js';
-import { localHeader, dataDescriptor, centralHeader, endOfCentralDirectory, sanitizeEntryName } from './zip.js';
+import { localHeader, dataDescriptor, centralHeader, endOfCentralDirectory, sanitizeEntryName, createZipWriter } from './zip.js';
 import { effectiveCeiling } from './ceiling.js';
 import { sha256Hex } from './digest.js';
 import { DEFAULT_LARGE_DOWNLOAD_BYTES, DEFAULT_THROUGHPUT_BYTES_PER_SECOND, SLOW_DOWNLOAD_SECONDS } from './estimate.js';
@@ -52,6 +52,11 @@ export const rawFormatDescriptor = {
   id: RAW_FORMAT_ID,
   label: 'GeoParquet — original files',
   extension: 'parquet',
+  // The single-file case (the common one) really is this media type; the
+  // multi-file zip case overrides it per-run in `download()`, same as the
+  // extension would need to become `.zip` there. This static value is only
+  // for `formats()`'s listing, never read by `runRaw` itself.
+  mediaType: 'application/vnd.apache.parquet',
   streaming: true,
   capabilities: { memoryFactor: 0 },
 };
@@ -258,7 +263,13 @@ export async function planRaw(dataset, area, filter, options = {}) {
   // Reserved for a future plan-level warning (Task 8's `raw-size-unknown`/
   // `raw-no-pruning`) that needs `sizes`/`stages` rather than `filter` --
   // nothing is raised at the planning stage in this task.
-  return { parts, selected, sizes, requests, stages, warnings: [] };
+  // `resolved` is the fully-concrete `DatasetDescriptor` `resolveDataset`
+  // produced above -- carried through so `runRaw` (and `rawEstimate`'s
+  // share-alike check, if it ever needs one) can read `resolved.attribution`
+  // the same way `estimate.js`'s `plan.resolved.attribution` already does
+  // for the decoded path. Additive: `raw-plan.test.js`'s existing
+  // assertions on this object's other fields are unaffected.
+  return { parts, selected, sizes, requests, stages, warnings: [], resolved };
 }
 
 /**
@@ -378,4 +389,227 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
     ceiling: { exceeded: breaches.length > 0, limits: ceiling, breaches },
     elapsedMs: performance.now() - t0,
   };
+}
+
+// ---------------------------------------------------------------------
+// Execution half (Task 7): write the bytes `planRaw` decided to fetch.
+// ---------------------------------------------------------------------
+
+/**
+ * Map a thrown error to `CancelledError` when the copy's own signal is
+ * already aborted -- same convention `parquet-io.js`'s `cancellationOf`
+ * uses, duplicated here (not imported: that helper is private to that
+ * module) rather than exported cross-module for a four-line function.
+ * An aborted fetch/read rejects with a bare `AbortError` DOMException (or,
+ * through a caller-supplied `fetch`, whatever that implementation throws)
+ * -- indistinguishable from a genuine network failure except by checking
+ * the signal itself.
+ * @param {unknown} cause
+ * @param {AbortSignal|undefined} signal
+ * @param {string} what
+ * @returns {CancelledError|null}
+ */
+function cancellationOf(cause, signal, what) {
+  if (!signal?.aborted) return null;
+  return new CancelledError(`Cancelled while ${what}.`, {
+    context: { reason: typeof signal.reason === 'string' ? signal.reason : undefined },
+  });
+}
+
+/**
+ * Human-readable `ATTRIBUTION.txt` body: every declared attribution entry
+ * (text/license/url, Ruling-matching `shareAlike ?? share_alike`) plus the
+ * exact list of original source URLs this archive's entries came from --
+ * so the licence and the provenance survive even once the files are
+ * unzipped and separated from this request's `Area`/`DownloadResult`.
+ * @param {{ url: string }[]} selectedParts
+ * @param {{ text?: string, license?: string, url?: string, shareAlike?: boolean, share_alike?: boolean }[]} attribution
+ * @returns {string}
+ */
+function buildAttributionText(selectedParts, attribution) {
+  const lines = ['This archive contains unmodified, original published source files.', ''];
+  if (attribution.length === 0) {
+    lines.push('No attribution metadata was declared for this dataset.', '');
+  } else {
+    for (const a of attribution) {
+      const shareAlike = a.shareAlike ?? a.share_alike;
+      lines.push(a.text ?? '(untitled)');
+      if (a.license) lines.push(`License: ${a.license}`);
+      if (a.url) lines.push(`URL: ${a.url}`);
+      if (shareAlike) lines.push('This licence requires derivative works to be shared under the same terms (share-alike).');
+      lines.push('');
+    }
+  }
+  lines.push('Source files included in this archive:');
+  for (const part of selectedParts) lines.push(`- ${part.url}`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * Stream one part's response body, yielding each chunk as it arrives and
+ * reporting `onProgress({ phase: 'copying', ... })` per chunk. The reader
+ * is always cancelled on the way out (normal completion, an error, or an
+ * abort) so a thrown error never leaves a dangling lock on the stream.
+ * `signal.aborted` is checked before every read, not just relied on to
+ * reject the read itself, so a slow/stalled body does not delay noticing
+ * a cancel that already happened.
+ * @param {Response} res
+ * @param {{ fileIndex: number, fileCount: number, filename: string, bytesTotal: number|null }} meta
+ * @param {{ signal?: AbortSignal, onProgress(p: object): void|Promise<void>, onBytes(n: number): void }} ctx
+ * @returns {AsyncGenerator<Uint8Array>}
+ */
+async function* copyBody(res, meta, ctx) {
+  const reader = res.body.getReader();
+  let bytesWritten = 0;
+  try {
+    while (true) {
+      if (ctx.signal?.aborted) {
+        throw cancellationOf(new Error('aborted'), ctx.signal, `copying ${meta.filename}`);
+      }
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } catch (cause) {
+        throw (
+          cancellationOf(cause, ctx.signal, `copying ${meta.filename}`) ??
+          new CngError(`Failed reading "${meta.filename}": ${cause?.message ?? cause}`, 'NETWORK', { cause, context: { filename: meta.filename } })
+        );
+      }
+      if (chunk.done) break;
+      bytesWritten += chunk.value.byteLength;
+      ctx.onBytes(chunk.value.byteLength);
+      await ctx.onProgress({
+        phase: 'copying',
+        fileIndex: meta.fileIndex,
+        fileCount: meta.fileCount,
+        filename: meta.filename,
+        bytesWritten,
+        bytesTotal: meta.bytesTotal,
+      });
+      yield chunk.value;
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // Already closed, or already erroring -- nothing left to release.
+    }
+  }
+}
+
+/**
+ * Fetch one selected part, refusing anything that is not a usable `200`
+ * response with a body. A non-`ok` response (a 404 on a stale manifest
+ * entry, for one) throws `NETWORK` -- never silently skipped, because a
+ * partial archive that looks complete is worse than a failed download
+ * (see raw-run.test.js's "mid-archive 404" case).
+ * @param {{ url: string }} part
+ * @param {typeof fetch} fetchImpl
+ * @param {AbortSignal|undefined} signal
+ * @returns {Promise<Response>}
+ */
+async function fetchPartOrThrow(part, fetchImpl, signal) {
+  let res;
+  try {
+    res = await fetchImpl(part.url, { signal });
+  } catch (cause) {
+    throw cancellationOf(cause, signal, `fetching ${part.url}`) ?? new CngError(`Couldn't fetch "${part.url}".`, 'NETWORK', { cause, context: { url: part.url } });
+  }
+  if (!res.ok) {
+    throw new CngError(`HTTP ${res.status} fetching "${part.url}".`, 'NETWORK', { context: { url: part.url, status: res.status } });
+  }
+  if (!res.body) {
+    throw new CngError(`No response body for "${part.url}".`, 'NETWORK', { context: { url: part.url } });
+  }
+  return res;
+}
+
+/**
+ * The default sink filename for a raw-passthrough run, when the caller's
+ * `OutputRequest` declares none: the single selected part's own basename
+ * (so a user piping a parquet file straight through keeps its real name),
+ * or `'download.zip'` for the multi-file case. `download()` uses this for
+ * `sink.open()`'s `filename` and `autoSink`'s `suggestedName`.
+ * @param {Awaited<ReturnType<typeof planRaw>>} rawPlan
+ * @returns {string}
+ */
+export function rawSuggestedFilename(rawPlan) {
+  if (rawPlan.selected.length === 1) {
+    return pathSegments(decodedPathname(rawPlan.selected[0].url)).pop() ?? 'download.parquet';
+  }
+  return 'download.zip';
+}
+
+/**
+ * Write the bytes a `planRaw` plan selected: one file streamed verbatim
+ * (Decision 1 -- NEVER wrapped in a zip, not even for share-alike
+ * attribution: "just get people the file"), or several files plus a
+ * trailing `ATTRIBUTION.txt` streamed into a zip via `createZipWriter`.
+ * Parts are fetched and written strictly sequentially, in `selected`'s
+ * order -- never concurrently -- so a failure on part N never leaves part
+ * N+1's bytes half-written into the archive. Nothing is buffered beyond
+ * one in-flight chunk: each chunk read from a part's response body is
+ * written straight to `writer` (or folded into the zip entry's running
+ * CRC/size by `createZipWriter.addEntry`) before the next chunk is read.
+ *
+ * A part that fails (a non-`ok` response, a network error, or a read that
+ * errors mid-body) throws and leaves the zip's central directory /
+ * end-of-central-directory unwritten -- so a reader that only trusts the
+ * central directory (every real zip reader) sees a truncated, invalid
+ * archive rather than a complete-looking one missing its tail entries.
+ * `download()`'s existing catch is what turns that throw into
+ * `sink.abort()`; this function never aborts the sink itself, since it
+ * only ever receives `writer`, not the sink.
+ *
+ * Declared sizes (`planRaw`'s `sizes` map, from a part's own `bytes` field
+ * or a `HEAD`) are used only for the `bytesTotal` progress hint -- never
+ * trusted for what gets written. The zip's data descriptor and this
+ * function's returned `bytes`/`readBytes` always reflect bytes actually
+ * read, which is why a part that serves more (or less) than it declared
+ * still produces a correct, openable archive.
+ *
+ * @param {Awaited<ReturnType<typeof planRaw>>} rawPlan
+ * @param {WritableStreamDefaultWriter<Uint8Array>} writer
+ * @param {{ fetch?: typeof fetch, signal?: AbortSignal, onProgress?: (p: object) => void|Promise<void> }} [options]
+ * @returns {Promise<{ bytes: number, entries: number, readBytes: number }>}
+ */
+export async function runRaw(rawPlan, writer, options = {}) {
+  const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const signal = options.signal;
+  const onProgress = options.onProgress ?? (() => {});
+  const { selected } = rawPlan;
+  const attribution = rawPlan.resolved?.attribution ?? [];
+
+  let readBytes = 0;
+  const onBytes = (n) => {
+    readBytes += n;
+  };
+
+  if (selected.length === 1) {
+    const part = selected[0];
+    const res = await fetchPartOrThrow(part, fetchImpl, signal);
+    const bytesTotal = rawPlan.sizes?.get(part.url) ?? null;
+    const filename = rawSuggestedFilename(rawPlan);
+    let bytesWritten = 0;
+    for await (const chunk of copyBody(res, { fileIndex: 1, fileCount: 1, filename, bytesTotal }, { signal, onProgress, onBytes })) {
+      await writer.write(chunk);
+      bytesWritten += chunk.byteLength;
+    }
+    return { bytes: bytesWritten, entries: 1, readBytes };
+  }
+
+  const zip = createZipWriter(writer);
+  const { parts: partNames, attribution: attributionName } = rawZipEntryNames(selected);
+  for (let i = 0; i < selected.length; i++) {
+    const part = selected[i];
+    const res = await fetchPartOrThrow(part, fetchImpl, signal);
+    const bytesTotal = rawPlan.sizes?.get(part.url) ?? null;
+    const meta = { fileIndex: i + 1, fileCount: selected.length, filename: partNames[i], bytesTotal };
+    await zip.addEntry(partNames[i], copyBody(res, meta, { signal, onProgress, onBytes }));
+  }
+  const attributionBytes = new TextEncoder().encode(buildAttributionText(selected, attribution));
+  await zip.addFile(attributionName, attributionBytes);
+  const { bytes, entries } = await zip.close();
+  return { bytes, entries, readBytes };
 }

@@ -12,6 +12,7 @@ import { createGeoJsonFormat } from './formats/geojson.js';
 import { createGeoParquetFormat } from './formats/geoparquet.js';
 import { autoSink } from './sinks.js';
 import { effectiveCeiling } from './ceiling.js';
+import { RAW_FORMAT_ID, planRaw, rawEstimate, runRaw, rawSuggestedFilename } from './raw.js';
 
 /** Fallback when a caller imports download.js directly without index.js's default registration. */
 function builtinFormat(id) {
@@ -52,6 +53,13 @@ function suggestedFormatsFor(plan, schema, estimateCtx, sink, overrides) {
   const fits = [];
   for (const entry of formats()) {
     const candidate = getFormat(entry.id) ?? entry;
+    // A registered-but-not-a-decode-format descriptor (the raw-passthrough
+    // entry registered under this same id, `rawFormatDescriptor` -- it has
+    // no `estimateBytes` because it has no schema/rows model at all) is
+    // never a byte-for-byte alternative for whatever format just breached,
+    // so it is skipped here rather than crashing this loop for every
+    // breach, on every format, forever.
+    if (typeof candidate.estimateBytes !== 'function') continue;
     const candidateBytes = candidate.estimateBytes(schema, plan.rows, estimateCtx);
     const candidateCeiling = effectiveCeiling({ format: candidate, sink, overrides });
     if (
@@ -133,6 +141,101 @@ export function download(dataset, area, filter, output, options = {}) {
   // risks aborting a commit that already happened.
   let sink;
 
+  /**
+   * The raw-passthrough run. Shares `run()`'s closure (`sink`, `current`,
+   * `setState`, `resumeFromBlocked`, `cancelRequested`, the estimate
+   * deferred) and its caller's try/catch/finally -- a throw from in here
+   * is handled by the exact same `sink.abort()` / `current.reject()` /
+   * `setState('failed'|'cancelled')` logic `run()`'s own catch already
+   * has, so this function does not duplicate any of that.
+   */
+  async function runRawDownload() {
+    const rawPlan = await planRaw(dataset, area, filter, { fetch: options.fetch, signal: controller.signal });
+
+    // Mirrors the normal path's design doc §7.8 ordering: the sink is
+    // created BEFORE the ceiling gate (and before `rawEstimate`, which
+    // reads `sink.kind` through `effectiveCeiling`) so the ceiling sees
+    // the REAL sink kind rather than a guess.
+    sink = options.sink ?? (await autoSink({ suggestedName: output.filename ?? rawSuggestedFilename(rawPlan) }));
+
+    const est = options.estimateOverride ?? (await rawEstimate(rawPlan, filter, { ...options, sink }));
+
+    resolveEstimate(est);
+    estimateSettled = true;
+    emitter.emit('estimate', est);
+    for (const w of est.warnings) emitter.emit('warning', w);
+
+    if (est.ceiling.exceeded && !options.acceptCeiling) {
+      // Same ordering rule as the decoded path's gate below: reject
+      // `current` BEFORE any event fires, so a synchronous
+      // `acceptCeiling()` inside a handler resolves the right deferred.
+      // There is no `suggestedFormatsFor` equivalent here -- raw
+      // passthrough has no schema/rows model another format's
+      // `estimateBytes` could be compared against, and it only ever
+      // applies to the small set of source kinds `planRaw` itself
+      // supports -- so `suggestedFormats` is always empty on this path.
+      current.reject(
+        new CeilingExceededError(
+          `Estimated ${est.outputBytes.estimate.toLocaleString()} output bytes exceeds the ceiling (${est.ceiling.breaches.join(', ')}). Call acceptCeiling() for the continued run, or cancel().`,
+          { context: { breaches: est.ceiling.breaches, limits: est.ceiling.limits, estimate: est, suggestedFormats: [] } },
+        ),
+      );
+      const gate = new Promise((resolve) => {
+        resumeFromBlocked = resolve;
+      });
+      setState('blocked');
+      emitter.emit('ceiling', { estimate: est });
+      const proceed = await gate;
+      if (!proceed || cancelRequested) {
+        throw new CancelledError('Download cancelled while blocked on the ceiling.');
+      }
+    }
+
+    setState('running');
+    emitter.emit('progress', { phase: 'planning' });
+
+    const filename = output.filename ?? rawSuggestedFilename(rawPlan);
+    const mediaType = rawPlan.selected.length > 1 ? 'application/zip' : 'application/vnd.apache.parquet';
+    const writer = await sink.open({ filename, mediaType, estimatedBytes: est.outputBytes.estimate });
+
+    const runResult = await runRaw(rawPlan, writer, {
+      fetch: options.fetch,
+      signal: controller.signal,
+      async onProgress(p) {
+        emitter.emit('progress', p);
+        progressStream.push(p);
+        if (pausePromise) await pausePromise;
+        if (controller.signal.aborted) throw new CancelledError();
+      },
+    });
+
+    emitter.emit('progress', { phase: 'finalizing' });
+    await sink.close();
+
+    // Decision 2: `rows` is the summed declared `rowCount` only when every
+    // selected part declared one (`rawEstimate`'s `est.rows`, a `Bounded`,
+    // is already exactly that or `null`); otherwise `null`, documented as
+    // "not counted on the raw path". `truncated` is always `false` --
+    // there is no `filter.limit` concept on a whole-file copy.
+    const result = {
+      rows: est.rows ? est.rows.estimate : null,
+      bytes: runResult.bytes,
+      format: output.format,
+      filename,
+      elapsedMs: est.elapsedMs,
+      requests: rawPlan.selected.length,
+      readBytes: runResult.readBytes,
+      sink: sinkResultOf(sink),
+      estimate: est,
+      truncated: false,
+      attribution: rawPlan.resolved?.attribution ?? [],
+      formatWarnings: [],
+    };
+    setState('done');
+    emitter.emit('done', result);
+    current.resolve(result);
+  }
+
   async function run() {
     try {
       // One microtask tick before anything else: `download()` returns the
@@ -145,6 +248,19 @@ export function download(dataset, area, filter, output, options = {}) {
       // to listen for *after* `download()` returns, which is the only
       // sequencing a caller can actually act on.
       await Promise.resolve();
+
+      // Raw GeoParquet passthrough (Task 6/7, format id `parquet-raw`):
+      // a completely separate run, before any of the normal
+      // format-resolution / `engine.plan()` / hyparquet pipeline below,
+      // because the whole point of this path is that NO footer is ever
+      // read and NO row is ever decoded. `planRaw`/`rawEstimate` are its
+      // own planning half (raw.js); `runRaw` is its own execution half.
+      // Everything else -- state machine, ceiling gate, sink lifecycle,
+      // cancel/abort -- is shared with the code below it.
+      if (output.format === RAW_FORMAT_ID) {
+        await runRawDownload();
+        return;
+      }
 
       // Design doc §3.4 amendment (lazy format loading): resolve the
       // format *inside* run(), not synchronously before the handle is
