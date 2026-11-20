@@ -308,6 +308,22 @@ export function download(dataset, area, filter, output, options = {}) {
       // recoverable, since `acceptCeiling()` continues on the same handle.
       sink = options.sink ?? (await autoSink({ suggestedName: output.filename }));
 
+      // Ruling R17 (whole-branch review fix-wave re-review): `format` here
+      // comes from `getFormat()`/`builtinFormat()`/`resolveFormat()`, none
+      // of which validate that a registered format declares
+      // `estimateBytes` -- `registerFormat` itself performs no such check
+      // (and must not: `rawFormatDescriptor` is registered through it
+      // deliberately WITHOUT one, since its size comes from part metadata,
+      // not a schema+rows model -- see raw.js). So a misregistered
+      // third-party plugin reaching this line with no `estimateBytes`
+      // would otherwise throw a bare `TypeError` here, one line before
+      // `finalizeEstimate`'s own `FORMAT_CAPABILITY` guard ever gets a
+      // chance to run. Skipped entirely when `options.estimateOverride` is
+      // given, matching the `??` below: that path never needs
+      // `format.estimateBytes` at all.
+      if (options.estimateOverride === undefined && typeof format.estimateBytes !== 'function') {
+        throw new CngError(`Format "${format.id ?? output.format}" has no estimateBytes.`, 'FORMAT_CAPABILITY', { context: { formatId: format.id ?? output.format } });
+      }
       const est = options.estimateOverride ?? (await finalizeEstimate(plan, area, filter, { ...options, output, sink, formatOverride: format, outputBytesOverride: format.estimateBytes(schema, plan.rows, estimateCtx) }));
 
       resolveEstimate(est);

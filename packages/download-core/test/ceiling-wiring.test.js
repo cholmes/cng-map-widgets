@@ -236,3 +236,46 @@ test('estimate() without options.output behaves exactly as before', async () => 
   assert.notEqual(est.outputBytes.estimate, 999);
   assert.ok(est.outputBytes.estimate > 0);
 });
+
+// Whole-branch review fix-wave re-review, Ruling R17: `registerFormat`
+// performs no validation that a plugin declares `estimateBytes` (and must
+// not -- `rawFormatDescriptor` is registered through it deliberately
+// WITHOUT one, see raw.js), so a misregistered third-party plugin reaches
+// `download()`'s real `run()` at the line that calls
+// `format.estimateBytes(schema, plan.rows, estimateCtx)` directly and
+// unguarded -- BEFORE `finalizeEstimate`'s own `FORMAT_CAPABILITY` guard
+// (added earlier in this same fix wave) ever gets a chance to run. This
+// drives `download()` end-to-end (not `finalizeEstimate` directly) against
+// exactly that format shape.
+function fakeFormatWithoutEstimateBytes(id) {
+  return {
+    id,
+    extension: 'bin',
+    mediaType: 'application/octet-stream',
+    streaming: true,
+    capabilities: { nestedColumns: true, mixedGeometryTypes: true, crs: ['OGC:CRS84'], memoryFactor: 0 },
+    // No `estimateBytes` at all -- the exact shape of a misregistered plugin.
+    async open() {
+      return {
+        async writeBatch() {},
+        async close() {
+          return { rows: 0, bytes: 0 };
+        },
+        async abort() {},
+      };
+    },
+  };
+}
+
+test('download() throws FORMAT_CAPABILITY, not a bare TypeError, for a registered format missing estimateBytes', async () => {
+  registerFormat(fakeFormatWithoutEstimateBytes('wiring-no-estimatebytes-1'));
+  const handle = download(
+    DATASET, null, FILTER, { spec: 'cng-output/1.0', format: 'wiring-no-estimatebytes-1' },
+    { engine: fakeEngine(minimalPlan()), sink: memorySink() },
+  );
+
+  const err = await handle.result.then(() => null, (e) => e);
+  assert.ok(err, 'expected download() to reject');
+  assert.equal(err.code, 'FORMAT_CAPABILITY', `expected FORMAT_CAPABILITY, got ${err.constructor?.name}: ${err.code ?? err.message}`);
+  assert.match(err.message, /wiring-no-estimatebytes-1/);
+});
