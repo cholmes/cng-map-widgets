@@ -509,12 +509,21 @@ overrides: options.ceiling })`:
   - **buffering** (`memoryFactor` absent on a `streaming: false` format
     defaults to `3`; `geoparquet` declares `2`, `gpkg` declares `2.9`):
     `outputBytes = memoryBudget / memoryFactor` — `memoryBudget` defaults to
-    **1 GiB** — **regardless of sink**, because the cost is spent inside the
-    writer (row arrays, a wasm heap, an export copy), not in where the bytes
-    land. A `memory` sink is exempt from the budget **only** when
-    `memoryFactor === 0`; it is not a loophole for a buffering format (an
-    earlier draft of this had that wrong, which left `gpkg` through a
-    `memorySink` unbounded).
+    **1 GiB** — because the cost is spent inside the writer (row arrays, a
+    wasm heap, an export copy), not in where the bytes land, this derivation
+    itself does not vary by sink *kind*. But a `blob` sink (or `sink: null`,
+    the same conservative treatment as the streaming case above)
+    additionally clamps the result to `blobBytes`
+    (`Math.min(derived, blobBytes)`): `blobSink` genuinely refuses above 256
+    MiB at write time regardless of what a format's memory factor would
+    otherwise allow, so `geoparquet` (512 MiB derived) and `gpkg` (~353 MiB
+    derived) would otherwise pass this gate only to die at the sink's own
+    limit later, with no `suggestedFormats` on that late failure. A `memory`
+    sink is exempt from BOTH the budget (when `memoryFactor === 0`) AND the
+    `blobBytes` clamp (always) — it is not a loophole for a buffering
+    format's own derivation, which still applies in full on a `memorySink`
+    (an earlier draft of this had the budget exemption wrong, which left
+    `gpkg` through a `memorySink` unbounded).
 
 Import `effectiveCeiling`, `memoryFactorOf`, `UNBOUNDED_BYTES`,
 `MEMORY_BUDGET_DEFAULT` from `@cng/download-core` to compute the same numbers
@@ -550,8 +559,11 @@ inherits a share-alike license), `large-download` (`{ bytes, estimatedSeconds
 120 s at an assumed 10 MB/s) — nine codes so far.
 
 Raw-passthrough only (recipe 3e) adds three more: `raw-passthrough-unfiltered`
-(`{ dropped }` — which of `where` / `columns` / `spatial-row-level` this path
-did NOT apply, because nothing is decoded to apply them to),
+(`{ dropped }` — which of `where` / `columns` / `spatial-row-level` / `limit`
+this path did NOT apply, because nothing is decoded to apply them to —
+`spatial-row-level` fires whenever any `Area` was passed, regardless of
+`filter.spatial.mode`; `limit` fires whenever `filter.limit` was set, since
+a whole file is always returned verbatim, never truncated),
 `raw-size-unknown` (`{ partsWithoutSize, partsTotal }` — at least one
 selected file's size couldn't be resolved; `large-download`/`slow-download`
 are suppressed on that same estimate, since presenting a partial byte sum as
@@ -572,12 +584,13 @@ consumer can switch on `w.code` without special-casing any of them.
 Output formats: `geojson` (`memoryFactor: 0` — streams; options `precision`,
 `newlineDelimited`, `featureIdColumn`), `geoparquet` (`memoryFactor: 2` —
 **buffers its whole output in memory**, so its ceiling's `outputBytes` is
-`memoryBudget / 2` regardless of sink, not the flat `blobBytes`; options
-`compression` — `'snappy'` default, `'none'` ok, `'zstd'` **refused** with
-`FORMAT_CAPABILITY`; `rowGroupSize`, `writeCovering`), and `parquet-raw`
-(`memoryFactor: 0`, no decode at all — recipe 3e). Anything else must be
-registered first; `formats()` lists what is available without loading any of
-it.
+`memoryBudget / 2` (512 MiB) on a `filesystem` sink, but clamped down to the
+flat `blobBytes` (256 MiB) on a `blob` sink or `sink: null` — see "Ceilings
+are derived per format and sink" above; options `compression` — `'snappy'`
+default, `'none'` ok, `'zstd'` **refused** with `FORMAT_CAPABILITY`;
+`rowGroupSize`, `writeCovering`), and `parquet-raw` (`memoryFactor: 0`, no
+decode at all — recipe 3e). Anything else must be registered first;
+`formats()` lists what is available without loading any of it.
 
 ---
 
@@ -808,27 +821,28 @@ from its name reads `bbox.xmin`, gets nothing, and used to report
 There is still no per-ROW bbox in a native-stats file, so a row-level test
 decodes geometry exactly as `{ kind: 'none' }` does.
 
-### 11. `clip` is not implemented
+### 11. Raw passthrough (recipe 3e) is complete and unfiltered, and its `rows` can be `null`
 
-`spatial.mode: 'clip'` fails with `FILTER_REQUIRES_ENGINE` before any fetch.
-Use `'intersects'`. Same for `whereSql` (needs `'sql'`) and an `Area` with
-`combine: 'dissolve'` (needs `'dissolve'`).
+Moved above pitfalls 12/13 (whole-branch review, final fix wave): this list
+is explicitly "ordered by how badly they bite", and silently-unfiltered
+output bites harder than an unimplemented `clip` mode or an inert
+version-skew check — the gap this pitfall describes was a CRITICAL finding
+in review, reachable in two clicks through the demo's "Max rows" input.
 
-### 12. Version-skew checking is currently inert
-
-The live catalogs publish no `cng:catalog_version` footer key, so
-`onVersionSkew: 'error'` neither errors nor warns. Identity is still safe —
-resolution always re-locates rows by key, never by a cached offset — but do not
-rely on the check catching a rebuilt catalog.
-
-### 13. Raw passthrough (recipe 3e) is complete and unfiltered, and its `rows` can be `null`
-
-`output.format: 'parquet-raw'` applies `where`, `columns` and row-level
-`spatial: 'intersects'`/`'clip'` to **nothing** — only whole-file pruning
+`output.format: 'parquet-raw'` applies `where`, `columns`, `filter.limit`,
+and row-level spatial filtering to **nothing** — only whole-file pruning
 runs (partition/time/bbox against a file's own declared metadata), because
-nothing is ever decoded. `est.warnings`' `raw-passthrough-unfiltered` names
-which of those your filter asked for and got silently skipped; read it, or a
-user gets a file bigger than the request implied with no explanation why.
+nothing is ever decoded. Row-level spatial filtering is dropped whenever
+**any `Area` is passed at all**, regardless of `filter.spatial.mode` —
+`'bbox'` filters rows by their own bbox on the decoded path just as
+`'intersects'`/`'clip'` do, and an omitted `spatial` block defaults to
+`'intersects'` downstream, so there is no mode that makes row-level
+filtering a no-op once an area exists. `est.warnings`'
+`raw-passthrough-unfiltered` names which of `where`/`columns`/
+`spatial-row-level`/`limit` your filter asked for and got silently skipped;
+read it, or a user gets every row of a file bigger than the request implied,
+with no explanation why. `DownloadResult.truncated` stays `false` on this
+path regardless — the warning is disclosure, not a change to that field.
 
 `est.rows` is `null`, not a `Bounded`, whenever any selected file has no
 declared `rowCount` — most STAC-sourced datasets, always. This is honesty,
@@ -847,6 +861,17 @@ acceptance"): the common case — every STAC-sourced file — publishes no size
 at all, and refusing by default there would make the feature unusable for
 exactly the datasets it targets.
 
+One consequence of "warn distinctly, always proceed" worth stating plainly:
+in a browser with no File System Access API (Firefox, Safari as of this
+writing), `autoSink` falls back to `blobSink`, which caps **any** download
+at 256 MiB and refuses above it with `SINK_QUOTA_EXCEEDED`. On the raw path
+that cap cannot be predicted up front whenever part sizes are unpublished
+(the STAC-sourced case above) — the run starts, streams, and only then dies
+at 256 MiB, because there was nothing to evaluate the ceiling against
+before the first byte moved. This is the accepted trade-off of proceeding
+on an unknown size, not a bug to work around; `SINK_QUOTA_EXCEEDED` already
+names the lever (a filesystem-backed sink has no such cap).
+
 The public `estimate()` (from `@cng/download-core`'s `index.js`) routes
 `output.format === 'parquet-raw'` to `planRaw`/`rawEstimate` — both
 exported — and reads **no parquet footers at all**, which is the point of
@@ -854,6 +879,38 @@ the path. `estimate` imported directly from `download-core/src/estimate.js`
 (as that module's own unit tests do) does **not** route; only the package's
 public entry point does, so always import `estimate` from
 `@cng/download-core` itself, never a deeper path.
+
+`suggestedFormats` (on a `CEILING_EXCEEDED` error's context, recipe 4) never
+names `parquet-raw`: it works by running each registered format's
+synchronous `estimateBytes` and comparing against that format's own
+ceiling, and `parquet-raw` has no `estimateBytes` — its size comes from part
+metadata, not a schema+rows model. So a gpkg ceiling breach can suggest
+`geojson`/`geoparquet` but will never suggest the raw path, even when raw
+would be the best answer ("gpkg won't fit, but raw streams to disk
+unbounded"). Discovery doesn't depend on the suggestion list: offer
+`parquet-raw` directly in your own format picker, the way the demo does.
+
+Also worth knowing: `raw-no-pruning`'s `basis` field can go silent on a
+**mixed** dataset — some selected parts declare a `bbox`/`interval` and
+genuinely match, others declare neither and pass trivially — because the
+check is `selected.every(...)`. Neither branch fires in that case, so a
+user sees no pruning warning at all on a selection that partly "matched"
+only by having nothing to check against. Not a correctness bug (the
+`basis` string, when present, is never wrong) — just a gap this single
+string can't yet express.
+
+### 12. `clip` is not implemented
+
+`spatial.mode: 'clip'` fails with `FILTER_REQUIRES_ENGINE` before any fetch.
+Use `'intersects'`. Same for `whereSql` (needs `'sql'`) and an `Area` with
+`combine: 'dissolve'` (needs `'dissolve'`).
+
+### 13. Version-skew checking is currently inert
+
+The live catalogs publish no `cng:catalog_version` footer key, so
+`onVersionSkew: 'error'` neither errors nor warns. Identity is still safe —
+resolution always re-locates rows by key, never by a cached offset — but do not
+rely on the check catching a rebuilt catalog.
 
 ---
 

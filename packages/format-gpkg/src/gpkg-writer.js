@@ -200,6 +200,15 @@ export function createGpkgFormat(SQL) {
       const placeholders = ['?', ...attrColumns.map(() => '?')].join(', ');
       const insertStmt = db.prepare(`INSERT INTO ${quoteIdent(layerName)} (geom${attrColumns.length ? ', ' + attrColumns.map((c) => quoteIdent(c.name)).join(', ') : ''}) VALUES (${placeholders})`);
 
+      // Guards `close()`/`abort()` against running their free/close pair
+      // more than once. Before this restructure (bigger-downloads task 9,
+      // open()/close()/abort() all newly creating/freeing the database
+      // across their own lifetime) there was no `db` to double-release;
+      // now `db` exists from `open()` onward, so `abort()` after a
+      // successful `close()` (or a second `abort()`) would otherwise call
+      // sql.js's `free()`/`close()` on an already-freed statement/database.
+      let closed = false;
+
       return {
         // Test-only probe (not part of the FormatPlugin contract): lets
         // this package's tests inspect the live database between
@@ -262,10 +271,13 @@ export function createGpkgFormat(SQL) {
           insertStmt.free();
           const bytes = db.export();
           db.close();
+          closed = true;
           await ctx.writer.write(bytes);
           return { rows, bytes: bytes.byteLength };
         },
         async abort() {
+          if (closed) return; // already released by close() (or a prior abort()) -- a no-op, not a double-free
+          closed = true;
           insertStmt.free();
           db.close();
         },

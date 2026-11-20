@@ -403,6 +403,25 @@ export async function finalizeEstimate(plan, area, filter, options = {}, t0 = pe
   const sink = options.sink ?? null;
   const ceiling = effectiveCeiling({ format, sink, overrides: options.ceiling });
 
+  // Whole-branch review item 9 (one-liners): the public `estimate()`/
+  // `download()` surface is safe (`format` here only ever comes from
+  // `getFormat()`/`formatOverride`, both of which resolve a real,
+  // registered `FormatPlugin` with its own `estimateBytes`). But anyone
+  // importing `finalizeEstimate` directly from `src/estimate.js` (its own
+  // tests do), or registering a descriptor missing `estimateBytes`, hit a
+  // bare `TypeError: format.estimateBytes is not a function` here -- the
+  // exact failure mode "codes are the API" (AGENTS.md) exists to prevent.
+  // `FORMAT_CAPABILITY` is an existing code (used elsewhere for "this
+  // format/source combination isn't supported"); this is that same shape,
+  // naming the format instead of inventing a new code.
+  if (format && typeof format.estimateBytes !== 'function' && options.outputBytesOverride === undefined) {
+    throw new CngError(
+      `Format "${format.id ?? '(unknown)'}" has no estimateBytes -- it cannot be used with estimate()/finalizeEstimate without an outputBytesOverride.`,
+      'FORMAT_CAPABILITY',
+      { context: { formatId: format.id } },
+    );
+  }
+
   const outputBytes =
     options.outputBytesOverride ??
     (format

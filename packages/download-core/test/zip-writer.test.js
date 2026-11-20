@@ -108,6 +108,38 @@ test('entry names preserve hive partition directories', async () => {
   });
 });
 
+// Whole-branch review item 4 (Important): entry names are written as UTF-8
+// (`TextEncoder`), but general-purpose bit 11 ("names are UTF-8") was only
+// ever set, so a conforming reader falls back to CP437 and mojibakes any
+// non-ASCII name. Not hypothetical: raw entry names come straight off URL
+// paths, and the FTW catalog this repo targets names files after
+// countries -- "Côte d'Ivoire.parquet", "Türkiye.parquet",
+// "Åland Islands.parquet". No prior fixture is non-ASCII, so nothing
+// caught this. Python's `zipfile` itself decodes a name as UTF-8 only when
+// bit 11 is set (otherwise cp437), so this test discriminates: it fails
+// against the pre-fix header (bit 11 unset) because Python would then
+// decode the bytes as cp437, producing a different string.
+test('a non-ASCII entry name survives a round trip through python zipfile (UTF-8 flag, bit 11)', async () => {
+  const { chunks, writer } = collectingWriter();
+  const zip = createZipWriter(writer);
+
+  const names = ["Côte d'Ivoire.parquet", 'Türkiye.parquet', 'Åland Islands.parquet'];
+  for (const name of names) {
+    await zip.addFile(name, new TextEncoder().encode(`contents of ${name}`));
+  }
+  await zip.close();
+  await writer.close();
+
+  withTempZip(concatChunks(chunks), (path) => {
+    const result = readZipWithPython(path);
+    assert.deepEqual(result.names.sort(), names.slice().sort());
+    for (const name of names) {
+      assert.equal(result.contents[name], `contents of ${name}`);
+    }
+    assert.equal(result.bad, null);
+  });
+});
+
 test('sanitizeEntryName strips traversal and absolute paths', () => {
   const taken = new Set();
   assert.equal(sanitizeEntryName('../../etc/passwd', taken), 'etc/passwd');

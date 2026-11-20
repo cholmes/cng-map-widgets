@@ -6,6 +6,20 @@
 // descriptor (general-purpose flag bit 3) with 8-byte zip64 sizes -- because
 // the destination is a non-seekable WritableStream and sizes are not known
 // until the entry has been fully written.
+//
+// Entry names are written as UTF-8 (`TextEncoder`), so general-purpose bit
+// 11 (0x800, "names are UTF-8") is set on BOTH the local and central
+// headers -- without it a conforming reader falls back to CP437 and
+// mojibakes any non-ASCII name (raw passthrough's entry names come from
+// URL paths, and real catalogs name files after countries: "Côte
+// d'Ivoire.parquet", "Türkiye.parquet"). `FIXED_FLAGS` is the single
+// source for both headers so they cannot drift apart again.
+//
+// The fixed 1980-01-01 00:00:00 local mod time/date on every entry (see
+// `localHeader`/`centralHeader` below) is deliberate, not an oversight: a
+// reproducible build should not embed a wall-clock timestamp, so the same
+// request produces byte-identical archives.
+const FIXED_FLAGS = 0x08 | 0x800; // bit 3: sizes in data descriptor; bit 11: UTF-8 names
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -74,7 +88,7 @@ export function localHeader({ name, flags = 0 }) {
   const dv = new DataView(buf.buffer);
   dv.setUint32(0, 0x04034b50, true); // local file header signature
   dv.setUint16(4, 45, true); // version needed to extract (zip64)
-  dv.setUint16(6, (flags | 0x08) & 0xffff, true); // bit 3: sizes follow in a descriptor
+  dv.setUint16(6, (flags | FIXED_FLAGS) & 0xffff, true); // bit 3: sizes follow in a descriptor; bit 11: UTF-8 name
   dv.setUint16(8, 0, true); // compression method: STORE
   dv.setUint16(10, 0, true); // last mod file time
   dv.setUint16(12, 0x21, true); // last mod file date: 1980-01-01
@@ -107,12 +121,15 @@ export function dataDescriptor({ crc, size }) {
 
 /**
  * A zip64 central directory header for one entry.
- * @param {{ name: string, crc: number, size: number, offset: number }} opts
+ * @param {{ name: string, crc: number, size: number, offset: number, flags?: number }} opts
  *   `offset` is the byte offset of this entry's local header from the start
- *   of the archive.
+ *   of the archive. `flags` is additive on top of `FIXED_FLAGS`, matching
+ *   `localHeader`'s parameter -- the two headers for one entry must always
+ *   agree on this field, which is why both read from the same constant
+ *   instead of each hardcoding it.
  * @returns {Uint8Array}
  */
-export function centralHeader({ name, crc, size, offset }) {
+export function centralHeader({ name, crc, size, offset, flags = 0 }) {
   const nameBytes = new TextEncoder().encode(name);
   const extra = zip64ExtraCentral(size, offset);
   const buf = new Uint8Array(46 + nameBytes.length + extra.length);
@@ -120,7 +137,7 @@ export function centralHeader({ name, crc, size, offset }) {
   dv.setUint32(0, 0x02014b50, true); // central file header signature
   dv.setUint16(4, 45, true); // version made by (zip64)
   dv.setUint16(6, 45, true); // version needed to extract (zip64)
-  dv.setUint16(8, 0x08, true); // general purpose bit flag: bit 3
+  dv.setUint16(8, (flags | FIXED_FLAGS) & 0xffff, true); // bit 3: sizes in zip64; bit 11: UTF-8 name
   dv.setUint16(10, 0, true); // compression method: STORE
   dv.setUint16(12, 0, true); // last mod file time
   dv.setUint16(14, 0x21, true); // last mod file date: 1980-01-01

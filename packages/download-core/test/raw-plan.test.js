@@ -169,24 +169,76 @@ test('rawEstimate reports rows exactly when every part declares rowCount, else n
 });
 
 test('rawEstimate warns raw-passthrough-unfiltered listing what was dropped', async () => {
-  const parts = [{ url: 'https://example.test/a.parquet', bytes: 10 }];
-  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
+  const parts = [{ url: 'https://example.test/a.parquet', bbox: [0, 0, 1, 1], bytes: 10 }];
+  const area = { bboxes: [[0, 0, 1, 1]] };
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, area, {}, { fetch: neverFetch() });
   const filter = {
     where: [{ col: 'confidence', op: '>=', value: 0.9 }],
     columns: { include: ['confidence'] },
     spatial: { mode: 'intersects' },
+    limit: 50,
   };
   const est = await rawEstimate(plan, filter, {});
 
   const w = est.warnings.find((x) => x.code === 'raw-passthrough-unfiltered');
   assert.ok(w, 'expected a raw-passthrough-unfiltered warning');
-  assert.deepEqual(w.dropped, ['where', 'columns', 'spatial-row-level']);
+  assert.deepEqual(w.dropped, ['where', 'columns', 'spatial-row-level', 'limit']);
 });
 
 test('rawEstimate omits raw-passthrough-unfiltered when nothing row-level was requested', async () => {
   const parts = [{ url: 'https://example.test/a.parquet', bytes: 10 }];
   const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
   const est = await rawEstimate(plan, { spatial: { mode: 'bbox' } }, {});
+
+  assert.equal(est.warnings.some((x) => x.code === 'raw-passthrough-unfiltered'), false);
+});
+
+// Item 1 (whole-branch review, Critical): `filter.limit` is silently
+// dropped on the raw path with no disclosure -- reachable via the demo's
+// "Max rows" input sitting directly above the format picker that offers
+// parquet-raw. A standalone case (no where/columns/spatial) pins that
+// `limit` alone is enough to trigger the warning.
+test('rawEstimate discloses a dropped filter.limit even when nothing else was requested', async () => {
+  const parts = [{ url: 'https://example.test/a.parquet', bytes: 10 }];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
+  const est = await rawEstimate(plan, { limit: 10 }, {});
+
+  const w = est.warnings.find((x) => x.code === 'raw-passthrough-unfiltered');
+  assert.ok(w, 'expected a raw-passthrough-unfiltered warning naming the dropped limit');
+  assert.deepEqual(w.dropped, ['limit']);
+  // DownloadResult.truncated stays false on the raw path regardless --
+  // this warning is disclosure, not a behavior change to that field.
+});
+
+test('rawEstimate omits raw-passthrough-unfiltered when filter.limit is absent', async () => {
+  const parts = [{ url: 'https://example.test/a.parquet', bytes: 10 }];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
+  const est = await rawEstimate(plan, {}, {});
+
+  assert.equal(est.warnings.some((x) => x.code === 'raw-passthrough-unfiltered'), false);
+});
+
+// Item 2 (whole-branch review, Important): `spatial-row-level` must fire
+// for `mode: 'bbox'` too (it still filters rows on the decoded path) and
+// must be driven by whether an AREA was passed, not by `spatial.mode` --
+// the prior condition fired on mode alone, which the test below's "no
+// area" half would have let pass undetected if the fix regressed back to
+// checking mode instead.
+test('rawEstimate warns spatial-row-level for mode "bbox" when an area is present', async () => {
+  const parts = [{ url: 'https://example.test/a.parquet', bbox: [0, 0, 1, 1], bytes: 10 }];
+  const area = { bboxes: [[0, 0, 1, 1]] };
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, area, {}, { fetch: neverFetch() });
+  const est = await rawEstimate(plan, { spatial: { mode: 'bbox' } }, {});
+
+  const w = est.warnings.find((x) => x.code === 'raw-passthrough-unfiltered');
+  assert.ok(w, 'expected a raw-passthrough-unfiltered warning');
+  assert.deepEqual(w.dropped, ['spatial-row-level']);
+});
+
+test('rawEstimate does not warn spatial-row-level when no area was passed, even with mode "intersects"', async () => {
+  const parts = [{ url: 'https://example.test/a.parquet', bytes: 10 }];
+  const plan = await planRaw({ source: { kind: 'parquet-set', parts } }, null, {}, { fetch: neverFetch() });
+  const est = await rawEstimate(plan, { spatial: { mode: 'intersects' } }, {});
 
   assert.equal(est.warnings.some((x) => x.code === 'raw-passthrough-unfiltered'), false);
 });

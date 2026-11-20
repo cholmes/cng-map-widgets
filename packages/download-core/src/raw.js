@@ -75,6 +75,24 @@ function toNumber(v) {
   return typeof v === 'bigint' ? Number(v) : v;
 }
 
+/**
+ * Coerce any `bigint` found anywhere inside `value` to a `number`, leaving
+ * everything else untouched. `bbox`/`interval` are normally plain doubles
+ * and ISO strings in every live catalog, but both are read straight off a
+ * hyparquet-decoded row for collection-mirror sources -- the same route
+ * that makes `bytes`/`rowCount` BigInt-shaped (see `toNumber` above and
+ * AGENTS.md pitfall 5) -- so an INT64-typed bound is possible in principle.
+ * Used only for `requestDigest`'s `JSON.stringify`, which otherwise throws
+ * on a BigInt anywhere in the object graph.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function coerceBigInts(value) {
+  if (typeof value === 'bigint') return Number(value);
+  if (Array.isArray(value)) return value.map(coerceBigInts);
+  return value;
+}
+
 /** @param {string} url @returns {string} */
 function decodedPathname(url) {
   try {
@@ -361,7 +379,22 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
   ) {
     dropped.push('columns');
   }
-  if (filter.spatial?.mode === 'intersects' || filter.spatial?.mode === 'clip') dropped.push('spatial-row-level');
+  // Any area, regardless of `filter.spatial.mode`, means the decoded path
+  // would apply row-level spatial filtering: `'bbox'` filters rows by their
+  // own bbox, an omitted `spatial` block defaults to `'intersects'`
+  // downstream, and `'intersects'`/`'clip'` filter explicitly. Raw
+  // passthrough returns whole files regardless, so whenever an area was
+  // passed there is always something row-level being dropped -- the mode
+  // only changes what it *would* have been, never whether anything was.
+  // With no area there is nothing to filter rows by in the first place, so
+  // nothing is dropped.
+  if (areaBBoxes) dropped.push('spatial-row-level');
+  // `filter.limit` cannot be honored on this path either: a whole file is
+  // returned verbatim, never truncated. Spec §7.1 names `limit` explicitly
+  // among what raw cannot honor, and silently dropping it is the anti-goal
+  // §4 forbids -- the user must be told before the download starts, not
+  // discover it after receiving every row.
+  if (filter.limit != null) dropped.push('limit');
   if (dropped.length > 0) warnings.push({ code: 'raw-passthrough-unfiltered', dropped });
 
   // Same thresholds/constants `finalizeEstimate` uses, with one addition:
@@ -418,8 +451,8 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
     url: p.url,
     bytes: toNumber(p.bytes) ?? null,
     rowCount: toNumber(p.rowCount) ?? null,
-    bbox: p.bbox ?? null,
-    interval: p.interval ?? null,
+    bbox: coerceBigInts(p.bbox) ?? null,
+    interval: coerceBigInts(p.interval) ?? null,
   }));
   const requestDigest = await sha256Hex(JSON.stringify({ parts: digestParts, filter }));
 
@@ -577,8 +610,12 @@ async function fetchPartOrThrow(part, fetchImpl, signal) {
  * The default sink filename for a raw-passthrough run, when the caller's
  * `OutputRequest` declares none: the single selected part's own basename
  * (so a user piping a parquet file straight through keeps its real name),
- * or `'download.zip'` for the multi-file case. `download()` uses this for
- * `sink.open()`'s `filename` and `autoSink`'s `suggestedName`.
+ * or `${dataset.id}.zip` for the multi-file case (spec §7.1) -- for an
+ * archive of several, possibly multi-gigabyte files, the dataset's own name
+ * is a far more useful artifact name than a generic `download.zip`.
+ * `rawPlan.resolved.id` is the fully-resolved `DatasetDescriptor`'s id, the
+ * same object `runRaw` already reads `.attribution` off. `download()` uses
+ * this for `sink.open()`'s `filename` and `autoSink`'s `suggestedName`.
  * @param {Awaited<ReturnType<typeof planRaw>>} rawPlan
  * @returns {string}
  */
@@ -586,7 +623,7 @@ export function rawSuggestedFilename(rawPlan) {
   if (rawPlan.selected.length === 1) {
     return pathSegments(decodedPathname(rawPlan.selected[0].url)).pop() ?? 'download.parquet';
   }
-  return 'download.zip';
+  return `${rawPlan.resolved?.id ?? 'download'}.zip`;
 }
 
 /**

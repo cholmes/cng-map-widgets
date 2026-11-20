@@ -460,10 +460,27 @@ function buildFilter(entry, spatialMode = 'intersects') {
 }
 
 /** Shared by the manual Estimate button, the pre-download confirm gate,
- *  AND startDownload's own auto-fill from `handle.estimate`. */
-function outputFor(entry, formatId) {
+ *  AND startDownload's own auto-fill from `handle.estimate`.
+ *
+ *  Whole-branch review item 6 / Ruling R15: `parquet-raw`'s own extension
+ *  is always `'parquet'` (`rawFormatDescriptor.extension`), because the
+ *  COMMON case is one selected file. But a `hive`/`stac-geoparquet`
+ *  source that selects several parts produces a zip (raw.js's `runRaw`:
+ *  >1 selected part means `createZipWriter`, never a bare parquet
+ *  stream) -- naming that `foo.parquet` is a file Finder/Explorer won't
+ *  open by double-click. `filesSelected` is `preflight.files.selected`
+ *  from the `estimate()` call this page already makes before every
+ *  download (`confirmAndDownload` below) -- spec §7.8 added `output`/
+ *  `sink` to `estimate()` precisely so a UI could learn this number in
+ *  time to name the save target, and this is that pairing: a caller
+ *  supplying its own `output.filename` for a raw download should consult
+ *  `files.selected` the same way. The library does NOT rename this for
+ *  you -- `output.filename` is an explicit caller instruction, and
+ *  overriding it silently would be worse than honoring it (R15). */
+function outputFor(entry, formatId, filesSelected) {
   const fmtInfo = listFormats().find((f) => f.id === formatId);
-  const extension = fmtInfo?.extension ?? formatId;
+  let extension = fmtInfo?.extension ?? formatId;
+  if (formatId === RAW_FORMAT_ID && filesSelected > 1) extension = 'zip';
   return { spec: 'cng-output/1.0', format: formatId, filename: `${entry.key}.${extension}` };
 }
 
@@ -692,7 +709,7 @@ function resetDownloadUi() {
   renderFormatPicker();
 }
 
-function startDownload(formatId, filter) {
+function startDownload(formatId, filter, filesSelected) {
   const entry = currentEntry();
   // `filter` is the SAME object confirmAndDownload already built and
   // estimated against for the confirm gate (including whatever "Max rows"
@@ -701,7 +718,10 @@ function startDownload(formatId, filter) {
   // during the confirm dialog.
   filter = filter ?? buildFilter(entry);
   const fmtInfo = listFormats().find((f) => f.id === formatId);
-  const output = outputFor(entry, formatId);
+  // `filesSelected` (confirmAndDownload's `preflight.files.selected`) is
+  // what lets a multi-part raw download get a `.zip` name instead of
+  // `.parquet` -- see `outputFor`'s doc comment.
+  const output = outputFor(entry, formatId, filesSelected);
 
   // The demo uses memorySink() + a <a download> link rather than
   // autoSink()'s File System Access picker, so this page is drivable
@@ -902,7 +922,7 @@ async function confirmAndDownload(formatId) {
     }
   }
 
-  startDownload(formatId, filter);
+  startDownload(formatId, filter, preflight.files.selected);
 }
 
 document.getElementById('downloadBtn').addEventListener('click', () => confirmAndDownload(selectedFormat));

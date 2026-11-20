@@ -138,3 +138,31 @@ test('abort() after open() closes the database and leaves nothing behind', async
   // The underlying sql.js Database is closed; any further use throws.
   assert.throws(() => writer._db.exec('SELECT 1'));
 });
+
+// Whole-branch review item 9 (one-liners, format-gpkg abort guard): since
+// bigger-downloads task 9, `db`/`insertStmt` exist from `open()` onward
+// (not just inside `close()`), so a SECOND release call -- `abort()` after
+// a successful `close()`, or `abort()` called twice -- would otherwise
+// call sql.js's `free()`/`close()` on an already-freed statement/database.
+// Both must be a no-op, not a throw.
+test('abort() after a successful close() is a no-op, not a double-free', async () => {
+  const SQL = await initializedSqlJs;
+  const format = createGpkgFormat(SQL);
+  const { ctx } = makeCtx(schema);
+  const writer = await format.open(ctx);
+  await writer.writeBatch(pointBatch(['a']));
+  await writer.close();
+
+  await assert.doesNotReject(() => writer.abort());
+});
+
+test('abort() called twice is a no-op the second time', async () => {
+  const SQL = await initializedSqlJs;
+  const format = createGpkgFormat(SQL);
+  const { ctx } = makeCtx(schema);
+  const writer = await format.open(ctx);
+  await writer.writeBatch(pointBatch(['a']));
+  await writer.abort();
+
+  await assert.doesNotReject(() => writer.abort());
+});

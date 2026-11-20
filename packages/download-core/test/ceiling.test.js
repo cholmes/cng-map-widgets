@@ -56,9 +56,42 @@ test('the memorySink exemption applies only to a streaming format, never to a bu
   // memorySink only ever exempted the SINK's own buffering, not the
   // format's. Locks the ordering bug this test would have caught: the
   // memory-sink check used to short-circuit ahead of memoryFactorOf,
-  // which would have returned UNBOUNDED_BYTES here instead.
+  // which would have returned UNBOUNDED_BYTES here instead. Note the
+  // derived value here (~307 MiB) is ABOVE blobBytes (256 MiB) and must
+  // stay uncapped -- memorySink has no real write-time cap to predict,
+  // unlike blobSink (see the two tests below).
   const c = effectiveCeiling({ format: gpkgLike, sink: { kind: 'memory' } });
   assert.equal(c.outputBytes, Math.floor(GiB / 3.5));
+});
+
+// Whole-branch review item 3 (Important): blobSink genuinely refuses above
+// `blobBytes` at write time (`SINK_QUOTA_EXCEEDED` in sinks.js), but
+// nothing compared a buffering format's derived `memoryBudget/memoryFactor`
+// against it -- so gpkg (factor 3.5, ~307 MiB derived) and geoparquet
+// (factor 2, 512 MiB derived) both passed the gate above 256 MiB, only to
+// have the sink die at the last step with no `suggestedFormats`. Locks
+// `Math.min(derived, blobBytes)` for a memory-backed sink that is NOT the
+// explicit `memorySink` escape hatch.
+test('a buffering format on a blob sink is bounded by blobBytes even when memoryBudget/memoryFactor is larger', () => {
+  const c = effectiveCeiling({ format: gpkgLike, sink: { kind: 'blob' } });
+  assert.ok(Math.floor(GiB / 3.5) > 256 * MiB, 'precondition: derived must exceed blobBytes for this test to discriminate');
+  assert.equal(c.outputBytes, 256 * MiB);
+});
+
+test('a buffering format on a null sink is bounded by blobBytes, the conservative direction', () => {
+  const geoparquetLike = { streaming: false, capabilities: { memoryFactor: 2 } };
+  const c = effectiveCeiling({ format: geoparquetLike, sink: null });
+  assert.ok(Math.floor(GiB / 2) > 256 * MiB, 'precondition: derived must exceed blobBytes for this test to discriminate');
+  assert.equal(c.outputBytes, 256 * MiB);
+});
+
+test('a buffering format on a blob sink is NOT bounded by blobBytes when the derived value is already smaller', () => {
+  // A higher memoryFactor (e.g. 5) can derive below blobBytes on its own;
+  // Math.min must not force it UP to blobBytes in that case.
+  const highFactor = { streaming: false, capabilities: { memoryFactor: 5 } };
+  const c = effectiveCeiling({ format: highFactor, sink: { kind: 'blob' } });
+  assert.equal(c.outputBytes, Math.floor(GiB / 5));
+  assert.ok(c.outputBytes < 256 * MiB);
 });
 
 test('the raised flat defaults apply', () => {

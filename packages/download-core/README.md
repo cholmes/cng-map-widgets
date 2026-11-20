@@ -258,8 +258,12 @@ Warning codes: `no-covering`, `no-statistics`, `single-row-group`,
 
 Raw passthrough (`output.format: 'parquet-raw'`, below) adds three more:
 `raw-passthrough-unfiltered` (`{ dropped }` — which
-of `where` / `columns` / `spatial-row-level` this path did NOT apply, since
-nothing is decoded to apply them to), `raw-size-unknown` (`{
+of `where` / `columns` / `spatial-row-level` / `limit` this path did NOT
+apply, since nothing is decoded to apply them to; `spatial-row-level` fires
+whenever any `Area` was passed, regardless of `filter.spatial.mode` — every
+mode filters rows on the decoded path once an area exists; `limit` fires
+whenever `filter.limit` was set, since a whole file is always returned
+verbatim, never truncated), `raw-size-unknown` (`{
 partsWithoutSize, partsTotal }` — at least one selected file's size could not
 be resolved; `large-download`/`slow-download` are suppressed on that same
 estimate rather than computed from a partial sum), `raw-no-pruning` (`{ basis
@@ -445,7 +449,7 @@ values now that `outputBytes` carries its own weight):
 | `rows` | 50,000,000 |
 | `readBytes` | 64 GiB |
 | `files` | 10,000 |
-| `blobBytes` | 256 MiB — the budget for a streaming format's `outputBytes` on a `blob` sink, or when `sink` is not yet known. |
+| `blobBytes` | 256 MiB — the budget for a streaming format's `outputBytes` on a `blob` sink, or when `sink` is not yet known, AND the clamp on a buffering format's `memoryBudget / memoryFactor` derivation on that same sink kind (never on `memory` or `filesystem`). |
 
 `outputBytes` is derived from `memoryFactorOf(format)` — `format.capabilities.memoryFactor`,
 read without needing the format's `load()` to have run, defaulting to `0` for
@@ -459,16 +463,27 @@ a `streaming` format and `3` otherwise:
 - **`memoryFactor > 0`** (buffering — `geoparquet` declares `2`, `@cng/format-gpkg`'s
   `gpkg` declares `2.9`): `outputBytes = Math.floor(memoryBudget / memoryFactor)`,
   where `memoryBudget` defaults to **1 GiB** (`MEMORY_BUDGET_DEFAULT`) —
-  **regardless of sink**, because the cost (row arrays, a wasm heap, an
-  export copy) is spent inside the writer itself, not wherever the bytes
-  land.
+  because the cost (row arrays, a wasm heap, an export copy) is spent
+  inside the writer itself, not wherever the bytes land, this derivation
+  itself does not vary by sink kind. **But a `blob` sink (or `sink: null`,
+  the same conservative treatment as the streaming case above) additionally
+  clamps that number to `blobBytes`** (`Math.min(derived, blobBytes)`):
+  `blobSink` genuinely refuses to write above 256 MiB regardless of what a
+  format's memory factor would otherwise allow (`SINK_QUOTA_EXCEEDED` in
+  `sinks.js`), so `geoparquet` (512 MiB derived) and `gpkg` (~353 MiB
+  derived) would otherwise pass the gate only to die at the sink's own
+  write-time limit, with no `suggestedFormats` on that late failure. A
+  `filesystem` sink is not clamped — it has no 256 MiB limit to predict.
 
-**The `memory`-sink exemption applies only when `memoryFactor === 0`.** A
+**The `memory`-sink exemption applies only when `memoryFactor === 0`, and
+only to `blobBytes` — never to a buffering format's own derivation.** A
 buffering format is `memoryBudget / memoryFactor` on a `memorySink` exactly
-as on any other sink — it is not a loophole, because the format's own
-buffering cost doesn't care where the output ends up. (An earlier draft of
-this derivation waived the budget for *any* format on a memory sink, which
-left `gpkg` unbounded there; fixed before release.)
+as on any other sink, with **no** `blobBytes` clamp there either — it is not
+a loophole, because the format's own buffering cost doesn't care where the
+output ends up, and `memorySink` is this package's own test/advanced sink
+with no real write-time cap to predict. (An earlier draft of this
+derivation waived the budget for *any* format on a memory sink, which left
+`gpkg` unbounded there; fixed before release.)
 
 An explicit `overrides.outputBytes` (i.e. `options.ceiling.outputBytes`)
 always wins over either derivation. Import `effectiveCeiling`,
@@ -783,6 +798,22 @@ candidate for a *different* format's breach, because it has no
 `estimateBytes` to compare; a breach on the raw path's own ceiling reports
 `suggestedFormats: []` outright.
 
+**The `blobSink` fallback caps a raw download at 256 MiB, and this cannot
+always be predicted up front.** `parquet-raw` has `memoryFactor: 0`
+(streaming), so `effectiveCeiling` already derives the right number — see
+"Format-aware ceilings" above: unbounded on a disk-backed sink, `blobBytes`
+(256 MiB) on a memory-backed one. In a browser without the File System
+Access API (Firefox, Safari as of this writing), `autoSink` silently falls
+back to `blobSink`, so a raw download there is capped at 256 MiB and
+refuses above it with `SINK_QUOTA_EXCEEDED`. The one wrinkle is *when* that
+refusal arrives: the ceiling can only be evaluated against **known** part
+sizes (see above), and the common STAC-sourced case publishes none at all —
+so the run starts, streams, and only then dies at 256 MiB, with no up-front
+`CEILING_EXCEEDED` to catch first. This is not a bug to route around; it is
+the accepted cost of "warn distinctly, always proceed" on an unknown size.
+`SINK_QUOTA_EXCEEDED`'s message already names the lever (a filesystem-backed
+sink has no such cap).
+
 ### Sinks
 
 | export | notes |
@@ -1051,10 +1082,19 @@ This is why the project built an optimized mirror instead.
 `parquetWriteBuffer` wants the whole column-oriented dataset up front, so the
 whole result is held before a byte is written. `effectiveCeiling` sets its
 `outputBytes` to `memoryBudget / 2` (≈ 512 MiB at the 1 GiB default budget)
-**regardless of sink** — a buffering format's memory cost is spent inside the
-writer, not wherever the bytes land, so a `memory` sink does not exempt it
-the way it exempts a streaming format. Use `geojson` with
-`newlineDelimited: true` for anything genuinely large.
+on a `filesystem` sink — a buffering format's memory cost is spent inside
+the writer, not wherever the bytes land, so this derivation itself does not
+vary by sink kind. **But a `blob` sink (or `sink: null`) additionally
+clamps that number down to `blobBytes`** (256 MiB): `blobSink` genuinely
+refuses to write above that at write time regardless of what the format's
+memory factor would otherwise allow, so without the clamp a download would
+pass this gate only to die at the sink's own limit later, with no
+`suggestedFormats` on that late failure. A `memory` sink is exempt from
+both the budget-vs-`memoryFactor` derivation's sink-dependence (there is
+none to exempt) and the `blobBytes` clamp — it does not exempt the
+buffering format's own `memoryBudget / memoryFactor` cost itself, which
+still applies there in full, the same as every other sink. Use `geojson`
+with `newlineDelimited: true` for anything genuinely large.
 
 ### Parallel reads are ordered, and the win depends on the query
 
