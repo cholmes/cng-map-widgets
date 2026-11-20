@@ -447,10 +447,10 @@ export async function finalizeEstimate(plan, area, filter, options = {}, t0 = pe
   const largeDownloadBytes = options.largeDownloadBytes ?? DEFAULT_LARGE_DOWNLOAD_BYTES;
   const estimatedSeconds = Math.round(outputBytes.estimate / throughputBytesPerSecond);
   if (outputBytes.estimate > largeDownloadBytes) {
-    warnings.push({ code: 'large-download', context: { bytes: outputBytes.estimate, estimatedSeconds } });
+    warnings.push({ code: 'large-download', bytes: outputBytes.estimate, estimatedSeconds });
   }
   if (estimatedSeconds > SLOW_DOWNLOAD_SECONDS) {
-    warnings.push({ code: 'slow-download', context: { estimatedSeconds } });
+    warnings.push({ code: 'slow-download', estimatedSeconds });
   }
 
   const breaches = [];

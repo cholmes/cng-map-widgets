@@ -55,8 +55,8 @@ test('large-download fires above 1 GiB and carries bytes plus an ETA', async () 
   const est = await estimateWithOutputBytes(bytes);
   const warning = est.warnings.find((w) => w.code === 'large-download');
   assert.ok(warning, `expected a large-download warning, got ${JSON.stringify(est.warnings)}`);
-  assert.equal(warning.context.bytes, bytes);
-  assert.equal(warning.context.estimatedSeconds, Math.round(bytes / 10_000_000));
+  assert.equal(warning.bytes, bytes);
+  assert.equal(warning.estimatedSeconds, Math.round(bytes / 10_000_000));
 });
 
 test('large-download does not fire at exactly the threshold', async () => {
@@ -72,8 +72,8 @@ test('slow-download fires when the ETA exceeds 120s', async () => {
   const est = await estimateWithOutputBytes(bytes);
   const warning = est.warnings.find((w) => w.code === 'slow-download');
   assert.ok(warning, `expected a slow-download warning, got ${JSON.stringify(est.warnings)}`);
-  assert.equal(warning.context.estimatedSeconds, Math.round(bytes / 10_000_000));
-  assert.ok(warning.context.estimatedSeconds > 120);
+  assert.equal(warning.estimatedSeconds, Math.round(bytes / 10_000_000));
+  assert.ok(warning.estimatedSeconds > 120);
 });
 
 test('throughputBytesPerSecond changes the ETA and can clear slow-download', async () => {
@@ -85,7 +85,7 @@ test('throughputBytesPerSecond changes the ETA and can clear slow-download', asy
   );
   const large = est.warnings.find((w) => w.code === 'large-download');
   assert.ok(large, 'large-download should still fire -- only the ETA changed');
-  assert.equal(large.context.estimatedSeconds, Math.round(bytes / 1_000_000_000));
+  assert.equal(large.estimatedSeconds, Math.round(bytes / 1_000_000_000));
 });
 
 test('neither fires on a small download', async () => {
