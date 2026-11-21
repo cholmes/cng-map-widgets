@@ -1,7 +1,7 @@
 {
-  "name": "@cng/format-gpkg",
+  "name": "@cngeo/format-gpkg",
   "version": "0.2.0",
-  "description": "GeoPackage output for @cng/download-core: a hand-written SQLite 'vector features' profile (gpkg_contents/gpkg_spatial_ref_sys/gpkg_geometry_columns + the feature table), built with sql.js. The ~340KB (min+gz) path O5 chose over gdal3.js's 2-8MB wasm build -- see README.md and experiments/e10-heavy-formats/RESULTS.md.",
+  "description": "GeoPackage output for @cngeo/download-core: a hand-written SQLite 'vector features' profile (gpkg_contents/gpkg_spatial_ref_sys/gpkg_geometry_columns + the feature table), built with sql.js. The ~340KB (min+gz) path O5 chose over gdal3.js's 2-8MB wasm build -- see README.md and experiments/e10-heavy-formats/RESULTS.md.",
   "keywords": [
     "geopackage",
     "gpkg",
@@ -14,7 +14,6 @@
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
-  "private": true,
   "scripts": {
     "test": "node --test test/*.test.js"
   },
@@ -29,12 +28,24 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cng/spec": "0.1.0"
+    "@cngeo/spec": "0.2.0"
   },
   "devDependencies": {
     "sql.js": "1.13.0",
-    "@cng/download-core": "0.1.0",
+    "@cngeo/download-core": "0.2.0",
     "hyparquet": "1.33.0",
     "hyparquet-compressors": "1.1.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cholmes/cng-map-widgets.git",
+    "directory": "packages/format-gpkg"
+  },
+  "homepage": "https://github.com/cholmes/cng-map-widgets#readme",
+  "bugs": {
+    "url": "https://github.com/cholmes/cng-map-widgets/issues"
   }
 }

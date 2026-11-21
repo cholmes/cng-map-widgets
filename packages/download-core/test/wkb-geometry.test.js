@@ -1,4 +1,4 @@
-// Regression tests for the FIRMS (E6) blocker: @cng/spec's `wkbToGeoJson`
+// Regression tests for the FIRMS (E6) blocker: @cngeo/spec's `wkbToGeoJson`
 // and `bboxOfGeometry` are deliberately Polygon(3)/MultiPolygon(6) only (see
 // packages/spec/src/wkb.js's module doc), so a point dataset -- every row's
 // `geometry` column is a WKB Point -- threw "unsupported geometry type 1"
@@ -41,7 +41,7 @@ function wkbMultiPoint(points) {
   return new Uint8Array(buf);
 }
 
-/** Little-endian WKB Polygon, one ring, no holes -- same shape @cng/spec's wkbToGeoJson reads. */
+/** Little-endian WKB Polygon, one ring, no holes -- same shape @cngeo/spec's wkbToGeoJson reads. */
 function wkbPolygon(ring) {
   const buf = new ArrayBuffer(1 + 4 + 4 + 4 + ring.length * 16);
   const view = new DataView(buf);
@@ -58,7 +58,7 @@ function wkbPolygon(ring) {
   return new Uint8Array(buf);
 }
 
-test('decodeWkbGeometry: decodes a WKB Point (the real FIRMS geometry encoding) that @cng/spec\'s wkbToGeoJson rejects', () => {
+test('decodeWkbGeometry: decodes a WKB Point (the real FIRMS geometry encoding) that @cngeo/spec\'s wkbToGeoJson rejects', () => {
   const geom = decodeWkbGeometry(wkbPoint(-122.27, 37.81));
   assert.deepEqual(geom, { type: 'Point', coordinates: [-122.27, 37.81] });
 });
@@ -68,14 +68,14 @@ test('decodeWkbGeometry: decodes a WKB MultiPoint', () => {
   assert.deepEqual(geom, { type: 'MultiPoint', coordinates: [[1, 2], [3, 4], [-5, -6]] });
 });
 
-test('decodeWkbGeometry: delegates Polygon (and everything else) unchanged to @cng/spec', () => {
+test('decodeWkbGeometry: delegates Polygon (and everything else) unchanged to @cngeo/spec', () => {
   const ring = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]];
   const geom = decodeWkbGeometry(wkbPolygon(ring));
   assert.equal(geom.type, 'Polygon');
   assert.deepEqual(geom.coordinates, [ring]);
 });
 
-test('decodeWkbGeometry: an unsupported type still throws the same way @cng/spec does (e.g. LineString=2)', () => {
+test('decodeWkbGeometry: an unsupported type still throws the same way @cngeo/spec does (e.g. LineString=2)', () => {
   const buf = new Uint8Array(5);
   const view = new DataView(buf.buffer);
   view.setUint8(0, 1);
@@ -105,7 +105,7 @@ test('decodeWkbGeometry: passes an already-decoded GeoJSON geometry through unch
   assert.equal(decodeWkbGeometry(polygon), polygon);
 });
 
-test('bboxOfAnyGeometry: Polygon/MultiPolygon still delegate to @cng/spec\'s bboxOfGeometry', () => {
+test('bboxOfAnyGeometry: Polygon/MultiPolygon still delegate to @cngeo/spec\'s bboxOfGeometry', () => {
   const geom = { type: 'Polygon', coordinates: [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]] };
   assert.deepEqual(bboxOfAnyGeometry(geom), [0, 0, 10, 10]);
 });

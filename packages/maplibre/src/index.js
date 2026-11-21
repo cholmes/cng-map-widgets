@@ -1,4 +1,4 @@
-// @cng/maplibre -- public entry point.
+// @cngeo/maplibre -- public entry point.
 
 export const VERSION = '0.2.0';
 

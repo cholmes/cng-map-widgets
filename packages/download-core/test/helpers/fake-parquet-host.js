@@ -70,7 +70,7 @@ export function buildParquet({ groups = 8, rowsPerGroup = 10 } = {}) {
       { name: 'geometry', data: geometry, type: 'BYTE_ARRAY', nullable: true },
     ],
     rowGroupSize: rowsPerGroup,
-    createdBy: '@cng/download-core test',
+    createdBy: '@cngeo/download-core test',
   });
   return new Uint8Array(buffer);
 }

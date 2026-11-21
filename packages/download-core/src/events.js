@@ -1,7 +1,7 @@
-// @cng/download-core -- the one event mechanism (design doc §3.5).
-// Local copy of @cng/geocoder-core's Emitter (not exported from that
+// @cngeo/download-core -- the one event mechanism (design doc §3.5).
+// Local copy of @cngeo/geocoder-core's Emitter (not exported from that
 // package's public surface); duplicated rather than cross-imported to keep
-// the two packages' runtime coupling limited to @cng/spec, per §3.1's
+// the two packages' runtime coupling limited to @cngeo/spec, per §3.1's
 // singleton rationale.
 
 /**

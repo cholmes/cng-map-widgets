@@ -1,4 +1,4 @@
-// @cng/download-core -- the `geojson` format plugin (design doc §2.3's
+// @cngeo/download-core -- the `geojson` format plugin (design doc §2.3's
 // format-options table, §3.4 FormatPlugin). Streaming: writes bytes as
 // batches arrive, never buffers the whole result.
 

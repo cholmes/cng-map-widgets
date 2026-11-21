@@ -1,5 +1,5 @@
 {
-  "name": "@cng/spec",
+  "name": "@cngeo/spec",
   "version": "0.2.0",
   "description": "Shared contracts for cloud-native map widgets: the Area object, DatasetDescriptor/FilterSpec/DownloadRequest shapes, the CngError taxonomy, and pure geo helpers (bbox + antimeridian split, Visvalingam simplify, WKB decode, name normalization). No I/O, no dependencies.",
   "keywords": [
@@ -17,7 +17,6 @@
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
-  "private": true,
   "main": "./src/index.js",
   "exports": {
     ".": "./src/index.js",
@@ -28,5 +27,17 @@
     "README.md",
     "LICENSE"
   ],
-  "dependencies": {}
+  "dependencies": {},
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cholmes/cng-map-widgets.git",
+    "directory": "packages/spec"
+  },
+  "homepage": "https://github.com/cholmes/cng-map-widgets#readme",
+  "bugs": {
+    "url": "https://github.com/cholmes/cng-map-widgets/issues"
+  }
 }

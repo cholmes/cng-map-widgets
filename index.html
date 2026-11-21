@@ -91,15 +91,15 @@
 &lt;script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"&gt;&lt;/script&gt;
 <span class="c">&lt;!-- Map EVERY package you need transitively, not just the one you
      import: these packages cross-import each other by bare specifier
-     (@cng/spec especially), and an unmapped specifier is a runtime
+     (@cngeo/spec especially), and an unmapped specifier is a runtime
      failure. An import map is strict JSON -- a // comment inside this
      block stops it parsing and breaks every import. --&gt;</span>
 &lt;script type="importmap"&gt;
 {
   "imports": {
-    "@cng/spec":          "https://cholmes.github.io/cng-map-widgets/packages/spec/src/index.js",
-    "@cng/geocoder-core": "https://cholmes.github.io/cng-map-widgets/packages/geocoder-core/src/index.js",
-    "@cng/maplibre":      "https://cholmes.github.io/cng-map-widgets/packages/maplibre/src/index.js"
+    "@cngeo/spec":          "https://cholmes.github.io/cng-map-widgets/packages/spec/src/index.js",
+    "@cngeo/geocoder-core": "https://cholmes.github.io/cng-map-widgets/packages/geocoder-core/src/index.js",
+    "@cngeo/maplibre":      "https://cholmes.github.io/cng-map-widgets/packages/maplibre/src/index.js"
   }
 }
 &lt;/script&gt;
@@ -108,8 +108,8 @@
 &lt;body&gt;
 &lt;div id="map"&gt;&lt;/div&gt;
 &lt;script type="module"&gt;
-import { Geocoder } from '@cng/geocoder-core';
-import { GeocoderControl } from '@cng/maplibre';
+import { Geocoder } from '@cngeo/geocoder-core';
+import { GeocoderControl } from '@cngeo/maplibre';
 
 const map = new maplibregl.Map({
   container: 'map',
@@ -128,7 +128,7 @@ const geocoder = new Geocoder({
 
 geocoder.on('select', ({ result, area }) =&gt; {
   console.log(result.name, area.bbox, area.vertexCount.display);
-  <span class="c">// `area` is now ready to hand to @cng/download-core.</span>
+  <span class="c">// `area` is now ready to hand to @cngeo/download-core.</span>
 });
 
 <span class="c">// The control owns the combobox, the outline layer, fitBounds and the</span>
@@ -155,14 +155,14 @@ map.on('load', () =&gt; map.addControl(control, 'top-left'));
 <p>
   Honestly worse, until this is on npm. <code>npm i</code> cannot install a
   subdirectory of a git repo, so there is no way to pull a single
-  <code>@cng/*</code> package from GitHub. Clone the repo and
+  <code>@cngeo/*</code> package from GitHub. Clone the repo and
   <code>npm link</code>, or vendor the <code>packages/</code> directory. Then inject
   hyparquet once, before the first <code>load()</code> — Node has no network imports,
   and a bundler cannot rewrite the runtime-computed CDN specifier:
 </p>
 <pre><code>import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
-import { setHyparquetModules } from '@cng/geocoder-core';
+import { setHyparquetModules } from '@cngeo/geocoder-core';
 
 setHyparquetModules({ hyparquet, compressors });</code></pre>
 
@@ -186,13 +186,13 @@ python3 serve.py          <span class="c"># then open http://localhost:8000/exam
 </p>
 <table>
   <tr><th>Package</th><th>What it does</th></tr>
-  <tr><td><code>@cng/spec</code></td><td>The shared contracts — <code>Area</code>, the error taxonomy, the geometry helpers.</td></tr>
-  <tr><td><code>@cng/geocoder-core</code></td><td>Place-name search over a published cloud-native gazetteer. Emits an <code>Area</code>.</td></tr>
-  <tr><td><code>@cng/upload-core</code></td><td>The same <code>Area</code>, from a dropped GeoJSON file, with repairs reported.</td></tr>
-  <tr><td><code>@cng/download-core</code></td><td>Filters a GeoParquet table, STAC collection or hive catalog to an <code>Area</code> and writes a file.</td></tr>
-  <tr><td><code>@cng/raster-core</code></td><td>Clips a COG to an <code>Area</code>, with band selection and a size estimate.</td></tr>
-  <tr><td><code>@cng/maplibre</code>, <code>@cng/openlayers</code></td><td>Map adapters: search control, area layer, viewport provider, antimeridian-aware fit.</td></tr>
-  <tr><td><code>@cng/format-*</code></td><td>Optional output formats — GeoPackage, Shapefile, FlatGeobuf.</td></tr>
+  <tr><td><code>@cngeo/spec</code></td><td>The shared contracts — <code>Area</code>, the error taxonomy, the geometry helpers.</td></tr>
+  <tr><td><code>@cngeo/geocoder-core</code></td><td>Place-name search over a published cloud-native gazetteer. Emits an <code>Area</code>.</td></tr>
+  <tr><td><code>@cngeo/upload-core</code></td><td>The same <code>Area</code>, from a dropped GeoJSON file, with repairs reported.</td></tr>
+  <tr><td><code>@cngeo/download-core</code></td><td>Filters a GeoParquet table, STAC collection or hive catalog to an <code>Area</code> and writes a file.</td></tr>
+  <tr><td><code>@cngeo/raster-core</code></td><td>Clips a COG to an <code>Area</code>, with band selection and a size estimate.</td></tr>
+  <tr><td><code>@cngeo/maplibre</code>, <code>@cngeo/openlayers</code></td><td>Map adapters: search control, area layer, viewport provider, antimeridian-aware fit.</td></tr>
+  <tr><td><code>@cngeo/format-*</code></td><td>Optional output formats — GeoPackage, Shapefile, FlatGeobuf.</td></tr>
 </table>
 
 <footer>

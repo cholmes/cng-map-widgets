@@ -1,4 +1,4 @@
-// @cng/spec -- the Area contract (design doc §1).
+// @cngeo/spec -- the Area contract (design doc §1).
 
 import { computeBBoxes } from './bbox.js';
 import { simplifyToVertexCeiling } from './simplify.js';
@@ -15,7 +15,7 @@ import { CngError } from './errors.js';
  * documentation only, not a new runtime check. `shareAlike` is the
  * canonical (camelCase) field name; a raw manifest entry spells it
  * `share_alike` (snake_case) instead, which is why
- * `@cng/geocoder-core`'s manifest ingestion normalizes to this shape
+ * `@cngeo/geocoder-core`'s manifest ingestion normalizes to this shape
  * before it ever reaches `buildArea`.
  * @typedef {{
  *   text: string,
@@ -79,7 +79,7 @@ export function buildArea(input) {
     // behind the default a caller typically passes here. `undefined` (the
     // default): no guard, run the sync search regardless of input size --
     // the original behavior, still used by callers with no interactive-
-    // latency budget (e.g. `@cng/upload-core`). `@cng/geocoder-core`'s
+    // latency budget (e.g. `@cngeo/upload-core`). `@cngeo/geocoder-core`'s
     // `select()` passes `MAX_SYNC_SIMPLIFY_VERTICES` for its synchronous
     // (non-"both"-upgrade) builds.
     maxSyncInputVertices,

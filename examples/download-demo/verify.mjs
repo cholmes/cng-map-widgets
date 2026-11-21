@@ -12,8 +12,8 @@
 //
 // This is the real-browser follow-up to experiments/e10-heavy-formats/
 // RESULTS.md §9 ("No real browser smoke test for any CDN-URL
-// dynamic-import path in this round"): sql.js (@cng/format-gpkg) and
-// flatgeobuf (@cng/format-flatgeobuf) load here via a REAL
+// dynamic-import path in this round"): sql.js (@cngeo/format-gpkg) and
+// flatgeobuf (@cngeo/format-flatgeobuf) load here via a REAL
 // `import('https://cdn.jsdelivr.net/...')` in a REAL Chromium page --
 // not Node's setXModule() test-injection seam, which cannot exercise an
 // absolute-URL dynamic import at all.
@@ -200,7 +200,7 @@ check(!!shpRow && /loads ~500 B on first use/.test(shpRow.text), `Shapefile show
 
 // Assert NOTHING sql.js- or flatgeobuf-shaped has been fetched from the CDN
 // merely from registering the descriptors / rendering the picker. (This
-// must match the CDN host specifically -- `@cng/format-flatgeobuf`'s own
+// must match the CDN host specifically -- `@cngeo/format-flatgeobuf`'s own
 // *local* ESM module path, served by serve.py at page-load time because
 // index.html statically imports it, legitimately contains the substring
 // "flatgeobuf" too; that eager local-module fetch is not the CDN payload

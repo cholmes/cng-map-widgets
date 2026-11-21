@@ -36,7 +36,7 @@ a Blob fallback; zero-build CDN-consumable ESM.**
 
 ```
         ┌──────────────────┐   ┌────────────────┐   ┌─────────────┐
-        │ @cng/geocoder-   │   │ @cng/upload-   │   │ (adapter    │
+        │ @cngeo/geocoder-   │   │ @cngeo/upload-   │   │ (adapter    │
         │ core             │   │ core           │   │  draw tool) │
         │ names index →    │   │ GeoJSON file → │   │ map draw →  │
         └────────┬─────────┘   └───────┬────────┘   └──────┬──────┘
@@ -45,19 +45,19 @@ a Blob fallback; zero-build CDN-consumable ESM.**
                                  │
                                  ▼
                       ┌─────────────────────┐
-                      │ @cng/download-core │  ◄── DatasetDescriptor + FilterSpec
+                      │ @cngeo/download-core │  ◄── DatasetDescriptor + FilterSpec
                       │ estimate / download │      (declarative JSON — also the
                       └──────────┬──────────┘       QGIS-shared artifact)
                                  │
                  ┌───────────────┼────────────────┐
                  ▼               ▼                ▼
-          geojson writer   geoparquet writer   @cng/format-gpkg
+          geojson writer   geoparquet writer   @cngeo/format-gpkg
             (in core)        (in core)           (opt-in plugin)
 ```
 
 Three contracts carry the whole system, and all three are **plain JSON, versioned,
 and serializable**: `Area`, `DatasetDescriptor`, `FilterSpec`. TypeScript
-interfaces are the convenient form; JSON Schema (published in `@cng/spec`) is
+interfaces are the convenient form; JSON Schema (published in `@cngeo/spec`) is
 the normative form, because the Python QGIS plugin consumes the schemas, not
 the TypeScript (design call #7).
 
@@ -91,7 +91,7 @@ was simplified, by how much, and with what area delta.
 ### 1.2 TypeScript
 
 ```ts
-// @cng/spec — area.ts
+// @cngeo/spec — area.ts
 
 /** [west, south, east, north] in EPSG:4326 degrees. `west > east` means the
  *  box crosses the antimeridian; see `Area.bboxes` for the split form. */
@@ -205,7 +205,7 @@ export interface AreaFeatureRef {
   readonly country?: string;
   readonly bbox?: BBox;
   /** Verbatim source properties, for a consumer that wants to label output.
-   *  Never interpreted by any @cng package. */
+   *  Never interpreted by any @cngeo package. */
   readonly properties?: Readonly<Record<string, unknown>>;
 }
 
@@ -236,7 +236,7 @@ export interface AreaAttribution {
    *  normalization" task.** Every manifest shipped so far declares this field
    *  `share_alike` (snake_case, matching the rest of the manifest's field
    *  naming) -- this interface has always documented the camelCase spelling
-   *  above, which `@cng/geocoder-core`'s manifest ingestion now actually
+   *  above, which `@cngeo/geocoder-core`'s manifest ingestion now actually
    *  produces (`Geocoder#attribution` / `IndexInfo.attribution` / every
    *  `Area.provenance.attribution` it builds), accepting either spelling on
    *  the way in and always emitting this one, with the original raw entry
@@ -281,7 +281,7 @@ export type AreaRepair =
   | { kind: 'dropped-z'; count: number }
   | { kind: 'clamped-coordinate'; count: number; axis: 'lon' | 'lat' }
   /** **Added to this union 2026-11-12.** Produced by
-   *  `@cng/upload-core`'s repair.js ("removed N duplicate consecutive
+   *  `@cngeo/upload-core`'s repair.js ("removed N duplicate consecutive
    *  points") since that package shipped; the union had no slot for it, so
    *  it was a documented deviation in the code rather than a kind here.
    *  Folding it into an unrelated kind would have been the dishonest fix. */
@@ -541,7 +541,7 @@ A multi-feature upload example, abbreviated, showing `collect` and simplificatio
 
 Mapping rule between the TS and the JSON: `camelCase` in TS,
 `snake_case` under the `area:` prefix in JSON; `Area.geometry` ↔ the Feature's
-`geometry`; `Area.bbox` ↔ the Feature's `bbox`. `@cng/spec` exports
+`geometry`; `Area.bbox` ↔ the Feature's `bbox`. `@cngeo/spec` exports
 `toAreaDocument(area): AreaDocument` and `fromAreaDocument(doc): Area`, and
 `validateAreaDocument(doc)` against the published JSON Schema.
 
@@ -565,7 +565,7 @@ natural place to emit it (see §5.3).
 ### 2.1 DatasetDescriptor
 
 ```ts
-// @cng/spec — dataset.ts
+// @cngeo/spec — dataset.ts
 
 export interface DatasetDescriptor {
   readonly spec: 'cng-dataset/1.0';
@@ -737,7 +737,7 @@ export interface ColumnDescriptor {
 ### 2.2 FilterSpec
 
 ```ts
-// @cng/spec — filter.ts
+// @cngeo/spec — filter.ts
 
 export interface FilterSpec {
   readonly spec: 'cng-filter/1.0';
@@ -771,7 +771,7 @@ export interface FilterSpec {
 
   /** Capabilities this filter needs. A consumer that lacks one refuses with
    *  `FILTER_REQUIRES_ENGINE` before fetching a byte. Derived automatically by
-   *  `@cng/spec`'s `requirementsOf(filter)`, and written into a serialized
+   *  `@cngeo/spec`'s `requirementsOf(filter)`, and written into a serialized
    *  FilterSpec so a Python reader does not have to re-derive it. */
   readonly requires?: readonly FilterRequirement[];
 }
@@ -870,15 +870,15 @@ Format options, normative per format:
 |---|---|---|
 | `geojson` | `{ precision?: number (7), newlineDelimited?: boolean (false), featureIdColumn?: string }` | Streaming; `newlineDelimited` emits GeoJSONSeq, which streams without holding the array. |
 | `geoparquet` | `{ compression?: 'zstd'\|'snappy'\|'none' ('zstd'), compressionLevel?: number (9), rowGroupSize?: number (50000), version?: '1.0'\|'1.1' ('1.1'), writeCovering?: boolean (true), spatialSort?: boolean (false) }` | `writeCovering` emits the `bbox` struct + GeoParquet 1.1 `covering`, so the output is itself prunable. |
-| `gpkg` | `{ layerName?: string }` | Plugin (`@cng/format-gpkg`, **shipped E10**). Non-streaming, sql.js path, lazy-loadable (~339 KB measured). No R-tree (`spatialIndex` option dropped — sql.js's published wasm build has no `rtree` module; see §4.5 and the package README). |
-| `shapefile` | `{ layerName?: string }` | Plugin (`@cng/format-shapefile`, **shipped E10**). Zero deps, non-streaming, eager-registrable. Writes a `.shp.zip` (five sibling files bundled, since `Sink` is one file). Limits surfaced as `FormatWriter.close()`'s `warnings` (10-char field names, one shape type per file, ~2GiB ceiling — see package README). |
-| `flatgeobuf` | — | Plugin (`@cng/format-flatgeobuf`, **shipped E10**, ~10 KB measured, lazy-loadable). Non-streaming (the wrapped `flatgeobuf` package's JS binding has no incremental encoder). |
-| `csv` | `{ geometry?: 'wkt'\|'drop' ('wkt'), delimiter?: string (',') }` | Plugin (`@cng/format-extras`, **shipped E10**, zero deps, streaming, eager-registrable). |
-| `esrijson` | — | Plugin (`@cng/format-extras`, **shipped E10**, zero deps, non-streaming — a FeatureSet is one JSON document). Esri REST `FeatureSet` shape; one `geometryType` per file (mixed types refused, same restriction as Shapefile). |
+| `gpkg` | `{ layerName?: string }` | Plugin (`@cngeo/format-gpkg`, **shipped E10**). Non-streaming, sql.js path, lazy-loadable (~339 KB measured). No R-tree (`spatialIndex` option dropped — sql.js's published wasm build has no `rtree` module; see §4.5 and the package README). |
+| `shapefile` | `{ layerName?: string }` | Plugin (`@cngeo/format-shapefile`, **shipped E10**). Zero deps, non-streaming, eager-registrable. Writes a `.shp.zip` (five sibling files bundled, since `Sink` is one file). Limits surfaced as `FormatWriter.close()`'s `warnings` (10-char field names, one shape type per file, ~2GiB ceiling — see package README). |
+| `flatgeobuf` | — | Plugin (`@cngeo/format-flatgeobuf`, **shipped E10**, ~10 KB measured, lazy-loadable). Non-streaming (the wrapped `flatgeobuf` package's JS binding has no incremental encoder). |
+| `csv` | `{ geometry?: 'wkt'\|'drop' ('wkt'), delimiter?: string (',') }` | Plugin (`@cngeo/format-extras`, **shipped E10**, zero deps, streaming, eager-registrable). |
+| `esrijson` | — | Plugin (`@cngeo/format-extras`, **shipped E10**, zero deps, non-streaming — a FeatureSet is one JSON document). Esri REST `FeatureSet` shape; one `geometryType` per file (mixed types refused, same restriction as Shapefile). |
 
 ### 2.4 Resolution: collection JSON → descriptor
 
-A `portolan-collection` source is resolved by `@cng/download-core`'s
+A `portolan-collection` source is resolved by `@cngeo/download-core`'s
 `resolveDataset(descriptor)`. The mapping is fixed and documented so the Python
 side can implement the same derivation:
 
@@ -920,13 +920,13 @@ hyparquet engine, so:
   SQL to find out whether it can honour a filter.
 - `requires` lists `'sql'` whenever `whereSql` is present. `download-core`'s
   default (hyparquet) engine refuses with `FILTER_REQUIRES_ENGINE` and names the
-  capability; registering `@cng/engine-duckdb` makes it work.
+  capability; registering `@cngeo/engine-duckdb` makes it work.
 - Both may be present; they are ANDed. A UI can therefore offer structured
   predicates for the common cases (which then prune row groups via statistics)
   and a raw fragment for the rest.
 - `whereSql.fragment` is **untrusted text that becomes SQL**. The plugin's
   existing warning applies verbatim and is restated in our docs: treat a pasted
-  filter like a small script. No `@cng` package ever puts a `whereSql` into a
+  filter like a small script. No `@cngeo` package ever puts a `whereSql` into a
   URL, a saved preference, or a generated code snippet without the user having
   typed it in this session.
 
@@ -1167,7 +1167,7 @@ mapping onto what `gpq_downloader` already has:
 **Direction of travel:** the plugin gains a "paste a download request" entry
 point and a "copy this request" action; the web widget gains the same. The two
 then demonstrably produce the same rows, which is the test that proves the
-spec is real. `@cng/spec` publishes the JSON Schemas to npm *and* as plain
+spec is real. `@cngeo/spec` publishes the JSON Schemas to npm *and* as plain
 files in this repo under `spec/`, so the Python side vendors a copy and
 validates with `jsonschema` (already an indirect QGIS dependency).
 
@@ -1177,11 +1177,11 @@ validates with `jsonschema` (already an indirect QGIS dependency).
 
 ### 3.1 Names
 
-npm scope **`@cng`** (cloud-native geospatial). Short matters here: these
+npm scope **`@cngeo`** (cloud-native geospatial). Short matters here: these
 specifiers appear verbatim in CDN import URLs in every example, and
 `@cloud-native-map-widgets/download-core` makes a 90-character import line.
 
-*Amended 2026-11-17 (was `@cng`):* [O1](#7-open-items) is resolved. `@cng`
+*Amended 2026-11-17 (was `@cngeo`):* [O1](#7-open-items) is resolved. `@cngeo`
 is both short and expands to a term with currency in this community, where
 `cng` expanded to nothing on sight. Deliberately **not** matched to the repo
 name `cng-map-widgets`: `@cng-map-widgets/download-core` is 31 characters, and
@@ -1190,36 +1190,36 @@ packages, which are not map widgets.
 
 | package | contents | depends on |
 |---|---|---|
-| `@cng/spec` | TypeScript types + JSON Schemas for `Area`, `DatasetDescriptor`, `FilterSpec`, `OutputRequest`, `DownloadRequest`; pure helpers: bbox math, antimeridian split/detect, Visvalingam simplify, normalize/validate `Area`, `requirementsOf(filter)`, `toAreaDocument`/`fromAreaDocument`. **No I/O, no dependencies.** | — |
-| `@cng/geocoder-core` | index load (full + range), normalization, prefix search, ranking, geometry resolution → `Area`. Framework-agnostic, no DOM. | `@cng/spec`, `hyparquet`, `hyparquet-compressors` |
-| `@cng/upload-core` | file/drop handling, GeoJSON parse, validate/repair, combine, → `Area`. GeoJSON only (E4). | `@cng/spec` |
-| `@cng/download-core` | dataset resolution, pruning cascade, estimate, streaming download, sinks, format registry, `geojson` + `geoparquet` writers. | `@cng/spec`, `hyparquet`, `hyparquet-compressors`, `hyparquet-writer` |
-| `@cng/maplibre` | `GeocoderControl`, `AreaLayer`, `DrawTool` (thin), viewport provider. | `@cng/spec`; **peer**: `maplibre-gl` |
-| `@cng/openlayers` | the same three, OpenLayers flavour. | `@cng/spec`; **peer**: `ol` |
-| `@cng/format-gpkg` | GeoPackage writer plugin (sql.js path, ~339 KB min+gz — **shipped and measured, E10**). Opt-in, lazy-loadable. | `@cng/spec` |
-| `@cng/format-shapefile` | Shapefile writer plugin (zero deps, ~5 KB — **shipped, E10**). Opt-in, eager-registrable. | `@cng/spec` |
-| `@cng/format-flatgeobuf` | FlatGeobuf writer plugin (~10 KB min+gz — **shipped and measured, E10**). Opt-in, lazy-loadable. | `@cng/spec` |
-| `@cng/format-extras` | CSV + Esri JSON writer plugins (zero deps — **shipped, E10**). Opt-in, eager-registrable. | `@cng/spec` |
-| `@cng/format-gdal` | Future work (E10): a gdal3.js-backed plugin for drivers neither sql.js nor Shapefile's flat-file format reach (File Geodatabase, chiefly). Measured 9.07 MB gzip — not implemented. | `@cng/spec`; **peer**: `gdal3.js` |
-| `@cng/engine-duckdb` | DuckDB-WASM engine plugin + benchmark harness. Opt-in, heavy. Design call #2: never in core. | `@cng/spec`; **peer**: `@duckdb/duckdb-wasm` |
-| `@cng/stac` | `stacToDescriptor(stacObject)` — the §2.4 derivation as a standalone function over a plain STAC JSON. Extracted so `portolan-browser` and a future `stac-browser` widget share it. | `@cng/spec` |
+| `@cngeo/spec` | TypeScript types + JSON Schemas for `Area`, `DatasetDescriptor`, `FilterSpec`, `OutputRequest`, `DownloadRequest`; pure helpers: bbox math, antimeridian split/detect, Visvalingam simplify, normalize/validate `Area`, `requirementsOf(filter)`, `toAreaDocument`/`fromAreaDocument`. **No I/O, no dependencies.** | — |
+| `@cngeo/geocoder-core` | index load (full + range), normalization, prefix search, ranking, geometry resolution → `Area`. Framework-agnostic, no DOM. | `@cngeo/spec`, `hyparquet`, `hyparquet-compressors` |
+| `@cngeo/upload-core` | file/drop handling, GeoJSON parse, validate/repair, combine, → `Area`. GeoJSON only (E4). | `@cngeo/spec` |
+| `@cngeo/download-core` | dataset resolution, pruning cascade, estimate, streaming download, sinks, format registry, `geojson` + `geoparquet` writers. | `@cngeo/spec`, `hyparquet`, `hyparquet-compressors`, `hyparquet-writer` |
+| `@cngeo/maplibre` | `GeocoderControl`, `AreaLayer`, `DrawTool` (thin), viewport provider. | `@cngeo/spec`; **peer**: `maplibre-gl` |
+| `@cngeo/openlayers` | the same three, OpenLayers flavour. | `@cngeo/spec`; **peer**: `ol` |
+| `@cngeo/format-gpkg` | GeoPackage writer plugin (sql.js path, ~339 KB min+gz — **shipped and measured, E10**). Opt-in, lazy-loadable. | `@cngeo/spec` |
+| `@cngeo/format-shapefile` | Shapefile writer plugin (zero deps, ~5 KB — **shipped, E10**). Opt-in, eager-registrable. | `@cngeo/spec` |
+| `@cngeo/format-flatgeobuf` | FlatGeobuf writer plugin (~10 KB min+gz — **shipped and measured, E10**). Opt-in, lazy-loadable. | `@cngeo/spec` |
+| `@cngeo/format-extras` | CSV + Esri JSON writer plugins (zero deps — **shipped, E10**). Opt-in, eager-registrable. | `@cngeo/spec` |
+| `@cngeo/format-gdal` | Future work (E10): a gdal3.js-backed plugin for drivers neither sql.js nor Shapefile's flat-file format reach (File Geodatabase, chiefly). Measured 9.07 MB gzip — not implemented. | `@cngeo/spec`; **peer**: `gdal3.js` |
+| `@cngeo/engine-duckdb` | DuckDB-WASM engine plugin + benchmark harness. Opt-in, heavy. Design call #2: never in core. | `@cngeo/spec`; **peer**: `@duckdb/duckdb-wasm` |
+| `@cngeo/stac` | `stacToDescriptor(stacObject)` — the §2.4 derivation as a standalone function over a plain STAC JSON. Extracted so `portolan-browser` and a future `stac-browser` widget share it. | `@cngeo/spec` |
 
-Why `@cng/spec` exists as its own package rather than living in
+Why `@cngeo/spec` exists as its own package rather than living in
 `geocoder-core`: all five runtime packages need the `Area` contract, and a page
 that loads `geocoder-core` and `download-core` from a CDN must get **one**
 `Area` implementation, not two. A shared, separately-versioned, zero-dependency
 spec package is the only way to guarantee that across independent CDN imports.
 
-Why `@cng/stac` is separate from `download-core`: design call #8 wants
+Why `@cngeo/stac` is separate from `download-core`: design call #8 wants
 portolan glue thin, and E7's notes want a stac-browser extraction path. The
 STAC→descriptor derivation is the *entire* portolan-specific surface. Isolating
 it means the future stac-browser widget is "same packages, different host
 component", not a fork.
 
-### 3.2 `@cng/geocoder-core`
+### 3.2 `@cngeo/geocoder-core`
 
 ```ts
-// @cng/geocoder-core
+// @cngeo/geocoder-core
 
 export interface GeocoderOptions {
   /** Default: `DEFAULT_INDEX_URL` — the published
@@ -1699,7 +1699,7 @@ pre-amendment behavior:
    anything, because with `upgradeDisplay` nothing is swapped until the
    upgrade actually finishes.
 
-**Adapters.** `@cng/maplibre` and `@cng/openlayers`'s `GeocoderControl`s
+**Adapters.** `@cngeo/maplibre` and `@cngeo/openlayers`'s `GeocoderControl`s
 both grew a small notice attached to the control: "Loading full detail…
 ~69K vertices" with a `×` Cancel button while `'area:upgrading'` is current,
 "Full detail loaded." / "Keeping simplified outline." for a couple of
@@ -1717,7 +1717,7 @@ full-resolution fetch (Canada ADM0 is ~500K vertices), and MapLibre's
 tiling worker, which is itself a measurable main-thread cost at that size.
 Deferring cannot make the swap cheaper, only choose a moment for its cost
 that isn't on top of whatever the user is doing right now; see the
-`@cng/maplibre` README / the geocoder demo for the measured numbers.
+`@cngeo/maplibre` README / the geocoder demo for the measured numbers.
 
 **The ranking rule, normatively.** *(Amended 2026-11-12 — see the amendment
 below for the bug report, the alternatives measured, and why this is the
@@ -2379,7 +2379,7 @@ at all).
 Usage:
 
 ```js
-import { Geocoder } from 'https://cdn.jsdelivr.net/npm/@cng/geocoder-core@0.1.0/dist/geocoder-core.cdn.js';
+import { Geocoder } from 'https://cdn.jsdelivr.net/npm/@cngeo/geocoder-core@0.1.0/dist/geocoder-core.cdn.js';
 
 const geocoder = new Geocoder();                   // default published index
 input.addEventListener('focus', () => geocoder.load(), { once: true });
@@ -2822,7 +2822,7 @@ this amendment.
   fallback.
 
 
-### 3.3 `@cng/upload-core`
+### 3.3 `@cngeo/upload-core`
 
 ```ts
 export interface UploadOptions {
@@ -2868,13 +2868,13 @@ export interface GeometryReader {
 }
 ```
 
-### 3.4 `@cng/download-core`
+### 3.4 `@cngeo/download-core`
 
 ```ts
 export interface DownloadCoreOptions {
   readonly fetch?: typeof fetch;
   /** Row-reading engine. Default: the built-in hyparquet engine (design
-   *  call #2). `@cng/engine-duckdb` registers an alternative. */
+   *  call #2). `@cngeo/engine-duckdb` registers an alternative. */
   readonly engine?: Engine;
   readonly formats?: readonly FormatPlugin[];
   readonly ceiling?: Partial<Ceiling>;
@@ -3124,7 +3124,7 @@ export interface FormatWriter {
   /** `warnings`, added by the amendment below, is additive and optional:
    *  a format's own honesty mechanism for limits only it knows about
    *  (Shapefile's 10-char field names, one-shape-type-per-file, ~2GiB
-   *  size ceiling — see `@cng/format-shapefile`'s README). */
+   *  size ceiling — see `@cngeo/format-shapefile`'s README). */
   close(): Promise<{ rows: number; bytes: number; warnings?: readonly { code: string, message: string, context?: Record<string, unknown> }[] }>;
   abort(reason?: string): Promise<void>;
 }
@@ -3234,7 +3234,7 @@ did not come out the way the plan assumed.
 documented default of 12 and **read by nothing** — row groups were read
 one at a time. It now works: row groups are fetched by that many workers
 pulling from one shared cursor (the same worker-pool shape as
-`@cng/geocoder-core`'s `searchRangeIndex`, commit 8c1308c — N workers
+`@cngeo/geocoder-core`'s `searchRangeIndex`, commit 8c1308c — N workers
 over a cursor and one `Promise.all`, never concurrency-sized waves, so a
 slow read never idles the other N−1), while `onBatch` stays strictly in
 row-group order, delivered by a single loop. Output is byte-for-byte what
@@ -3403,8 +3403,8 @@ into `est.outputBytes` and from there into both the `outputBytes` check in
 
 Implemented: `packages/download-core/src/{engine-hyparquet,prune,estimate,
 download}.js` and `src/formats/{geojson,geoparquet}.js`, plus
-`@cng/format-extras`, `@cng/format-gpkg`, `@cng/format-shapefile`,
-`@cng/format-flatgeobuf`. Tests:
+`@cngeo/format-extras`, `@cngeo/format-gpkg`, `@cngeo/format-shapefile`,
+`@cngeo/format-flatgeobuf`. Tests:
 `packages/download-core/test/{engine-concurrency,prune-where,
 estimate-geometry-bytes}.test.js`.
 
@@ -3530,7 +3530,7 @@ export interface LazyFormatDescriptor {
   estimateBytes(schema: readonly ColumnDescriptor[], rows: Bounded): Bounded;
   /** Resolves to the real `FormatPlugin`, an ESM module whose `default`
    *  is the plugin or a factory for it, or a bare factory. Every real
-   *  implementation of this (`@cng/format-gpkg`, `@cng/format-flatgeobuf`)
+   *  implementation of this (`@cngeo/format-gpkg`, `@cngeo/format-flatgeobuf`)
    *  documents its `load()` as `() => import(<exact pinned absolute CDN
    *  URL>)` — never a bare specifier (§4.4 rule 2 still holds; see below
    *  for why this isn't a relaxation of it). */
@@ -3577,9 +3577,9 @@ listable immediately — only the *load* is deferred.
 Implemented: `packages/download-core/src/registry.js`,
 `packages/download-core/src/download.js`; new `FORMAT_LOAD_FAILED` code in
 `packages/spec/src/errors.js`. Every new format plugin from E10
-(`@cng/format-gpkg`, `@cng/format-flatgeobuf`) exports a ready-made
+(`@cngeo/format-gpkg`, `@cngeo/format-flatgeobuf`) exports a ready-made
 `*FormatDescriptor` using this shape; the zero-dependency ones
-(`@cng/format-shapefile`, `@cng/format-extras`) export one too, whose
+(`@cngeo/format-shapefile`, `@cngeo/format-extras`) export one too, whose
 `load()` resolves immediately — the registry treats "lazy but free" and
 "lazy and heavy" the same way. Tests:
 `packages/download-core/test/registry-lazy.test.js` and the lazy-format
@@ -3669,7 +3669,7 @@ export declare function isCngError(e: unknown): e is CngError;
 | `FILTER_UNSUPPORTED_PREDICATE` | download | no | Engine cannot express the predicate. |
 | `FILTER_REQUIRES_ENGINE` | download | no | "This filter needs the DuckDB engine plugin." Name the requirement. |
 | `CEILING_EXCEEDED` | download | no | **The refusal path.** `handle.result` rejects with this the moment the handle goes `blocked` (see the 2026-11-12 amendment below: it used to just wait, forever). Carries `context.breaches`, `context.limits` and `context.estimate`. Show the estimate, the limit, and a "download anyway" that calls `acceptCeiling()` — whose return value is the continued run's promise. |
-| `FORMAT_UNAVAILABLE` | download | no | "GeoPackage output needs the @cng/format-gpkg plugin." |
+| `FORMAT_UNAVAILABLE` | download | no | "GeoPackage output needs the @cngeo/format-gpkg plugin." |
 | `FORMAT_CAPABILITY` | download | no | e.g. nested columns into GeoPackage, or a non-4326 CRS into any E10 plugin, or mixed geometry types into one Shapefile/Esri JSON file. Offer GeoParquet/GeoJSON. |
 | `FORMAT_LOAD_FAILED` | download | **yes** | **Added by the lazy-format-loading amendment (E10).** A lazy format's CDN `load()` threw (network, usually). "Couldn't load the GeoPackage writer — check your connection and try again." Retryable: the registry's `resolveFormat` does not cache a rejection, so a retry re-attempts `load()`. |
 | `SINK_PERMISSION_DENIED` | download | yes | User dismissed the save picker. Not an error worth a dialog. |
@@ -3703,7 +3703,7 @@ the only difference is an alias map.
 
 ```json
 {
-  "name": "@cng/download-core",
+  "name": "@cngeo/download-core",
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -3712,7 +3712,7 @@ the only difference is an alias map.
     "./bundle": { "types": "./dist/index.d.ts", "default": "./dist/download-core.bundle.js" }
   },
   "dependencies": {
-    "@cng/spec": "0.1.0",
+    "@cngeo/spec": "0.1.0",
     "hyparquet": "1.26.0",
     "hyparquet-compressors": "1.1.1",
     "hyparquet-writer": "^0.5.0"
@@ -3728,7 +3728,7 @@ In `dist/<name>.cdn.js`, a dependency import becomes an exact, pinned URL:
 // inside dist/download-core.cdn.js
 import { parquetMetadataAsync, parquetReadObjects } from 'https://cdn.jsdelivr.net/npm/hyparquet@1.26.0/src/hyparquet.js';
 import { compressors } from 'https://cdn.jsdelivr.net/npm/hyparquet-compressors@1.1.1/src/index.js';
-import { normalizeArea, splitAntimeridian } from 'https://cdn.jsdelivr.net/npm/@cng/spec@0.1.0/dist/spec.cdn.js';
+import { normalizeArea, splitAntimeridian } from 'https://cdn.jsdelivr.net/npm/@cngeo/spec@0.1.0/dist/spec.cdn.js';
 ```
 
 **Why externalize rather than inline:**
@@ -3742,7 +3742,7 @@ import { normalizeArea, splitAntimeridian } from 'https://cdn.jsdelivr.net/npm/@
    imports hyparquet from a CDN. If our pinned URL matches theirs, the app pays
    for hyparquet once whether or not it loads our packages. If we inlined, the
    app would carry two.
-3. **`@cng/spec` must be a singleton.** `instanceof CngError` and `Area`
+3. **`@cngeo/spec` must be a singleton.** `instanceof CngError` and `Area`
    validation across package boundaries only behave if there is one `spec`
    module. Externalizing makes that structural rather than hoped-for.
 4. **Security patching is a URL change.** A hyparquet CVE is fixed by republishing
@@ -3756,10 +3756,10 @@ build fails if any CDN URL in a `.cdn.js` artifact lacks an exact
 `@major.minor.patch`.
 
 **The version-unification obligation this creates.** Benefit (1) above is real
-only if every `@cng` package pins the *same* hyparquet URL — and the
+only if every `@cngeo` package pins the *same* hyparquet URL — and the
 ecosystem is already divergent: `portolan-browser` has `hyparquet@1.26.0` +
 `hyparquet-compressors@1.1.1`, while E1's harness pinned `1.33.0` + `1.1.3`
-from jsdelivr. So: **one hyparquet version per `@cng` release train**, declared
+from jsdelivr. So: **one hyparquet version per `@cngeo` release train**, declared
 once in the repo root and injected into every package's alias map by the build,
 with CI failing on a mismatch between any two packages. A consumer stuck on a
 different version repoints it with one import-map line (§4.3) — which is the
@@ -3795,10 +3795,10 @@ who wants to self-host:
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec":            "https://cdn.jsdelivr.net/npm/@cng/spec@0.1.0/dist/spec.js",
-    "@cng/geocoder-core":   "https://cdn.jsdelivr.net/npm/@cng/geocoder-core@0.1.0/dist/geocoder-core.js",
-    "@cng/download-core":   "https://cdn.jsdelivr.net/npm/@cng/download-core@0.1.0/dist/download-core.js",
-    "@cng/maplibre":        "https://cdn.jsdelivr.net/npm/@cng/maplibre@0.1.0/dist/maplibre.js",
+    "@cngeo/spec":            "https://cdn.jsdelivr.net/npm/@cngeo/spec@0.1.0/dist/spec.js",
+    "@cngeo/geocoder-core":   "https://cdn.jsdelivr.net/npm/@cngeo/geocoder-core@0.1.0/dist/geocoder-core.js",
+    "@cngeo/download-core":   "https://cdn.jsdelivr.net/npm/@cngeo/download-core@0.1.0/dist/download-core.js",
+    "@cngeo/maplibre":        "https://cdn.jsdelivr.net/npm/@cngeo/maplibre@0.1.0/dist/maplibre.js",
     "hyparquet":             "https://cdn.jsdelivr.net/npm/hyparquet@1.26.0/src/hyparquet.js",
     "hyparquet-compressors": "https://cdn.jsdelivr.net/npm/hyparquet-compressors@1.1.1/src/index.js",
     "hyparquet-writer":      "https://cdn.jsdelivr.net/npm/hyparquet-writer@0.5.0/src/index.js"
@@ -3806,8 +3806,8 @@ who wants to self-host:
 }
 </script>
 <script type="module">
-  import { Geocoder } from '@cng/geocoder-core';
-  import { estimate, download, autoSink } from '@cng/download-core';
+  import { Geocoder } from '@cngeo/geocoder-core';
+  import { estimate, download, autoSink } from '@cngeo/download-core';
 </script>
 ```
 
@@ -3829,12 +3829,12 @@ zero-build consumption:
 2. **No dynamic `import()` of a bare specifier.** Without a bundler or an
    import map, `import('hyparquet')` throws. Optional heavy features are
    therefore **registered, not lazily imported**: the consumer imports
-   `@cng/format-gpkg` themselves and calls `registerFormat(gpkgFormat)`. This
+   `@cngeo/format-gpkg` themselves and calls `registerFormat(gpkgFormat)`. This
    is the single most consequential packaging rule in this document, and it is
    why §3.4 has `registerFormat` / `registerEngine` / `registerReader` rather
    than a `format: 'gpkg'` string that magically works.
 3. No top-level `await` in core packages (it blocks the whole module graph).
-   Permitted in `@cng/format-gpkg` and `@cng/engine-duckdb` for wasm
+   Permitted in `@cngeo/format-gpkg` and `@cngeo/engine-duckdb` for wasm
    instantiation, documented on each.
 4. No CSS imports, no JSON import assertions, no `new URL(..., import.meta.url)`
    for anything that must be fetched — a CDN-relative asset fetch works, but the
@@ -3861,13 +3861,13 @@ is what crosses the wire.** Our packages are budgets to hold, not measurements
 | `hyparquet@1.26.0` | 448 KB on disk | **35 KB** | **measured** (`src/*.js` concatenated, gzip -9) | pure JS ESM |
 | `hyparquet-compressors@1.1.1` | 204 KB on disk | **79 KB** | **measured**, same method | zstd+snappy+brotli, pure JS, no wasm. Needed for every zstd file, i.e. all of ours |
 | `hyparquet-writer` | — | ~20 KB | **estimate** — not installed locally; E5 measures | GeoParquet output |
-| `@cng/spec` | — | **≤ 10 KB** | budget | bbox math, antimeridian, Visvalingam, validators. Types erase to nothing |
-| `@cng/geocoder-core` | — | **≤ 15 KB** | budget | + spec + hyparquet(+compressors) |
-| `@cng/upload-core` | — | **≤ 10 KB** | budget | GeoJSON only |
-| `@cng/download-core` | — | **≤ 30 KB** | budget | pruning, estimate, sinks, geojson + geoparquet writers |
-| `@cng/maplibre` | — | **≤ 8 KB** | budget | `maplibre-gl` is a peer, not counted |
-| `@cng/openlayers` | — | **≤ 9 KB** | budget | `ol` is a peer, not counted |
-| `@cng/stac` | — | **≤ 6 KB** | budget | pure JSON traversal |
+| `@cngeo/spec` | — | **≤ 10 KB** | budget | bbox math, antimeridian, Visvalingam, validators. Types erase to nothing |
+| `@cngeo/geocoder-core` | — | **≤ 15 KB** | budget | + spec + hyparquet(+compressors) |
+| `@cngeo/upload-core` | — | **≤ 10 KB** | budget | GeoJSON only |
+| `@cngeo/download-core` | — | **≤ 30 KB** | budget | pruning, estimate, sinks, geojson + geoparquet writers |
+| `@cngeo/maplibre` | — | **≤ 8 KB** | budget | `maplibre-gl` is a peer, not counted |
+| `@cngeo/openlayers` | — | **≤ 9 KB** | budget | `ol` is a peer, not counted |
+| `@cngeo/stac` | — | **≤ 6 KB** | budget | pure JSON traversal |
 
 **Realistic page totals** (min+gz, excluding the map library):
 
@@ -3886,15 +3886,15 @@ sentinel-2 explorer do).
 
 | plugin | wasm | js | min+gz total | basis |
 |---|---|---|---|---|
-| `@cng/format-flatgeobuf` | — | 10,074 B | **~10 KB — measured** (E10) | jsdelivr `+esm` bundle of `flatgeobuf@4.6.1`'s `geojson` submodule, `gzip -9`. Lighter than estimated: loading only the GeoJSON-specific submodule (not the full package, which also pulls in Arrow-IO-adjacent machinery this plugin never touches) tree-shakes well. |
-| `@cng/format-shapefile` | — | ~5 KB | **~5 KB — measured** (E10) | zero dependencies: hand-written `.shp`/`.shx`/`.dbf` + a STORED-only ZIP, no wasm |
-| `@cng/format-extras` (CSV + Esri JSON) | — | ~2 KB | **~2 KB — measured** (E10) | zero dependencies |
-| `@cng/format-gpkg` — sql.js path (**shipped, E10**) | 321,893 B | 17,352 B | **~339 KB — measured** (E10) | `sql.js@1.13.0`'s published `sql-wasm.wasm` + `sql-wasm.js`, `gzip -9`, plus this plugin's own ~3KB. Lighter than estimated (sql.js got smaller between the versions compared). Validated: `ogrinfo -al -so` + DuckDB's `ST_Read` read every table this plugin writes cleanly; a live FTW-Liechtenstein download round-trips end to end (`packages/format-gpkg/test/gpkg-integration.test.js`). R-tree: measured absent from sql.js's published wasm build (`CREATE VIRTUAL TABLE ... USING rtree` throws `no such module: rtree`); documented as a known gap, not required for the base GeoPackage profile. |
-| `@cng/format-gpkg` — gdal3.js path | 9,074,360 B | — | **9.07 MB — measured** (E10) | `gdal3.js@2.8.1`'s `gdal3WebAssembly.wasm`, `gzip -9`. Heavier than the original estimate's upper bound; confirms the sql.js path above as the right default. Not implemented — stays `@cng/format-gdal` future work for drivers neither sql.js nor Shapefile's flat-file format can reach (File Geodatabase via `OpenFileGDB`, chiefly). |
+| `@cngeo/format-flatgeobuf` | — | 10,074 B | **~10 KB — measured** (E10) | jsdelivr `+esm` bundle of `flatgeobuf@4.6.1`'s `geojson` submodule, `gzip -9`. Lighter than estimated: loading only the GeoJSON-specific submodule (not the full package, which also pulls in Arrow-IO-adjacent machinery this plugin never touches) tree-shakes well. |
+| `@cngeo/format-shapefile` | — | ~5 KB | **~5 KB — measured** (E10) | zero dependencies: hand-written `.shp`/`.shx`/`.dbf` + a STORED-only ZIP, no wasm |
+| `@cngeo/format-extras` (CSV + Esri JSON) | — | ~2 KB | **~2 KB — measured** (E10) | zero dependencies |
+| `@cngeo/format-gpkg` — sql.js path (**shipped, E10**) | 321,893 B | 17,352 B | **~339 KB — measured** (E10) | `sql.js@1.13.0`'s published `sql-wasm.wasm` + `sql-wasm.js`, `gzip -9`, plus this plugin's own ~3KB. Lighter than estimated (sql.js got smaller between the versions compared). Validated: `ogrinfo -al -so` + DuckDB's `ST_Read` read every table this plugin writes cleanly; a live FTW-Liechtenstein download round-trips end to end (`packages/format-gpkg/test/gpkg-integration.test.js`). R-tree: measured absent from sql.js's published wasm build (`CREATE VIRTUAL TABLE ... USING rtree` throws `no such module: rtree`); documented as a known gap, not required for the base GeoPackage profile. |
+| `@cngeo/format-gpkg` — gdal3.js path | 9,074,360 B | — | **9.07 MB — measured** (E10) | `gdal3.js@2.8.1`'s `gdal3WebAssembly.wasm`, `gzip -9`. Heavier than the original estimate's upper bound; confirms the sql.js path above as the right default. Not implemented — stays `@cngeo/format-gdal` future work for drivers neither sql.js nor Shapefile's flat-file format can reach (File Geodatabase via `OpenFileGDB`, chiefly). |
 | `terrio-js` (full) | 10,623,358 B | — | **10.6 MB — measured** (E10) | `terrio-js@0.8.0`'s published `terrio_bg.wasm`, `gzip -9`. **Works** — writes correct GeoPackage and Shapefile, validated with `ogrinfo`/DuckDB — but the heaviest candidate measured, disqualifying it from the "light path" mandate. See `experiments/e10-heavy-formats/RESULTS.md` §1. |
 | `terrio-js/core` (GeoTIFF/COG, GeoJSON, FlatGeobuf, GeoPackage, Shapefile, PMTiles/MBTiles, CRS) | 6,059,247 B | — | **6.1 MB — measured** (E10) | same source, the smallest module terrio-js offers; still 18x the sql.js path above |
-| `@cng/engine-duckdb` — mvp bundle | ~2.5 MB wasm (gz) | ~250 KB | **~2.8 MB** *(est.)* | DuckDB-WASM's own published bundle sizes |
-| `@cng/engine-duckdb` — eh + spatial | **~6–9 MB wasm** | ~250 KB | **~6–9 MB** *(est.)* | the spatial extension is the bulk; needed for `ST_Intersects`/`ST_Intersection` |
+| `@cngeo/engine-duckdb` — mvp bundle | ~2.5 MB wasm (gz) | ~250 KB | **~2.8 MB** *(est.)* | DuckDB-WASM's own published bundle sizes |
+| `@cngeo/engine-duckdb` — eh + spatial | **~6–9 MB wasm** | ~250 KB | **~6–9 MB** *(est.)* | the spatial extension is the bulk; needed for `ST_Intersects`/`ST_Intersection` |
 
 Two consequences stated as policy, not preference:
 
@@ -3964,20 +3964,20 @@ An adapter adds exactly five things:
 
 An adapter must **not**: fetch an index, rank results, simplify geometry,
 construct an `Area` from raw coordinates without going through
-`@cng/spec`'s normalizer, or hold dataset/filter state. Each of those is a
+`@cngeo/spec`'s normalizer, or hold dataset/filter state. Each of those is a
 behaviour that would then differ between MapLibre and OpenLayers.
 
 ### 5.2 Signatures
 
 ```ts
-// @cng/maplibre
+// @cngeo/maplibre
 import type { IControl, Map } from 'maplibre-gl';
 
 export interface GeocoderControlOptions {
   /** **Required in practice. The documented `new Geocoder()` default is
    *  PLANNED, not implemented — §8, and deliberately so:** defaulting it
-   *  here would make `@cng/maplibre`/`@cng/openlayers` import
-   *  `@cng/geocoder-core` (and through it a parquet reader), which §4.5's
+   *  here would make `@cngeo/maplibre`/`@cngeo/openlayers` import
+   *  `@cngeo/geocoder-core` (and through it a parquet reader), which §4.5's
    *  adapter budget and §5.1's "what an adapter must not do" both rule
    *  out. With no `geocoder`, the control renders and accepts typing but
    *  every search is a no-op. Construct the `Geocoder` yourself and pass
@@ -4028,7 +4028,7 @@ export declare function addAreaLayer(map: Map, options?: AreaLayerStyle & { id?:
 export declare function viewportProvider(map: Map): () => BBox;
 /** Minimal draw: rectangle (drag) and "use current viewport" (one click, no
  *  drag). Emits an Area with `source: 'draw'`, built through
- *  `@cng/spec`'s `buildArea` like every other Area this adapter produces.
+ *  `@cngeo/spec`'s `buildArea` like every other Area this adapter produces.
  *  Not a replacement for mapbox-gl-draw/terra-draw; a host that already has
  *  a draw library passes its GeoJSON to `areaFromGeoJson` instead.
  *
@@ -4038,7 +4038,7 @@ export declare function viewportProvider(map: Map): () => BBox;
  *  `tools` still defaults to `['rectangle', 'viewport']`, so polygon is
  *  opt-in. No holes, no multi-part shapes, no snapping and no
  *  self-intersection check: a host needing those still brings its own draw
- *  library and passes its GeoJSON to `@cng/upload-core`'s
+ *  library and passes its GeoJSON to `@cngeo/upload-core`'s
  *  `areaFromGeoJson` (`source: 'upload'`). */
 export declare function createDrawTool(map: Map, options?: { tools?: ('rectangle'|'polygon'|'viewport')[], id?: string, names?: { drawn?: string, viewport?: string } }): DrawToolHandle;
 
@@ -4095,7 +4095,7 @@ surface. The real cost of the choice made instead: only the largest
 exterior ring of the Area's geometry is editable — holes and any other
 polygon in a `MultiPolygon` pass through unchanged.
 
-`@cng/openlayers` exports the same names with OL types
+`@cngeo/openlayers` exports the same names with OL types
 (`Control`, `Map` from `ol`, `VectorLayer`/`VectorSource` internally) and one
 extra option:
 
@@ -4108,7 +4108,7 @@ export interface OlGeocoderControlOptions extends GeocoderControlOptions {
 ```
 
 Both adapters are ~250 lines of which ~150 is the shared combobox. That shared
-part lives in `@cng/spec`? No — it is DOM, and `spec` is I/O-free. It lives in
+part lives in `@cngeo/spec`? No — it is DOM, and `spec` is I/O-free. It lives in
 an internal, unpublished `packages/_ui` workspace package that both adapters
 inline at build time. Stated here because "the combobox is implemented twice"
 would be the predictable drift.
@@ -4178,11 +4178,11 @@ portolan-browser/
 
 `AreaDownload.vue` does four things and nothing else:
 
-1. `stacToDescriptor(this.data)` — from `@cng/stac`, against the stac-js object
+1. `stacToDescriptor(this.data)` — from `@cngeo/stac`, against the stac-js object
    already in the Vuex store. Returns `null` for raster/zarr, which is what the
    `condition` tests, so "not supported" is an absence rather than an error
    dialog (design call #8).
-2. Mounts `GeocoderControl` and `addAreaLayer` from `@cng/maplibre` onto the
+2. Mounts `GeocoderControl` and `addAreaLayer` from `@cngeo/maplibre` onto the
    **existing** `MapView.vue` map instance, obtained via the store rather than
    by creating a second map.
 3. Renders the estimate and the ceiling refusal using
@@ -4202,7 +4202,7 @@ bundled app is exactly how you end up with two hyparquets.
 codegen systems verbatim, so a stac-browser widget is the same
 `AreaDownload.vue` with three subtractions:
 
-- `@cng/stac`'s derivation must degrade gracefully when
+- `@cngeo/stac`'s derivation must degrade gracefully when
   `partition:*`/`table:*`/`portolan:*` are absent — a plain STAC collection
   with one GeoParquet asset and GeoParquet file metadata is the floor. Already
   how §2.4's fallback chain is written; this is the reason it is written that
@@ -4214,14 +4214,14 @@ codegen systems verbatim, so a stac-browser widget is the same
   the store. **Design it that way from the start** — it costs one prop and
   removes the only portolan-specific line in the component.
 
-Keeping `@cng/stac` a separate package is what makes this a 20-line diff
+Keeping `@cngeo/stac` a separate package is what makes this a 20-line diff
 rather than a fork.
 
 ---
 
 ## 6. Index file interface
 
-The contract between `@cng/geocoder-core` and the sidecar the
+The contract between `@cngeo/geocoder-core` and the sidecar the
 `portolan-mirrors/geoboundaries` catalog publishes. The catalog repo owns the
 builder; this section is the interface it must satisfy. Two artifacts: a
 **names index parquet** and a small **JSON manifest** beside it.
@@ -4575,19 +4575,19 @@ implementation.
 
 | # | item | blocked on | **default I'd pick** |
 |---|---|---|---|
-| **O1** ✅ | npm scope. `@cng` is short (matters in CDN URLs) but cryptic; availability unverified. | an `npm view` check and Chris's preference | **RESOLVED 2026-11-17: `@cng`.** Registry checked — zero published packages under `@cng` *or* `@cng`, so the choice was free. `@cng` is equally short and actually expands ("cloud-native geospatial"). Package *names* (`geocoder-core`, `download-core`, …) were settled either way. |
+| **O1** ✅ | npm scope. `@cngeo` is short (matters in CDN URLs) but cryptic; availability unverified. | an `npm view` check and Chris's preference | **RESOLVED 2026-11-17: `@cngeo`.** Registry checked — zero published packages under `@cngeo` *or* `@cngeo`, so the choice was free. `@cngeo` is equally short and actually expands ("cloud-native geospatial"). Package *names* (`geocoder-core`, `download-core`, …) were settled either way. |
 | **O2** | `filterVertexCeiling = 10,000`. | E5 measuring per-row point-in-polygon cost at 1k/10k/50k vertices against a real FTW/FIRMS download | **10,000.** Raise it if E5 shows the cost is negligible; the mechanism (auto-simplify + reported `areaDeltaRatio`) does not change either way. |
 | **O3** | ~~`loadStrategy: 'auto'` threshold, 5 MB.~~ **Resolved by E1.** | — | **5 MB, confirmed.** E1: the 2.50 MB index full-loads in 203 ms (8 ms fetch + 196 ms decode, localhost) and answers warm keystrokes in 0.0–0.1 ms; the range path adds round trips for no benefit at this size. Extrapolated, a 300K-row index is ~16 MB and would full-load in ~1.2 s, already past the cold budget — so 5 MB sits correctly between the two. **Residual unknown:** E1's cold number is localhost; the 1 s budget is "on broadband", so the real cold-focus fetch of 2.5 MB over the public path is still unmeasured. Default stands; re-check in E6 against source.coop. |
 | **O4** | ~~Whether `searchSync` is worth its API surface.~~ **Resolved by E1.** | — | **Ship it.** E1 measured warm full-load search at **0.0 ms p50, 0.1 ms p95** — a binary search over an in-memory array. At that cost the promise is not an optimization detail, it *is* the per-keystroke cost, and an `await` per keystroke also forces the caller's render into a later microtask. Keep the `state`-guarded throw. |
-| **O5** | ~~GeoPackage: sql.js vs gdal3.js.~~ **Resolved by E10.** | — | **sql.js, shipped as `@cng/format-gpkg`.** Measured 339 KB min+gz (lighter than the ~480 KB estimate), validated with `ogrinfo -al -so` and DuckDB's `ST_Read` — a live FTW-Liechtenstein download round-trips end to end. gdal3.js measured 9.07 MB gzip (heavier than the estimate's ~2–8 MB upper bound), confirming sql.js as the right default; stays `@cng/format-gdal` future work. **New candidate found and rejected on weight, not function:** `terrio-js` (opengeos/terrio), a pure-Rust GDAL-adjacent I/O library with wasm bindings — it genuinely works (writes correct, `ogrinfo`/DuckDB-validated GeoPackage *and* Shapefile) but its smallest module (`terrio-js/core`) measures 6.1 MB gzip, 18x the sql.js path; not shipped. Shapefile also shipped (`@cng/format-shapefile`, zero deps, ~5 KB), FlatGeobuf shipped (`@cng/format-flatgeobuf`, ~10 KB, lighter than its own ~25 KB estimate), and CSV + Esri JSON shipped (`@cng/format-extras`, zero deps). See `experiments/e10-heavy-formats/RESULTS.md` for every measurement and the terrio verdict in full. |
-| **O6** | Non-4326 datasets. Design call #4 makes `Area` 4326-only, but a dataset in 3857 or a UTM zone is common. | whether E6/E7 hit one in practice | **Refuse with `DATASET_CRS_UNSUPPORTED`**, naming the CRS and the `ogr2ogr` command that fixes it. Reprojecting *features* needs proj in core; reprojecting the *area* to the dataset's CRS needs proj too and silently changes what "intersects" means near the edges. Revisit as `@cng/reproject` (a thin `proj4` wrapper — `portolan-browser` already depends on `proj4`). |
-| **O7** | Exact clip implementation. `intersects` needs only point-in-polygon; `clip` needs real polygon intersection. | E5 choosing between a ~15 KB `polygon-clipping` dependency in `download-core` vs. requiring `@cng/engine-duckdb` | **Ship `clip` as a small opt-in plugin** (`@cng/clip`, registering a clipper), so core stays at its 30 KB budget and `clip` does not imply a 3–9 MB DuckDB. Already the shape of §1.4's `dissolver` and §3.4's registration seam. |
+| **O5** | ~~GeoPackage: sql.js vs gdal3.js.~~ **Resolved by E10.** | — | **sql.js, shipped as `@cngeo/format-gpkg`.** Measured 339 KB min+gz (lighter than the ~480 KB estimate), validated with `ogrinfo -al -so` and DuckDB's `ST_Read` — a live FTW-Liechtenstein download round-trips end to end. gdal3.js measured 9.07 MB gzip (heavier than the estimate's ~2–8 MB upper bound), confirming sql.js as the right default; stays `@cngeo/format-gdal` future work. **New candidate found and rejected on weight, not function:** `terrio-js` (opengeos/terrio), a pure-Rust GDAL-adjacent I/O library with wasm bindings — it genuinely works (writes correct, `ogrinfo`/DuckDB-validated GeoPackage *and* Shapefile) but its smallest module (`terrio-js/core`) measures 6.1 MB gzip, 18x the sql.js path; not shipped. Shapefile also shipped (`@cngeo/format-shapefile`, zero deps, ~5 KB), FlatGeobuf shipped (`@cngeo/format-flatgeobuf`, ~10 KB, lighter than its own ~25 KB estimate), and CSV + Esri JSON shipped (`@cngeo/format-extras`, zero deps). See `experiments/e10-heavy-formats/RESULTS.md` for every measurement and the terrio verdict in full. |
+| **O6** | Non-4326 datasets. Design call #4 makes `Area` 4326-only, but a dataset in 3857 or a UTM zone is common. | whether E6/E7 hit one in practice | **Refuse with `DATASET_CRS_UNSUPPORTED`**, naming the CRS and the `ogr2ogr` command that fixes it. Reprojecting *features* needs proj in core; reprojecting the *area* to the dataset's CRS needs proj too and silently changes what "intersects" means near the edges. Revisit as `@cngeo/reproject` (a thin `proj4` wrapper — `portolan-browser` already depends on `proj4`). |
+| **O7** | Exact clip implementation. `intersects` needs only point-in-polygon; `clip` needs real polygon intersection. | E5 choosing between a ~15 KB `polygon-clipping` dependency in `download-core` vs. requiring `@cngeo/engine-duckdb` | **Ship `clip` as a small opt-in plugin** (`@cngeo/clip`, registering a clipper), so core stays at its 30 KB budget and `clip` does not imply a 3–9 MB DuckDB. Already the shape of §1.4's `dissolver` and §3.4's registration seam. |
 | **O8** | Default `ceiling` numbers (5M rows / 2 GiB output / 500 files). | E5/E6 observing what a plausible FIRMS-month or S2-year request actually produces | **As tabled.** They are deliberately generous: the ceiling's job is to stop the accident, not to second-guess the user, and `acceptCeiling()` is one call away. |
 | **O9** | Partition enumeration where no `collection-mirror` exists and `item` links number in the hundreds (fieldmaps' 518 per-country collections is the live example). | E7 hitting it | **`stac-items` with a bounded concurrency of 8 and a hard cap of 200 item fetches**, above which the estimate reports `files.total` as unknown and pruning falls back to glob-expansion by declared `PartitionKey.values`. Also: advocate for `collection-mirror` as a Portolan best practice — it is the right fix, and it belongs upstream. |
 | **O10** | Multilingual rows in the default index (`name_lang`, `alt_of`). | E8, and design call #11's licensing question (Chris flagged it) | **Columns reserved in the schema now, unpopulated in the default CC-BY index.** Reserving them costs nothing; adding columns later forces an index-version bump and a geocoder release. The ODbL-enriched index is a separate artifact at a separate URL with `share_alike: true` attribution that the adapter is required to surface. |
-| **O11** | `@cng/spec` as a hard singleton. If two packages on one page resolve different `spec` versions, `instanceof` checks and `Area` validation diverge. | nothing — it is a design choice to make now | **Runtime guard:** `spec` registers itself on `globalThis[Symbol.for('cng.spec')]` with its version; a second, different version logs one loud warning and the later loader defers to the first for the validators. Ugly, and the only thing that actually catches this in a zero-build page. |
+| **O11** | `@cngeo/spec` as a hard singleton. If two packages on one page resolve different `spec` versions, `instanceof` checks and `Area` validation diverge. | nothing — it is a design choice to make now | **Runtime guard:** `spec` registers itself on `globalThis[Symbol.for('cng.spec')]` with its version; a second, different version logs one loud warning and the later loader defers to the first for the validators. Ugly, and the only thing that actually catches this in a zero-build page. |
 | **O12** | Whether `estimate()` should ever read data pages. Metadata-only is cheap and honest; it makes row estimates wide (`Bounded.exact: false`) when predicate selectivity is unknown. | E5 measuring how wide "wide" is on real requests | **Metadata-only, with an opt-in `sample: { rowGroups: 1 }`** that reads one admitted row group to calibrate selectivity. Report `estimate-wide` when `max/estimate > 10` so the UI can say "between 2,000 and 400,000 rows" instead of pretending to know. |
-| **O13** | deck.gl adapter. `PLAN.md` leaves it open; `portolan-browser` has deck.gl. | E7 finding MapLibre's GeoJSON source insufficient for a large outline | **Not now.** `addAreaLayer` on a MapLibre GeoJSON source handles one outline at the display vertex ceiling. A `@cng/deckgl` adapter is additive and needs no core change. |
+| **O13** | deck.gl adapter. `PLAN.md` leaves it open; `portolan-browser` has deck.gl. | E7 finding MapLibre's GeoJSON source insufficient for a large outline | **Not now.** `addAreaLayer` on a MapLibre GeoJSON source handles one outline at the display vertex ceiling. A `@cngeo/deckgl` adapter is additive and needs no core change. |
 
 ---
 
@@ -4610,7 +4610,7 @@ than merely documented).
 |---|---|---|---|
 | `indexUrl` as an **array** (multi-source search) | §3.2 `GeocoderOptions.indexUrl` | A one-element array works. Two or more now throw `INDEX_MULTI_SOURCE_UNSUPPORTED`. **Was** a silent fallback to `DEFAULT_INDEX_URL` — a caller naming two gazetteers got a third, with no error. | Real multi-source means parallel manifest loads, N open indexes queried per keystroke, merged ranking and a partial-failure policy — and design call #6 already puts cross-source merging/dedupe out of scope. Construct one `Geocoder` per index and merge in your own UI. |
 | `load:progress` | §3.2 `GeocoderEvents` | Never emitted. Subscribing succeeds and the handler never fires. | Needs byte counting against `content-length` through both the manifest and index fetches, plus throttling (an unthrottled emit on a 4 MB index fires hundreds of times). Genuinely worth building — cold index load, 1.9–5.3 s, is this library's biggest measured UX gap — but it is a feature, not a doc fix. Until then: the `state` event's `'loading'` → `'ready'` transition is what a spinner needs. |
-| `GeocoderControlOptions.geocoder`'s `new Geocoder()` default, and `geocoderOptions` | §5.2 | No default; `geocoderOptions` is accepted and ignored. With no `geocoder` the control renders and types but never searches. | **Deliberate, and should stay.** Either would make the adapters import `@cng/geocoder-core` and through it a parquet reader, against §4.5's adapter budget and §5.1's rules. The adapters take a `Geocoder`; the host constructs it. |
+| `GeocoderControlOptions.geocoder`'s `new Geocoder()` default, and `geocoderOptions` | §5.2 | No default; `geocoderOptions` is accepted and ignored. With no `geocoder` the control renders and types but never searches. | **Deliberate, and should stay.** Either would make the adapters import `@cngeo/geocoder-core` and through it a parquet reader, against §4.5's adapter budget and §5.1's rules. The adapters take a `Geocoder`; the host constructs it. |
 | `GeometryResolverOptions.boundaryUrls` | §3.2 | Accepted and ignored; boundary URLs always come from the manifest. | Small (two call sites in `select()`), but nothing needs it: the manifest is the versioned source of truth for which file a level lives in, and an override that disagrees with it silently defeats §6.4's version-skew check. Mirror the catalog and point `indexUrl` at your manifest instead. |
 | `GeocoderOptions.initialFetchSize` | §3.2 | Accepted and ignored. | Superseded by the manifest contract: each file entry declares `footer_metadata_bytes`, so the footer read is exact *per file* rather than one global guess. Nothing is gained by letting a caller override an exact number with an estimate. |
 

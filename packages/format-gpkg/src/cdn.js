@@ -1,4 +1,4 @@
-// @cng/format-gpkg -- pinned sql.js CDN URL + a test-injection seam, the
+// @cngeo/format-gpkg -- pinned sql.js CDN URL + a test-injection seam, the
 // same pattern download-core/src/cdn.js uses for hyparquet-writer (design
 // doc §4.2). sql.js's `dist/sql-wasm.js` is a UMD/Emscripten factory, not
 // native ESM, but jsdelivr's `+esm` endpoint wraps it into one (measured:

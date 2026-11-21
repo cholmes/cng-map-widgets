@@ -54,7 +54,7 @@ snippet, change it there too** — or the next run fails.
 
 ## Identifier naming
 
-Everything in this repo uses the `cng` prefix: the npm scope (`@cng/*`), the
+Everything in this repo uses the `cng` prefix: the npm scope (`@cngeo/*`), the
 error class (`CngError`/`isCngError`), the CSS custom properties
 (`--cng-*`), the CSS classes and DOM ids (`.cng-geocoder`,
 `#cng-geocoder-style`), the map source ids (`cng-area-display`,
@@ -88,7 +88,7 @@ Renaming these again would break consumers silently, with no test failure:
   and by redeclaring any `--cng-*` token. Almost none of it is covered by a
   test — only `.cng-attribution` and the `cng-area-display` source id are
   asserted anywhere. This is the quietest breakage in the repo.
-- **`Symbol.for('cng.spec')`** is how two copies of `@cng/spec` recognise
+- **`Symbol.for('cng.spec')`** is how two copies of `@cngeo/spec` recognise
   each other across versions. Change it and they stop agreeing, silently.
 - **The versioned argument shapes** (`cng-filter/1.0` and friends) are
   documented in AGENTS.md and README.md as literal values users copy into

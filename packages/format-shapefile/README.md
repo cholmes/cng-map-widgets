@@ -1,6 +1,6 @@
-# @cng/format-shapefile
+# @cngeo/format-shapefile
 
-Shapefile output for `@cng/download-core`. Part of O5's research scope:
+Shapefile output for `@cngeo/download-core`. Part of O5's research scope:
 "evaluate a credible Shapefile writer, same validation bar as GeoPackage."
 It was credible — zero dependencies, no wasm — so it shipped.
 
@@ -13,8 +13,8 @@ hand-write (see `src/shp.js`, `src/dbf.js`, `src/zip.js`). Register it
 eagerly:
 
 ```js
-import { registerFormat } from '@cng/download-core';
-import { createShapefileFormat } from '@cng/format-shapefile';
+import { registerFormat } from '@cngeo/download-core';
+import { createShapefileFormat } from '@cngeo/format-shapefile';
 registerFormat(createShapefileFormat());
 ```
 

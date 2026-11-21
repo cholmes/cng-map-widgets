@@ -1,4 +1,4 @@
-// @cng/geocoder-core -- the cancellation primitive behind progressive
+// @cngeo/geocoder-core -- the cancellation primitive behind progressive
 // select()'s "a new select() supersedes the pending background upgrade"
 // rule (design doc task). Extracted into its own dependency-free module
 // so it can be unit-tested without geocoder-core's hyparquet/CDN

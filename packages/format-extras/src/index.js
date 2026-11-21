@@ -1,9 +1,9 @@
-// @cng/format-extras -- public entry point: the "nearly free" formats
+// @cngeo/format-extras -- public entry point: the "nearly free" formats
 // (Chris's scope note). Both zero-dependency, zero-wasm; register either
 // eagerly.
 //
-//   import { registerFormat } from '@cng/download-core';
-//   import { createCsvFormat, createEsriJsonFormat } from '@cng/format-extras';
+//   import { registerFormat } from '@cngeo/download-core';
+//   import { createCsvFormat, createEsriJsonFormat } from '@cngeo/format-extras';
 //   registerFormat(createCsvFormat());
 //   registerFormat(createEsriJsonFormat());
 

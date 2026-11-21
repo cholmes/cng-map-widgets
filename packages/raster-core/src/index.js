@@ -1,6 +1,6 @@
-// @cng/raster-core -- public entry point.
+// @cngeo/raster-core -- public entry point.
 //
-// Plain ESM + JSDoc, no build step, exactly like the other @cng packages
+// Plain ESM + JSDoc, no build step, exactly like the other @cngeo packages
 // in this repo. geotiff.js (and, only for ZSTD sources, zstddec) load
 // lazily from exact pinned CDN URLs -- see src/cdn.js -- or are injected by
 // a host that already ships them.

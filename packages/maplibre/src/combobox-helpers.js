@@ -1,12 +1,12 @@
-// @cng/maplibre -- pure helpers behind GeocoderControl's combobox UX:
+// @cngeo/maplibre -- pure helpers behind GeocoderControl's combobox UX:
 // matched-text highlighting, friendly level labels, two-wave merge diff,
 // IME composition gating, adaptive debounce. No DOM, no I/O -- unit
 // tested directly in ../test/combobox-helpers.test.js.
 //
-// Duplicated verbatim in @cng/openlayers (see geocoder-control.js's
+// Duplicated verbatim in @cngeo/openlayers (see geocoder-control.js's
 // DUPLICATION NOTE) rather than shared via an unpublished workspace.
 
-// Per-char mirror of @cng/spec's normalizeName (NFD, strip \p{M},
+// Per-char mirror of @cngeo/spec's normalizeName (NFD, strip \p{M},
 // lowercase, drop disallowed chars) WITHOUT its trim/whitespace-collapse
 // -- those would erase a lone space (normalizeName(' ') === ''), which
 // breaks the char-by-char alignment below. Must track normalize.js.

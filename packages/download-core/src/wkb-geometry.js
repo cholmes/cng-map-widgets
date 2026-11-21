@@ -1,7 +1,7 @@
-// @cng/download-core -- WKB geometry decode, extended for Point/MultiPoint
-// beyond what @cng/spec's `wkbToGeoJson` supports.
+// @cngeo/download-core -- WKB geometry decode, extended for Point/MultiPoint
+// beyond what @cngeo/spec's `wkbToGeoJson` supports.
 //
-// @cng/spec's decoder is deliberately Polygon(3)/MultiPolygon(6) only (see
+// @cngeo/spec's decoder is deliberately Polygon(3)/MultiPolygon(6) only (see
 // packages/spec/src/wkb.js's module doc: "all CGAZ [geoBoundaries]
 // publishes"). NASA FIRMS -- this package's E6 real-dataset stress test --
 // is a *point* dataset: every row's `geometry` column is a WKB Point (type
@@ -16,15 +16,15 @@
 // package's own E6 stress test against the live FIRMS catalog.
 //
 // Scope note: extending WKB geometry-type coverage is correctly
-// @cng/spec's job -- everything else in this system gets its WKB/bbox math
+// @cngeo/spec's job -- everything else in this system gets its WKB/bbox math
 // from there, and a real fix belongs in packages/spec/src/wkb.js +
 // bbox.js. This file is a decorator that stays entirely inside
 // packages/download-core (this task's scope boundary): it decodes the WKB
 // type byte itself, handles Point/MultiPoint locally, and delegates
-// everything else unchanged to @cng/spec. A follow-up should fold
-// Point/MultiPoint support into @cng/spec directly and delete this file.
+// everything else unchanged to @cngeo/spec. A follow-up should fold
+// Point/MultiPoint support into @cngeo/spec directly and delete this file.
 
-import { wkbToGeoJson, bboxOfGeometry } from '@cng/spec';
+import { wkbToGeoJson, bboxOfGeometry } from '@cngeo/spec';
 
 const WKB_TYPE_POINT = 1;
 const WKB_TYPE_MULTIPOINT = 4;
@@ -46,7 +46,7 @@ const WKB_TYPE_MULTIPOINT = 4;
  * flag, which only ever governed the sidecar-metadata heuristic. The
  * result: `row[geometryColumn]` for such a dataset is already a GeoJSON
  * object by the time it reaches this package, not the raw bytes every
- * caller here (and `@cng/spec`'s decoders) was written assuming. Found
+ * caller here (and `@cngeo/spec`'s decoders) was written assuming. Found
  * running this package's own E6 stress test against the real FIRMS
  * catalog: without this check, every row crashed trying to read WKB type
  * bytes out of a `{ type: 'Point', coordinates: […] }` object coerced
@@ -72,8 +72,8 @@ function peekWkbType(view) {
 
 /**
  * Decode any WKB geometry this project needs to handle: Point and
- * MultiPoint locally (see module doc for why they're not in @cng/spec),
- * everything else via @cng/spec's `wkbToGeoJson`.
+ * MultiPoint locally (see module doc for why they're not in @cngeo/spec),
+ * everything else via @cngeo/spec's `wkbToGeoJson`.
  * @param {Uint8Array|ArrayBuffer} buf
  * @returns {GeoJSON.Point|GeoJSON.MultiPoint|GeoJSON.Polygon|GeoJSON.MultiPolygon}
  */
@@ -93,7 +93,7 @@ export function decodeWkbGeometry(buf) {
 
   // MultiPoint: a count, then each point is itself a full nested WKB
   // geometry (byte order + type + x + y) -- the same "each element re-states
-  // its own header" shape @cng/spec's MultiPolygon reader already relies
+  // its own header" shape @cngeo/spec's MultiPolygon reader already relies
   // on for its inner Polygons.
   const numPoints = view.getUint32(5, littleEndian);
   let offset = 9;
@@ -109,7 +109,7 @@ export function decodeWkbGeometry(buf) {
 
 /**
  * bbox of any geometry this project needs to handle: Point/MultiPoint
- * locally, everything else via @cng/spec's `bboxOfGeometry`.
+ * locally, everything else via @cngeo/spec's `bboxOfGeometry`.
  * @param {GeoJSON.Point|GeoJSON.MultiPoint|GeoJSON.Polygon|GeoJSON.MultiPolygon} geometry
  * @returns {[number, number, number, number]}
  */

@@ -1,6 +1,6 @@
-// @cng/download-core -- sinks (design doc §3.4).
+// @cngeo/download-core -- sinks (design doc §3.4).
 
-import { CngError } from '@cng/spec';
+import { CngError } from '@cngeo/spec';
 
 /**
  * One run's writable, with the lifecycle every sink owes its caller

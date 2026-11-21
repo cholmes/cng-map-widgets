@@ -1,15 +1,15 @@
-// @cng/download-core -- the pruning cascade (design doc §2.6/§2.7's
+// @cngeo/download-core -- the pruning cascade (design doc §2.6/§2.7's
 // "pruning cascade, in order, each stage reported in the estimate").
 //
 // Metadata-only (O12): every function here reads only parquet footer
 // statistics / column-chunk byte sizes, never a data page.
 
 import { boundedExact } from './bounded.js';
-import { bboxesIntersect } from '@cng/spec';
+import { bboxesIntersect } from '@cngeo/spec';
 import { rowGroupBytesForColumns } from './parquet-io.js';
 import { compareBigIntToNumber } from './predicate.js';
 
-/** @typedef {import('@cng/spec').BBox} BBox */
+/** @typedef {import('@cngeo/spec').BBox} BBox */
 
 /** Resolve a `BboxCovering` to the statistics column paths for xmin/ymin/xmax/ymax, or null if `kind: 'none'`. @param {import('./types.js').BboxCovering|undefined} covering */
 export function coveringPaths(covering) {

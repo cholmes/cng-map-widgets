@@ -1,6 +1,6 @@
-// @cng/format-flatgeobuf -- minimal WKB -> GeoJSON decoder, 2D, the same
-// six types `@cng/format-gpkg/src/wkb.js` and
-// `@cng/format-shapefile/src/wkb-decode.js` handle. Duplicated rather
+// @cngeo/format-flatgeobuf -- minimal WKB -> GeoJSON decoder, 2D, the same
+// six types `@cngeo/format-gpkg/src/wkb.js` and
+// `@cngeo/format-shapefile/src/wkb-decode.js` handle. Duplicated rather
 // than shared across these independent plugin packages -- see either of
 // those files' module doc for why.
 
@@ -31,7 +31,7 @@ export function wkbToGeoJson(bytes) {
   const le = view.getUint8(c.offset) === 1; c.offset += 1;
   const type = view.getUint32(c.offset, le); c.offset += 4;
   const name = TYPE_NAME[type];
-  if (!name) throw new Error(`@cng/format-flatgeobuf: unsupported WKB geometry type ${type}`);
+  if (!name) throw new Error(`@cngeo/format-flatgeobuf: unsupported WKB geometry type ${type}`);
 
   if (name === 'Point') return { type: 'Point', coordinates: readPoint(view, c, le) };
   if (name === 'LineString') return { type: 'LineString', coordinates: readLine(view, c, le) };

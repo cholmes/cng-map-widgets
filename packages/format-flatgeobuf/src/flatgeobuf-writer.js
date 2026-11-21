@@ -1,4 +1,4 @@
-// @cng/format-flatgeobuf -- the `flatgeobuf` FormatPlugin (download-core's
+// @cngeo/format-flatgeobuf -- the `flatgeobuf` FormatPlugin (download-core's
 // registry contract, design doc §3.4/§2.3/§4.5: originally budgeted
 // "~25KB (est.)"; measured at ~10KB min+gz for the `geojson` submodule
 // this plugin actually loads -- see README.md).
@@ -65,9 +65,9 @@ export function createFlatGeobufFormat(flatgeobufGeojson) {
     estimateBytes: estimateFlatGeobufBytes,
     async open(ctx) {
       if (ctx.crs !== 'EPSG:4326' && ctx.crs !== 'OGC:CRS84' && ctx.crs) {
-        const { CngError } = await import('@cng/spec');
+        const { CngError } = await import('@cngeo/spec');
         throw new CngError(
-          `@cng/format-flatgeobuf writes EPSG:4326 only; got crs "${ctx.crs}".`,
+          `@cngeo/format-flatgeobuf writes EPSG:4326 only; got crs "${ctx.crs}".`,
           'FORMAT_CAPABILITY',
           { context: { crs: ctx.crs } },
         );

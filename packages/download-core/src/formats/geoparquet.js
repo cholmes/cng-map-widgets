@@ -1,4 +1,4 @@
-// @cng/download-core -- the `geoparquet` format plugin (design doc §2.3,
+// @cngeo/download-core -- the `geoparquet` format plugin (design doc §2.3,
 // §3.4). Hand-builds GeoParquet 1.1 `geo` file metadata + an optional bbox
 // covering, writing with `hyparquet-writer` (see cdn.js's loader).
 //
@@ -9,7 +9,7 @@
 // `ceiling.blobBytes` for non-streaming formats for exactly this reason
 // (design doc §3.4 FormatPlugin.streaming doc comment).
 
-import { CngError } from '@cng/spec';
+import { CngError } from '@cngeo/spec';
 import { loadHyparquetWriter } from '../cdn.js';
 import { decodeWkbGeometry, bboxOfAnyGeometry } from '../wkb-geometry.js';
 
@@ -249,7 +249,7 @@ export function createGeoParquetFormat() {
             codec,
             rowGroupSize,
             kvMetadata: dropGeometry ? [] : [{ key: 'geo', value: JSON.stringify(geoMeta) }],
-            createdBy: '@cng/download-core',
+            createdBy: '@cngeo/download-core',
           });
           const bytes = new Uint8Array(buffer);
           await ctx.writer.write(bytes);

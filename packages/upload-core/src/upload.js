@@ -1,14 +1,14 @@
-// @cng/upload-core -- orchestration: dispatch to a GeometryReader, run
+// @cngeo/upload-core -- orchestration: dispatch to a GeometryReader, run
 // the repair pipeline, combine (collect/dissolve), build the Area
 // (design doc §3.3).
 //
 // What this module does NOT do (mirrors the "what an adapter must not
 // do" boundary from §5.1, applied to a core package instead): it never
-// hand-rolls geometry math outside `@cng/spec` -- `buildArea` owns
+// hand-rolls geometry math outside `@cngeo/spec` -- `buildArea` owns
 // bbox/antimeridian/simplification, this module only prepares the
 // combined geometry and the provenance it is built from.
 
-import { CngError, buildArea, bboxOfGeometry, bboxesIntersect } from '@cng/spec';
+import { CngError, buildArea, bboxOfGeometry, bboxesIntersect } from '@cngeo/spec';
 import { geoJsonReader } from './geojson-reader.js';
 import { extractRawFeatures, detectDeclaredCrs } from './geojson-parse.js';
 import { repairFeatures } from './repair.js';
@@ -79,8 +79,8 @@ function isForeignCrs(declaredCrs) {
  * Concatenate every kept feature's polygon(s) into one MultiPolygon
  * (design doc §1.4's `collect`: "the area is the set of these features",
  * no boolean operation, no failure mode on invalid input).
- * @param {Array<{geometry: import('@cng/spec').AreaGeometry}>} features
- * @returns {import('@cng/spec').AreaGeometry}
+ * @param {Array<{geometry: import('@cngeo/spec').AreaGeometry}>} features
+ * @returns {import('@cngeo/spec').AreaGeometry}
  */
 function collectGeometry(features) {
   if (features.length === 1) return features[0].geometry;
@@ -177,7 +177,7 @@ async function buildUploadResult({ rawFeatures, declaredCrs, name, bytes, mediaT
 
   // AreaFeatureRef (design doc §1.2): no publisher id for an upload, but
   // `properties` is carried through verbatim for a consumer that wants to
-  // label output (also per §1.2 -- "never interpreted by any @cng package").
+  // label output (also per §1.2 -- "never interpreted by any @cngeo package").
   const featureRefs = kept.map((f) => ({
     featureId: null,
     name: typeof f.properties?.name === 'string' ? f.properties.name : undefined,
@@ -269,7 +269,7 @@ export async function areaFromGeoJson(json, meta, options = {}) {
  * `areaFromFile`; pasted GeoJSON text goes through `areaFromGeoJson`.
  * @param {HTMLElement} el
  * @param {(result: import('./types.js').UploadResult) => void} onResult
- * @param {import('./types.js').UploadOptions & { onError?: (e: import('@cng/spec').CngError) => void }} [options]
+ * @param {import('./types.js').UploadOptions & { onError?: (e: import('@cngeo/spec').CngError) => void }} [options]
  * @returns {import('./types.js').Unsubscribe}
  */
 export function attachDropTarget(el, onResult, options = {}) {

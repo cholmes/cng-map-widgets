@@ -1,4 +1,4 @@
-# @cng/download-core
+# @cngeo/download-core
 
 Give it an `Area` and a dataset, get a file. In the browser, against object
 storage, with **no server and no API** — it reads GeoParquet footers over HTTP
@@ -35,13 +35,13 @@ Three things make this more than a parquet reader:
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec": "/packages/spec/src/index.js",
-    "@cng/download-core": "/packages/download-core/src/index.js"
+    "@cngeo/spec": "/packages/spec/src/index.js",
+    "@cngeo/download-core": "/packages/download-core/src/index.js"
   }
 }
 </script>
 <script type="module">
-  import { estimate, download, autoSink } from '@cng/download-core';
+  import { estimate, download, autoSink } from '@cngeo/download-core';
 </script>
 ```
 
@@ -50,14 +50,14 @@ map: this package `import()`s them from pinned, exact CDN URLs (`src/cdn.js`),
 lazily — `hyparquet-writer` is only fetched if you actually write GeoParquet.
 In Node or a bundler, inject your own: see [Node and bundlers](#node-and-bundlers).
 
-**Coming:** `npm i @cng/download-core`.
+**Coming:** `npm i @cngeo/download-core`.
 
 ## Size
 
 | | files | raw | gzip | gzip, comments stripped | design-doc budget (§4.5) |
 |---|---|---|---|---|---|
-| `@cng/download-core` src | 21 | 125.3 KiB | 37.6 KiB | **19.8 KiB** | ≤ 30 KB min+gz |
-| `+ @cng/spec` | | | | 6.2 KiB | ≤ 10 KB |
+| `@cngeo/download-core` src | 21 | 125.3 KiB | 37.6 KiB | **19.8 KiB** | ≤ 30 KB min+gz |
+| `+ @cngeo/spec` | | | | 6.2 KiB | ≤ 10 KB |
 | `+ hyparquet@1.33.0` | | 199.9 KiB | 46.9 KiB | — | 35 KB (at 1.26.0) |
 | `+ hyparquet-compressors@1.1.3` | | | 69.1 KiB *(jsdelivr `+esm`, as fetched)* | — | 79 KB |
 | `+ hyparquet-writer@0.18.0` | | | 19.5 KiB *(jsdelivr `+esm`, as fetched)* | — | ~20 KB *(est.)* |
@@ -74,8 +74,8 @@ Liechtenstein tile, 218 KB / 795 fields / 1 row group) and an `Area` from a
 GeoJSON box. No fixtures.
 
 ```js
-import { estimate, download, memorySink } from '@cng/download-core';
-import { areaFromGeoJson } from '@cng/upload-core';
+import { estimate, download, memorySink } from '@cngeo/download-core';
+import { areaFromGeoJson } from '@cngeo/upload-core';
 
 const dataset = {
   spec: 'cng-dataset/1.0',
@@ -407,7 +407,7 @@ Runs a serialized `DownloadRequest`. An inline `filter.area` (an
 `AreaDocument`) is used; `{ ref: 'area' }` defers to the `area` argument.
 
 ```js
-import { toAreaDocument } from '@cng/spec';
+import { toAreaDocument } from '@cngeo/spec';
 
 const request = {
   spec: 'cng-request/1.0',
@@ -586,7 +586,7 @@ order; one that throws is swallowed, so a broken subscriber cannot fail the
 registration or `load()` that triggered it:
 
 ```js
-import { onFormatState, formats } from '@cng/download-core';
+import { onFormatState, formats } from '@cngeo/download-core';
 
 const off = onFormatState(({ id, state }) => {
   render(formats());                  // 'idle' | 'loading' | 'loaded' | 'failed'
@@ -681,7 +681,7 @@ await estimate(dataset, area, { ...filter, spatial: { mode: 'clip' } });
 ### Predicates and spatial tests, standalone
 
 ```js
-import { evaluateWhere, evaluatePredicate, getPath, rowMatchesArea } from '@cng/download-core';
+import { evaluateWhere, evaluatePredicate, getPath, rowMatchesArea } from '@cngeo/download-core';
 
 const row = { confidence: 0.95, kind: 'field', names: { primary: 'Westfield' }, tags: ['a', 'b'], retired: null };
 evaluateWhere([{ col: 'confidence', op: '>=', value: 0.9 }], row);          // true
@@ -728,10 +728,10 @@ passed through unchecked.
 `clearHyparquetModules`, `CngError`, `CancelledError`,
 `CeilingExceededError`, `isCngError`, `VERSION`.
 
-`decodeWkbGeometry` is `@cng/spec`'s `wkbToGeoJson` extended with Point and
+`decodeWkbGeometry` is `@cngeo/spec`'s `wkbToGeoJson` extended with Point and
 MultiPoint (which FIRMS needs), and passing an already-decoded GeoJSON object
 through unchanged (which GeoParquet 2.0's native `GEOMETRY` logical type
-produces). Folding that back into `@cng/spec` is a known follow-up.
+produces). Folding that back into `@cngeo/spec` is a known follow-up.
 
 ---
 
@@ -751,7 +751,7 @@ be reworded.**
 | `FILTER_REQUIRES_ENGINE` | no | "This filter needs the DuckDB engine plugin." Names the requirement (`sql`, `exact-clip`, `dissolve`). |
 | `AREA_ANTIMERIDIAN_CLIP` | no | "Exact clip is not available across the antimeridian. Use intersects." |
 | `CEILING_EXCEEDED` | no | **The refusal path.** Show the estimate, the limit, and a "download anyway" that calls `acceptCeiling()`. |
-| `FORMAT_UNAVAILABLE` | no | No plugin registered for that format id. "GeoPackage output needs the @cng/format-gpkg plugin." |
+| `FORMAT_UNAVAILABLE` | no | No plugin registered for that format id. "GeoPackage output needs the @cngeo/format-gpkg plugin." |
 | `FORMAT_LOAD_FAILED` | no | A lazy format's `load()` threw -- usually its CDN fetch. Carries `context.approxBytes`; the id stays re-attemptable. |
 | `FORMAT_CAPABILITY` | no | e.g. zstd, or nested columns into GeoPackage. Offer GeoParquet. |
 | `SINK_PERMISSION_DENIED` | yes | The user dismissed the save picker. Not worth a dialog. |
@@ -763,7 +763,7 @@ be reworded.**
 | `CANCELLED` | no | Never surfaced to the user. Reported for an abort at any stage — planning footer read, row-group read, or between batches. |
 | `INTERNAL` | no | A bug. Include the package version. |
 
-Plus everything `@cng/spec` can throw on an `Area` (`AREA_INVALID_CRS`,
+Plus everything `@cngeo/spec` can throw on an `Area` (`AREA_INVALID_CRS`,
 `AREA_UNSUPPORTED_GEOMETRY`, `AREA_EMPTY`, `AREA_VERTEX_CEILING`).
 
 Codes in the table that this build does not yet raise:
@@ -791,7 +791,7 @@ handle.state;          // 'failed'
 import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import * as writer from 'hyparquet-writer';
-import { setHyparquetModules } from '@cng/download-core';
+import { setHyparquetModules } from '@cngeo/download-core';
 
 setHyparquetModules({ hyparquet, compressors, writer });   // once, before the first estimate()
 ```
@@ -842,7 +842,7 @@ number.** The second argument is always an options *object*
 (`{ parsers, initialFetchSize, geoparquet }`); destructuring those off a
 `Number` yields `undefined` for all of them and you quietly get hyparquet's own
 defaults. This dormant-bug shape existed in both this package and
-`@cng/geocoder-core`.
+`@cngeo/geocoder-core`.
 
 ### GeoParquet 2.0 is a different mechanism
 

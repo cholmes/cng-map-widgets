@@ -38,15 +38,15 @@
 <!--
   Zero-build ESM, same import-map convention as examples/download-demo and
   examples/geocoder-demo. hyparquet/hyparquet-writer are pulled from pinned
-  CDN URLs internally by @cng/download-core's src/cdn.js, not by this map.
+  CDN URLs internally by @cngeo/download-core's src/cdn.js, not by this map.
 -->
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec": "../../packages/spec/src/index.js",
-    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cng/maplibre": "../../packages/maplibre/src/index.js",
-    "@cng/download-core": "../../packages/download-core/src/index.js"
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cngeo/maplibre": "../../packages/maplibre/src/index.js",
+    "@cngeo/download-core": "../../packages/download-core/src/index.js"
   }
 }
 </script>
@@ -59,7 +59,7 @@
   <p class="sub">
     NASA FIRMS active fire detections, mirrored by portolan-mirrors/firms-catalog:
     631M+ rows, hive-partitioned by <code>year=</code>. The hive-partitioned
-    stress test for <code>@cng/download-core</code>.
+    stress test for <code>@cngeo/download-core</code>.
   </p>
   <div id="status" style="font-size:12px;color:#555;">Loading dataset descriptor…</div>
 
@@ -100,14 +100,14 @@
 </div>
 
 <script type="module">
-import { Geocoder } from '@cng/geocoder-core';
-import { GeocoderControl } from '@cng/maplibre';
+import { Geocoder } from '@cngeo/geocoder-core';
+import { GeocoderControl } from '@cngeo/maplibre';
 import {
   resolveDataset,
   estimate,
   download,
   memorySink,
-} from '@cng/download-core';
+} from '@cngeo/download-core';
 
 const statusEl = document.getElementById('status');
 const setStatus = (text) => { statusEl.textContent = text; };
@@ -156,7 +156,7 @@ async function loadDataset() {
   setStatus(`Dataset resolved: ${resolvedDataset.source.kind} source, ${resolvedDataset.table?.columns?.length ?? 0} columns, enumeration=${resolvedDataset.source.enumeration?.kind}.`);
 }
 
-// --- Area (search reuses @cng/geocoder-core + @cng/maplibre, pointed at
+// --- Area (search reuses @cngeo/geocoder-core + @cngeo/maplibre, pointed at
 // the LIVE published geoBoundaries gazetteer, same convention as
 // examples/download-demo) -------------------------------------------------
 //

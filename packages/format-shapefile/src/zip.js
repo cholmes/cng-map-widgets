@@ -1,4 +1,4 @@
-// @cng/format-shapefile -- minimal STORED-only (uncompressed) ZIP writer.
+// @cngeo/format-shapefile -- minimal STORED-only (uncompressed) ZIP writer.
 // Zero dependencies, on purpose: a Shapefile is five sibling files
 // (.shp/.shx/.dbf/.prj/.cpg), and download-core's Sink is one
 // WritableStream for one file, so this package bundles them into a single

@@ -12,7 +12,7 @@ import { memorySink } from '../src/sinks.js';
 import { boundedExact } from '../src/bounded.js';
 import { defaultCeiling } from '../src/ceiling.js';
 import { registerLazyFormat, formatLoadState } from '../src/registry.js';
-import { CancelledError, CeilingExceededError } from '@cng/spec';
+import { CancelledError, CeilingExceededError } from '@cngeo/spec';
 
 const DATASET = { spec: 'cng-dataset/1.0', source: { kind: 'parquet', url: 'https://example.test/d.parquet' } };
 const FILTER = { spec: 'cng-filter/1.0', spatial: { mode: 'bbox' } };

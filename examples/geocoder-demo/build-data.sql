@@ -15,7 +15,7 @@
 -- the E2 boundary mirror"): feature_id, name, country, geometry (WKB,
 -- copied through verbatim -- this CGAZ mirror's WKB already uses
 -- per-sub-geometry byte-order+type headers inside MultiPolygon, which is
--- exactly what @cng/spec's wkbToGeoJson decodes), bbox.
+-- exactly what @cngeo/spec's wkbToGeoJson decodes), bbox.
 --
 -- UPDATE (progressive select() fix): this now DOES emit separate
 -- "<level>-display.parquet" files, per design doc §6.4's "requirements
@@ -28,7 +28,7 @@
 -- thread*, which is the literal "Page Unresponsive" bug. Now:
 --   - geocoder-core's `select()` fetches *this* small file first for an
 --     instant outline, and fetches `full` only in the background
---     (chunked/yielding decode+simplify -- see @cng/spec's
+--     (chunked/yielding decode+simplify -- see @cngeo/spec's
 --     `wkbToGeoJsonAsync` / `simplifyToVertexCeilingAsync`).
 --   - Below, each level's display geometry is built with DuckDB's
 --     `ST_SimplifyPreserveTopology`, applied ONLY to features above a

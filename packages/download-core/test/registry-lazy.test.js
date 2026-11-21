@@ -16,7 +16,7 @@ import {
   formatLoadState,
   onFormatState,
 } from '../src/registry.js';
-import { isCngError } from '@cng/spec';
+import { isCngError } from '@cngeo/spec';
 
 function uniqueId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2)}`;

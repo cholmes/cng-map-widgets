@@ -1,6 +1,6 @@
-# @cng/format-flatgeobuf
+# @cngeo/format-flatgeobuf
 
-FlatGeobuf output for `@cng/download-core`, wrapping the official
+FlatGeobuf output for `@cngeo/download-core`, wrapping the official
 [`flatgeobuf`](https://www.npmjs.com/package/flatgeobuf) package's
 GeoJSON serializer.
 
@@ -22,8 +22,8 @@ for" — is most of why this measured lighter than guessed.
 Load it on demand, like the heavier formats:
 
 ```js
-import { registerLazyFormat } from '@cng/download-core';
-import { flatGeobufFormatDescriptor } from '@cng/format-flatgeobuf';
+import { registerLazyFormat } from '@cngeo/download-core';
+import { flatGeobufFormatDescriptor } from '@cngeo/format-flatgeobuf';
 registerLazyFormat(flatGeobufFormatDescriptor);
 ```
 

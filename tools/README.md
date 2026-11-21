@@ -59,7 +59,7 @@ Exits non-zero if any check FAILs. WARN does not fail the run.
    across every consecutive sampled boundary. The report says exactly how
    many rows were checked and whether it was a full or sampled pass.
 5. **Normalization round-trip** -- for every sampled row,
-   `normalizeName(name)` (imported straight from `@cng/spec`, the normative
+   `normalizeName(name)` (imported straight from `@cngeo/spec`, the normative
    implementation) must equal the stored `name_norm`. A handful of mismatches
    is a FAIL: this is exactly what silently breaks prefix search.
 6. **Declared counts** -- row-group count and row count, if the document

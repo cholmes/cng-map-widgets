@@ -1,4 +1,4 @@
-// @cng/geocoder-core -- the Geocoder class (design doc §3.2, §6).
+// @cngeo/geocoder-core -- the Geocoder class (design doc §3.2, §6).
 
 import {
   CngError,
@@ -8,7 +8,7 @@ import {
   MAX_SYNC_SIMPLIFY_VERTICES,
   computeBBoxes,
   vertexCount as countVertices,
-} from '@cng/spec';
+} from '@cngeo/spec';
 import { Emitter } from './events.js';
 import {
   loadManifest,
@@ -147,8 +147,8 @@ function projectGeometryRef(raw) {
   return ref;
 }
 
-/** @typedef {import('@cng/spec').BBox} BBox */
-/** @typedef {import('@cng/spec').AreaAttribution} AreaAttribution */
+/** @typedef {import('@cngeo/spec').BBox} BBox */
+/** @typedef {import('@cngeo/spec').AreaAttribution} AreaAttribution */
 
 /**
  * The default index manifest: the **published** geoBoundaries CGAZ names
@@ -1202,7 +1202,7 @@ export class Geocoder {
     const displayVertexCeiling = options.displayVertexCeiling ?? this._options.geometry?.displayVertexCeiling ?? 200_000;
     const onWarning = (warning) => this._emitter.emit('warning', warning);
 
-    // `maxSyncInputVertices`: opt in to @cng/spec's vertex-count guard on
+    // `maxSyncInputVertices`: opt in to @cngeo/spec's vertex-count guard on
     // every synchronous build below (fix history, "Canada ADM0 select()
     // blocks the main thread for ~24s" -- buildArea's filter-geometry pass
     // ran an O(m^2) search directly on the 68,973-vertex display geometry).
@@ -1396,7 +1396,7 @@ export class Geocoder {
   /**
    * Background half of `select({ resolution: 'both' })`: fetch the
    * full-resolution boundary, decode + simplify it off the synchronous
-   * path (chunked/yielding throughout -- see `@cng/spec`'s
+   * path (chunked/yielding throughout -- see `@cngeo/spec`'s
    * `wkbToGeoJsonAsync` / `simplifyToVertexCeilingAsync`), and emit
    * `'area:upgraded'` with a copy of `baseArea` whose `filterGeometry`
    * and `vertexCount.filter` now reflect the full-resolution geometry.
@@ -1404,7 +1404,7 @@ export class Geocoder {
    * @param {import('./types.js').SearchResult} result
    * @param {object} entry
    * @param {object} manifest
-   * @param {import('@cng/spec').Area} baseArea
+   * @param {import('@cngeo/spec').Area} baseArea
    * @param {number} generation
    * @param {AbortController} controller
    * @param {{ filterVertexCeiling: number, onVersionSkew: 'error'|'warn'|'ignore', onWarning: Function, userSignal?: AbortSignal }} opts
@@ -1495,7 +1495,7 @@ export class Geocoder {
    * `filterGeometry: null`.
    * @param {import('./types.js').SearchResult} result
    * @param {GeoJSON.Polygon|GeoJSON.MultiPolygon} geometry the geometry to re-simplify (already in hand).
-   * @param {import('@cng/spec').Area} baseArea
+   * @param {import('@cngeo/spec').Area} baseArea
    * @param {number} generation
    * @param {AbortController} controller
    * @param {{ filterVertexCeiling: number, userSignal?: AbortSignal }} opts

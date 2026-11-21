@@ -1,10 +1,10 @@
-// @cng/download-core -- default ceilings (design doc §3.4, O8: "as
+// @cngeo/download-core -- default ceilings (design doc §3.4, O8: "as
 // tabled") and `requirementsOf(filter)`.
 //
-// DEVIATION: the design doc places `requirementsOf` on `@cng/spec`
-// (§2.5), but this experiment's `@cng/spec` package was built for E3 only
+// DEVIATION: the design doc places `requirementsOf` on `@cngeo/spec`
+// (§2.5), but this experiment's `@cngeo/spec` package was built for E3 only
 // and does not export it. Implemented here instead; a real release would
-// move it to `@cng/spec` so the Python side can share the same table.
+// move it to `@cngeo/spec` so the Python side can share the same table.
 
 /** @returns {import('./types.js').Ceiling} */
 export function defaultCeiling() {
@@ -19,7 +19,7 @@ export function defaultCeiling() {
 
 /**
  * @param {import('./types.js').FilterSpec} filter
- * @param {import('@cng/spec').Area|null} [area]
+ * @param {import('@cngeo/spec').Area|null} [area]
  * @returns {readonly import('./types.js').FilterRequirement[]}
  */
 export function requirementsOf(filter, area) {

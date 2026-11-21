@@ -1,8 +1,8 @@
-// @cng/upload-core -- public entry point.
+// @cngeo/upload-core -- public entry point.
 //
-// Same packaging deviation as @cng/spec/@cng/geocoder-core/@cng/maplibre
+// Same packaging deviation as @cngeo/spec/@cngeo/geocoder-core/@cngeo/maplibre
 // (see their index.js files): plain ESM + JSDoc, no build step, for this
-// experiment phase. Zero runtime dependencies beyond @cng/spec -- no
+// experiment phase. Zero runtime dependencies beyond @cngeo/spec -- no
 // network, no CDN externalization question (design doc §4.2) applies.
 
 export const VERSION = '0.2.0';

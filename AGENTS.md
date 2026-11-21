@@ -1,4 +1,4 @@
-# AGENTS.md — wiring up `@cng/*`
+# AGENTS.md — wiring up `@cngeo/*`
 
 For AI agents and anyone who wants the facts without the prose. Every snippet
 here is executed against live published data by
@@ -20,10 +20,10 @@ Queries are place names; results are boundaries. No street addresses, ever.
 
 1. A **cloud-native gazetteer** is published static data: a names-index parquet
    + an `index.json` manifest + per-level boundary parquets, on object storage.
-2. `@cng/geocoder-core` reads it over HTTP range requests and emits an
+2. `@cngeo/geocoder-core` reads it over HTTP range requests and emits an
    **`Area`**.
-3. `@cng/upload-core` emits the same `Area` from a GeoJSON file.
-4. `@cng/download-core` consumes an `Area` + a `DatasetDescriptor` +
+3. `@cngeo/upload-core` emits the same `Area` from a GeoJSON file.
+4. `@cngeo/download-core` consumes an `Area` + a `DatasetDescriptor` +
    a `FilterSpec` and writes a file.
 5. There is **no server and no build step**. An import map is the setup.
 
@@ -47,11 +47,11 @@ OV  https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec":            "/packages/spec/src/index.js",
-    "@cng/geocoder-core":   "/packages/geocoder-core/src/index.js",
-    "@cng/upload-core":     "/packages/upload-core/src/index.js",
-    "@cng/download-core":   "/packages/download-core/src/index.js",
-    "@cng/maplibre":        "/packages/maplibre/src/index.js"
+    "@cngeo/spec":            "/packages/spec/src/index.js",
+    "@cngeo/geocoder-core":   "/packages/geocoder-core/src/index.js",
+    "@cngeo/upload-core":     "/packages/upload-core/src/index.js",
+    "@cngeo/download-core":   "/packages/download-core/src/index.js",
+    "@cngeo/maplibre":        "/packages/maplibre/src/index.js"
   }
 }
 </script>
@@ -60,7 +60,7 @@ OV  https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.
 Do **not** add `hyparquet` to that map. The packages `import()` it themselves
 from pinned absolute CDN URLs (`src/cdn.js` in each). Nothing is on npm yet;
 when it is, each line becomes
-`https://cdn.jsdelivr.net/npm/@cng/<name>@0.2.0/src/index.js` and no module
+`https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.2.0/src/index.js` and no module
 code changes.
 
 **Without a clone**, swap the relative paths for the published site — the
@@ -78,7 +78,7 @@ https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.2.0/packages/<name>/src/i
 
 Either way, **map every package you need transitively**, not just the ones
 you `import` by name: these packages cross-import each other by bare
-specifier (`@cng/spec` above all), and an unmapped specifier fails at
+specifier (`@cngeo/spec` above all), and an unmapped specifier fails at
 runtime with no build step to catch it. And note an import map is strict
 JSON — a `//` comment inside the block stops it parsing and silently
 disables every import in it.
@@ -99,8 +99,8 @@ before the first `load()`/`estimate()`**:
 import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import * as writer from 'hyparquet-writer';
-import { setHyparquetModules as setGeocoderModules } from '@cng/geocoder-core';
-import { setHyparquetModules as setDownloadModules } from '@cng/download-core';
+import { setHyparquetModules as setGeocoderModules } from '@cngeo/geocoder-core';
+import { setHyparquetModules as setDownloadModules } from '@cngeo/download-core';
 
 setGeocoderModules({ hyparquet, compressors });
 setDownloadModules({ hyparquet, compressors, writer });   // `writer` only for GeoParquet output
@@ -115,7 +115,7 @@ calls in place.
 ## Recipe 1 — an `Area` from a live gazetteer
 
 ```js
-import { Geocoder } from '@cng/geocoder-core';
+import { Geocoder } from '@cngeo/geocoder-core';
 
 const geocoder = new Geocoder({
   indexUrl: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json',
@@ -148,7 +148,7 @@ on `area.displayGeometry`. Listen for `'area:upgrading'` (fires right after
 "loading full detail…" notice, and call `geocoder.cancelUpgrade()` any time
 before `'area:upgraded'` fires to abort it and keep the simplified
 `geometry` — that emits `'area:upgrade-cancelled'` instead. See
-[`@cng/geocoder-core`'s README](packages/geocoder-core/README.md#upgradedisplay-true--swap-the-outline-too-with-a-cancel-handle).
+[`@cngeo/geocoder-core`'s README](packages/geocoder-core/README.md#upgradedisplay-true--swap-the-outline-too-with-a-cancel-handle).
 
 Hard rules:
 
@@ -208,7 +208,7 @@ Serialize it as a GeoJSON `Feature` — it opens in geojson.io, QGIS and
 `ogr2ogr` unchanged:
 
 ```js
-import { toAreaDocument, fromAreaDocument } from '@cng/spec';
+import { toAreaDocument, fromAreaDocument } from '@cngeo/spec';
 
 const doc = toAreaDocument(area);       // extras under `area:*`, snake_case
 const restored = fromAreaDocument(JSON.parse(JSON.stringify(doc)));  // validates on the way in
@@ -284,7 +284,7 @@ literally named `bbox` — i.e. a full scan. Declare it when you know it.
 ### 3b. Hive-partitioned (`kind: 'hive'`) — derive it, don't write it
 
 ```js
-import { resolveDataset, estimate } from '@cng/download-core';
+import { resolveDataset, estimate } from '@cngeo/download-core';
 
 const dataset = await resolveDataset({
   spec: 'cng-dataset/1.0',
@@ -383,7 +383,7 @@ source: {
 ### Checking a collection before building anything
 
 ```js
-import { collectionDownloadSupport } from '@cng/download-core';
+import { collectionDownloadSupport } from '@cngeo/download-core';
 
 const collection = await fetch(collectionUrl).then((r) => r.json());
 const support = collectionDownloadSupport(collection, { baseUrl: collectionUrl });
@@ -402,7 +402,7 @@ dialog. That is what this function is for.
 ## Recipe 4 — run a download, handling the estimate and the ceiling
 
 ```js
-import { download, memorySink, autoSink } from '@cng/download-core';
+import { download, memorySink, autoSink } from '@cngeo/download-core';
 
 // In a browser, from a user gesture (showSaveFilePicker needs one):
 //   const sink = await autoSink({ suggestedName: 'fields.geojson' });
@@ -483,7 +483,7 @@ it.
 ## Recipe 5 — an uploaded `Area` is interchangeable
 
 ```js
-import { areaFromFile, areaFromGeoJson, attachDropTarget } from '@cng/upload-core';
+import { areaFromFile, areaFromGeoJson, attachDropTarget } from '@cngeo/upload-core';
 
 const { area, warnings } = await areaFromFile(file);
 // ...or from a value you already have:
@@ -549,7 +549,7 @@ Index columns — required: `name`, `name_norm`, `level`, `country`,
 
 **The sort guarantee:** rows ascend by `name_norm` compared **byte-wise on its
 UTF-8 encoding** — not locale collation — so a JavaScript `a < b` agrees with
-the file. `normalizeName` from `@cng/spec` is the function that produces it:
+the file. `normalizeName` from `@cngeo/spec` is the function that produces it:
 NFD → strip `\p{M}` → lowercase → keep only `[\p{L}\p{N} '-]` → collapse
 whitespace → trim. Override `GeocoderOptions.normalize` and you break the
 binary search unless you also rebuilt the index.
@@ -598,7 +598,7 @@ And separately again: a GeoParquet **2.0** file (native Parquet `GEOMETRY`
 logical type — FIRMS, s2-stac-geoparquet) is auto-decoded *unconditionally*,
 independent of the `geoparquet` flag, which only ever governed the older
 sidecar-metadata convention. Use `decodeWkbGeometry` from
-`@cng/download-core`, which normalizes bytes-or-object.
+`@cngeo/download-core`, which normalizes bytes-or-object.
 
 ### 2. `area.filterGeometry` can be `null`
 
@@ -652,7 +652,7 @@ Use `bboxes`.
 
 ### 7. Synchronous simplification is O(m²)
 
-`@cng/spec`'s `simplifyToVertexCeiling` measured 38 ms at 1,000 vertices,
+`@cngeo/spec`'s `simplifyToVertexCeiling` measured 38 ms at 1,000 vertices,
 921 ms at 5,000, 3,852 ms at 10,000 — and a little over the ceiling is not
 cheap, because one binary-search trial always strips the ring to nothing.
 Canada's ADM0 ring is ~195,000 points and hung a browser for ~24 s before the
@@ -725,7 +725,7 @@ rely on the check catching a rebuilt catalog.
 ## Error handling
 
 ```js
-import { isCngError } from '@cng/spec';   // or from @cng/download-core
+import { isCngError } from '@cngeo/spec';   // or from @cngeo/download-core
 
 try {
   await handle.result;

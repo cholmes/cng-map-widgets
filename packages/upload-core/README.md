@@ -1,7 +1,7 @@
-# @cng/upload-core
+# @cngeo/upload-core
 
 Drag, drop or pick a GeoJSON file; get back the **same `Area` object**
-`@cng/geocoder-core` emits and `@cng/download-core` consumes. That
+`@cngeo/geocoder-core` emits and `@cngeo/download-core` consumes. That
 interchangeability is the entire purpose of this package — "search for an area"
 and "bring your own area" are two front doors to one pipeline.
 
@@ -26,28 +26,28 @@ const { area, warnings } = await areaFromFile(file);
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec": "/packages/spec/src/index.js",
-    "@cng/upload-core": "/packages/upload-core/src/index.js"
+    "@cngeo/spec": "/packages/spec/src/index.js",
+    "@cngeo/upload-core": "/packages/upload-core/src/index.js"
   }
 }
 </script>
 <script type="module">
-  import { attachDropTarget } from '@cng/upload-core';
+  import { attachDropTarget } from '@cngeo/upload-core';
 </script>
 ```
 
-Zero runtime dependencies beyond `@cng/spec`. No network, no CDN, no wasm —
+Zero runtime dependencies beyond `@cngeo/spec`. No network, no CDN, no wasm —
 nothing to inject or configure. Works in Node as-is (Node 20+ has `File`).
 
-**Coming:** `npm i @cng/upload-core`.
+**Coming:** `npm i @cngeo/upload-core`.
 
 ## Size
 
 | | files | raw | gzip | gzip, comments stripped | design-doc budget (§4.5) |
 |---|---|---|---|---|---|
-| `@cng/upload-core` src | 5 | 23.1 KiB | 7.5 KiB | **4.3 KiB** | ≤ 10 KB min+gz |
+| `@cngeo/upload-core` src | 5 | 23.1 KiB | 7.5 KiB | **4.3 KiB** | ≤ 10 KB min+gz |
 
-Plus `@cng/spec` (6.2 KiB stripped+gz). The lightest package here by a wide
+Plus `@cngeo/spec` (6.2 KiB stripped+gz). The lightest package here by a wide
 margin.
 
 ---
@@ -55,7 +55,7 @@ margin.
 ## Minimal example
 
 ```js
-import { areaFromFile } from '@cng/upload-core';
+import { areaFromFile } from '@cngeo/upload-core';
 
 const text = JSON.stringify({
   type: 'FeatureCollection',
@@ -84,12 +84,12 @@ warnings;                               // []
 Wired to a drop zone, which is the actual use:
 
 ```js
-import { attachDropTarget, areaFromFile } from '@cng/upload-core';
+import { attachDropTarget, areaFromFile } from '@cngeo/upload-core';
 
 const detach = attachDropTarget(
   document.getElementById('dropzone'),
   ({ area, warnings }) => {
-    areaLayer.setArea(area);           // @cng/maplibre or @cng/openlayers
+    areaLayer.setArea(area);           // @cngeo/maplibre or @cngeo/openlayers
     renderWarnings(warnings);
   },
   { onError: (err) => showError(err.code, err.message) },
@@ -148,7 +148,7 @@ imports them.** Registration rather than lazy `import()` is deliberate: a bare
 dynamic specifier does not resolve in a zero-build page.
 
 ```js
-import { registerReader, areaFromFile } from '@cng/upload-core';
+import { registerReader, areaFromFile } from '@cngeo/upload-core';
 
 // A toy "WKT polygon in a .wkt file" reader.
 registerReader({
@@ -181,7 +181,7 @@ The repair pipeline, standalone and format-agnostic. Useful if you already have
 GeoJSON and only want the cleanup.
 
 ```js
-import { repairFeatures } from '@cng/upload-core';
+import { repairFeatures } from '@cngeo/upload-core';
 
 const { features, repairs } = repairFeatures([
   { geometry: { type: 'Polygon', coordinates: [[[0, 0], [0, 1], [1, 1], [1, 0]]] }, properties: {} },
@@ -264,7 +264,7 @@ else here is exactly the design doc's taxonomy.
 
 **Coordinate precision is *not* truncated on upload.** Design doc §1.3 is
 explicit that precision trimming happens on serialization only — it is a format
-writer's job (`@cng/download-core`'s `geojson` plugin takes `precision`).
+writer's job (`@cngeo/download-core`'s `geojson` plugin takes `precision`).
 
 ## Multiple features: `collect`, not `dissolve`
 
@@ -288,7 +288,7 @@ downloaded feature lying in the overlap matches more than one part of the
 MultiPolygon.** Under `spatial.mode: 'intersects'` that is harmless — a row
 either matches or does not. Under `'clip'` it would produce overlapping output
 fragments, which is why this package raises `overlapping-features` and
-`@cng/download-core` refuses `clip` on such an Area. That is the entire cost
+`@cngeo/download-core` refuses `clip` on such an Area. That is the entire cost
 of not shipping a polygon clipper in core, and `unionMode: 'dissolve'` plus
 your own `dissolver` is the opt-out.
 
@@ -354,7 +354,7 @@ a `maxFeatures: 10_000` check, because only 3 features survive.
 interactive-latency budget the way a map click does, so a large upload runs the
 full O(m²) simplification search synchronously. A 50,000-vertex uploaded
 polygon will block for seconds. If that matters for your UI, simplify before
-calling, or use `@cng/spec`'s `simplifyToVertexCeilingAsync` yourself.
+calling, or use `@cngeo/spec`'s `simplifyToVertexCeilingAsync` yourself.
 
 **`properties` is carried through verbatim** onto each
 `provenance.features[].properties`, and never interpreted. Feature `name` is

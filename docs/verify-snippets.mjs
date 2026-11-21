@@ -23,7 +23,7 @@
  * examples/index.html's "Verifying them yourself" table.
  *
  * Why `setHyparquetModules` appears at the top of every group: in a browser
- * the @cng packages load hyparquet by `import()`-ing a pinned absolute CDN
+ * the @cngeo packages load hyparquet by `import()`-ing a pinned absolute CDN
  * URL (design doc section 4.2). Node has no network imports, so this
  * injects the npm-installed copies instead -- the same host-injection seam
  * a bundled app (portolan-browser) uses to avoid shipping two hyparquets.
@@ -83,7 +83,7 @@ function ftwLiechtensteinDescriptor() {
 
 /** A square around Liechtenstein, so a download snippet needs no geocoder. */
 async function liechtensteinBoxArea() {
-  const { areaFromGeoJson } = await import('@cng/upload-core');
+  const { areaFromGeoJson } = await import('@cngeo/upload-core');
   const { area } = await areaFromGeoJson(
     {
       type: 'Polygon',
@@ -98,7 +98,7 @@ async function liechtensteinBoxArea() {
 // packages/spec/README.md
 // ===========================================================================
 async function groupSpec() {
-  console.log('\n@cng/spec');
+  console.log('\n@cngeo/spec');
   const {
     buildArea,
     validateArea,
@@ -117,7 +117,7 @@ async function groupSpec() {
     CngError,
     isCngError,
     VERSION,
-  } = await import('@cng/spec');
+  } = await import('@cngeo/spec');
 
   await snippet('spec/README', 'VERSION', async () => {
     assert.equal(VERSION, '0.2.0');
@@ -287,10 +287,10 @@ async function groupSpec() {
 // packages/geocoder-core/README.md
 // ===========================================================================
 async function groupGeocoder() {
-  console.log('\n@cng/geocoder-core (live: data.source.coop)');
+  console.log('\n@cngeo/geocoder-core (live: data.source.coop)');
   const { Geocoder, setHyparquetModules, classifyMatch, computeViewportRank, prefixRange, VERSION, DEFAULT_INDEX_URL } =
-    await import('@cng/geocoder-core');
-  const { normalizeName } = await import('@cng/spec');
+    await import('@cngeo/geocoder-core');
+  const { normalizeName } = await import('@cngeo/spec');
 
   setHyparquetModules({ hyparquet, compressors });
 
@@ -326,7 +326,7 @@ async function groupGeocoder() {
     return 'multi-source refuses; a one-element array is accepted';
   });
 
-  /** @type {import('@cng/geocoder-core').Geocoder} */
+  /** @type {import('@cngeo/geocoder-core').Geocoder} */
   let shared;
   let sharedArea;
 
@@ -519,8 +519,8 @@ async function groupGeocoder() {
 // packages/upload-core/README.md
 // ===========================================================================
 async function groupUpload() {
-  console.log('\n@cng/upload-core');
-  const { areaFromGeoJson, areaFromFile, registerReader, repairFeatures, VERSION } = await import('@cng/upload-core');
+  console.log('\n@cngeo/upload-core');
+  const { areaFromGeoJson, areaFromFile, registerReader, repairFeatures, VERSION } = await import('@cngeo/upload-core');
 
   await snippet('upload-core/README', 'VERSION', async () => {
     assert.equal(VERSION, '0.2.0');
@@ -663,7 +663,7 @@ async function groupUpload() {
 // packages/download-core/README.md
 // ===========================================================================
 async function groupDownload() {
-  console.log('\n@cng/download-core (live: data.source.coop)');
+  console.log('\n@cngeo/download-core (live: data.source.coop)');
   const {
     setHyparquetModules,
     estimate,
@@ -683,8 +683,8 @@ async function groupDownload() {
     rowMatchesArea,
     isCngError,
     VERSION,
-  } = await import('@cng/download-core');
-  const { toAreaDocument } = await import('@cng/spec');
+  } = await import('@cngeo/download-core');
+  const { toAreaDocument } = await import('@cngeo/spec');
 
   setHyparquetModules({ hyparquet, compressors, writer: hyparquetWriter });
 
@@ -989,7 +989,7 @@ async function groupDownload() {
 // packages/openlayers/README.md (the projection half; the DOM half is Playwright)
 // ===========================================================================
 async function groupOpenLayers() {
-  console.log('\n@cng/openlayers (pure helpers only; the control is Playwright-verified)');
+  console.log('\n@cngeo/openlayers (pure helpers only; the control is Playwright-verified)');
   const {
     isMercatorCode,
     isLonLatCode,
@@ -1053,16 +1053,16 @@ async function groupOpenLayers() {
 // ===========================================================================
 async function groupAgents() {
   console.log('\nAGENTS.md (live: data.source.coop)');
-  const { Geocoder, setHyparquetModules: setGeocoderModules } = await import('@cng/geocoder-core');
+  const { Geocoder, setHyparquetModules: setGeocoderModules } = await import('@cngeo/geocoder-core');
   const {
     setHyparquetModules: setDownloadModules,
     estimate,
     download,
     memorySink,
     resolveDataset,
-  } = await import('@cng/download-core');
-  const { areaFromGeoJson } = await import('@cng/upload-core');
-  const { toAreaDocument, fromAreaDocument } = await import('@cng/spec');
+  } = await import('@cngeo/download-core');
+  const { areaFromGeoJson } = await import('@cngeo/upload-core');
+  const { toAreaDocument, fromAreaDocument } = await import('@cngeo/spec');
 
   setGeocoderModules({ hyparquet, compressors });
   setDownloadModules({ hyparquet, compressors, writer: hyparquetWriter });

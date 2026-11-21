@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadManifest, normalizeStacGazetteerCollection } from '../src/index-loader.js';
-import { isCngError } from '@cng/spec';
+import { isCngError } from '@cngeo/spec';
 
 const EXAMPLE_PATH = fileURLToPath(new URL('../../../spec-draft/examples/geoboundaries-cgaz-collection.json', import.meta.url));
 const EXAMPLE_COLLECTION_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/collection.json';

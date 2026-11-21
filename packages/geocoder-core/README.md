@@ -1,4 +1,4 @@
-# @cng/geocoder-core
+# @cngeo/geocoder-core
 
 Type a place name, get a boundary. Framework-agnostic, no DOM, no map library,
 **no server** — it reads a published *cloud-native gazetteer* (a names index
@@ -14,12 +14,12 @@ const results = await geocoder.search('contra costa');   // ranked, ~1 ms warm
 const area = await geocoder.select(results[0]);          // -> an Area
 ```
 
-The `Area` it returns is the same object `@cng/upload-core` produces and
-`@cng/download-core` consumes. That is the whole point.
+The `Area` it returns is the same object `@cngeo/upload-core` produces and
+`@cngeo/download-core` consumes. That is the whole point.
 
 - **Status:** experimental, pre-npm. See the [root README](../../README.md).
 - **Normative design:** [`docs/design/widgets-architecture.md`](../../docs/design/widgets-architecture.md) §3.2 (API), §6 (index file interface).
-- **UI:** this package has none. Use [`@cng/maplibre`](../maplibre/README.md) or [`@cng/openlayers`](../openlayers/README.md).
+- **UI:** this package has none. Use [`@cngeo/maplibre`](../maplibre/README.md) or [`@cngeo/openlayers`](../openlayers/README.md).
 - **License:** MIT (code). **The data has its own license** — the manifest tells you which, and `Area.provenance.attribution` carries what you must display.
 
 ---
@@ -32,13 +32,13 @@ Nothing is published to npm yet. Point an import map at the source:
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec": "/packages/spec/src/index.js",
-    "@cng/geocoder-core": "/packages/geocoder-core/src/index.js"
+    "@cngeo/spec": "/packages/spec/src/index.js",
+    "@cngeo/geocoder-core": "/packages/geocoder-core/src/index.js"
   }
 }
 </script>
 <script type="module">
-  import { Geocoder } from '@cng/geocoder-core';
+  import { Geocoder } from '@cngeo/geocoder-core';
 </script>
 ```
 
@@ -47,15 +47,15 @@ pinned, exact CDN URL (`src/cdn.js`). In Node or inside a bundler that already
 has hyparquet, hand yours in instead — see
 [Node and bundlers](#node-and-bundlers).
 
-**Coming:** `npm i @cng/geocoder-core`, plus a CDN form
-(`https://cdn.jsdelivr.net/npm/@cng/geocoder-core@0.2.0/src/index.js`).
+**Coming:** `npm i @cngeo/geocoder-core`, plus a CDN form
+(`https://cdn.jsdelivr.net/npm/@cngeo/geocoder-core@0.2.0/src/index.js`).
 
 ## Size
 
 | | files | raw | gzip | gzip, comments stripped | design-doc budget (§4.5) |
 |---|---|---|---|---|---|
-| `@cng/geocoder-core` src | 8 | 105.4 KiB | 32.5 KiB | **11.0 KiB** | ≤ 15 KB min+gz |
-| `+ @cng/spec` | | | | 6.2 KiB | ≤ 10 KB |
+| `@cngeo/geocoder-core` src | 8 | 105.4 KiB | 32.5 KiB | **11.0 KiB** | ≤ 15 KB min+gz |
+| `+ @cngeo/spec` | | | | 6.2 KiB | ≤ 10 KB |
 | `+ hyparquet@1.33.0` | | 199.9 KiB | 46.9 KiB | — | 35 KB (measured at 1.26.0) |
 | `+ hyparquet-compressors@1.1.3` | | | 69.1 KiB *(the jsdelivr `+esm` bundle, as fetched)* | — | 79 KB |
 
@@ -72,7 +72,7 @@ loaded as its unbundled `src/index.js`. If that waterfall matters, repoint
 ## Quickstart
 
 ```js
-import { Geocoder } from '@cng/geocoder-core';
+import { Geocoder } from '@cngeo/geocoder-core';
 
 const geocoder = new Geocoder({
   // The published geoBoundaries gazetteer: 52,398 named admin units,
@@ -129,7 +129,7 @@ Verified by [`docs/verify-snippets.mjs`](../../docs/verify-snippets.mjs)
 | `fullLoadMaxBytes` | `number` | `5_242_880` | yes | |
 | `limit` | `number` | `10` | yes | Default result count; overridable per call. |
 | `minPrefixLength` | `number` | `1` | yes | Shorter queries return `[]` without touching the index. |
-| `normalize` | `(string) => string` | `normalizeName` from `@cng/spec` | yes | **Must match the index builder's `name_norm`.** |
+| `normalize` | `(string) => string` | `normalizeName` from `@cngeo/spec` | yes | **Must match the index builder's `name_norm`.** |
 | `ranking` | `Partial<RankingOptions>` | see below | yes | Merged over the defaults. |
 | `levels` | `number[]` | — | yes | Pre-filter, applied before ranking. |
 | `countries` | `string[]` | — | yes | ISO-3166-1 alpha-3. |
@@ -439,7 +439,7 @@ These are exported for testing and for anyone reimplementing the search
 | `DEFAULT_INDEX_URL`, `VERSION` | |
 
 ```js
-import { classifyMatch, computeViewportRank, prefixRange } from '@cng/geocoder-core';
+import { classifyMatch, computeViewportRank, prefixRange } from '@cngeo/geocoder-core';
 
 const allowed = ['exact', 'prefix', 'word-prefix'];
 classifyMatch('paris', 'paris', allowed);                // 'exact'
@@ -472,7 +472,7 @@ first `load()`**:
 ```js
 import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
-import { Geocoder, setHyparquetModules } from '@cng/geocoder-core';
+import { Geocoder, setHyparquetModules } from '@cngeo/geocoder-core';
 
 setHyparquetModules({ hyparquet, compressors });
 

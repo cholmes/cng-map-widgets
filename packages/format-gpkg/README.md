@@ -1,6 +1,6 @@
-# @cng/format-gpkg
+# @cngeo/format-gpkg
 
-GeoPackage output for `@cng/download-core`: the O5 design-doc decision
+GeoPackage output for `@cngeo/download-core`: the O5 design-doc decision
 (`docs/design/widgets-architecture.md` §4.5/O5), implemented and measured.
 
 ## What this costs your page
@@ -21,13 +21,13 @@ path (sql.js itself got smaller between the versions compared), and about
 driver set).
 
 This weight is **not** paid by every page that imports
-`@cng/download-core`, or even every page that imports this package. It is
+`@cngeo/download-core`, or even every page that imports this package. It is
 paid exactly once, the first time a `download()` for `format: 'gpkg'`
 actually runs:
 
 ```js
-import { registerLazyFormat, download } from '@cng/download-core';
-import { gpkgFormatDescriptor } from '@cng/format-gpkg';
+import { registerLazyFormat, download } from '@cngeo/download-core';
+import { gpkgFormatDescriptor } from '@cngeo/format-gpkg';
 
 registerLazyFormat(gpkgFormatDescriptor); // ~0 bytes: just registers the id, label, and this weight table
 // ... later, only when the user picks "GeoPackage" in a format picker:
@@ -44,8 +44,8 @@ If you already have sql.js loaded for your own reasons, skip the lazy path
 and register eagerly instead:
 
 ```js
-import { registerFormat } from '@cng/download-core';
-import { createGpkgFormat } from '@cng/format-gpkg';
+import { registerFormat } from '@cngeo/download-core';
+import { createGpkgFormat } from '@cngeo/format-gpkg';
 import initSqlJs from 'sql.js';
 
 registerFormat(createGpkgFormat(await initSqlJs()));
@@ -72,7 +72,7 @@ measured both:
 - **gdal3.js: 9.07 MB gzip, measured, not implemented.** Per O5's own
   framing ("gdal3.js becomes a second plugin for anyone who wants its
   other drivers and will pay for them"), this package exists because the
-  light path worked; gdal3.js stays future work (`@cng/format-gdal`) for
+  light path worked; gdal3.js stays future work (`@cngeo/format-gdal`) for
   whoever needs a driver this package doesn't have (File Geodatabase
   write, for instance — see the research doc).
 
@@ -161,7 +161,7 @@ multi-gigabyte database in the wasm heap.
 ## Running this package's tests
 
 ```
-npm test -w @cng/format-gpkg
+npm test -w @cngeo/format-gpkg
 ```
 
 `gpkg-write.test.js` builds files in memory and validates them with the

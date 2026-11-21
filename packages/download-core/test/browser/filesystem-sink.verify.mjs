@@ -79,7 +79,7 @@ const HARNESS_HTML = `<!doctype html>
 <meta charset="utf-8">
 <title>fileSystemSink OPFS harness</title>
 <script type="importmap">
-{ "imports": { "@cng/spec": "/packages/spec/src/index.js" } }
+{ "imports": { "@cngeo/spec": "/packages/spec/src/index.js" } }
 </script>
 <body><div id="ready">loading</div></body>
 <script type="module">

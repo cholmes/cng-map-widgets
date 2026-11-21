@@ -1,4 +1,4 @@
-// @cng/raster-core -- `downloadRaster()`, the raster twin of
+// @cngeo/raster-core -- `downloadRaster()`, the raster twin of
 // download-core's `download()`.
 //
 // Same shape on purpose: returns synchronously so planning can be
@@ -17,7 +17,7 @@
 //      GeoPackage path, which is why the blob-sink ceiling applies.
 //   3. The ceiling that matters is memory, not rows.
 
-import { CngError, CancelledError } from '@cng/spec';
+import { CngError, CancelledError } from '@cngeo/spec';
 import { planRasterClip } from './plan.js';
 import { writeGeoTiff } from './geotiff-writer.js';
 
@@ -46,7 +46,7 @@ function emitter() {
 
 /**
  * @param {object} descriptor from describeRasterDataset/describeRasterUrl
- * @param {import('@cng/spec').Area|null} area
+ * @param {import('@cngeo/spec').Area|null} area
  * @param {{ bands?: readonly string[], resolution?: any, compression?: 'none'|'deflate', bbox?: readonly number[] }} filter
  * @param {{ filename?: string, format?: 'geotiff' }} output
  * @param {{ fetch?: typeof fetch, signal?: AbortSignal, sink?: any, acceptCeiling?: boolean, ceiling?: object }} [options]
@@ -169,7 +169,7 @@ export function downloadRaster(descriptor, area, filter = {}, output = {}, optio
       const sink = options.sink;
       if (!sink) {
         throw new CngError(
-          'downloadRaster needs a sink (autoSink()/blobSink()/memorySink() from @cng/download-core).',
+          'downloadRaster needs a sink (autoSink()/blobSink()/memorySink() from @cngeo/download-core).',
           'SINK_UNSUPPORTED',
         );
       }

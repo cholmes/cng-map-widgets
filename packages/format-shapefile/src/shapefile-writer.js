@@ -1,4 +1,4 @@
-// @cng/format-shapefile -- the `shapefile` FormatPlugin (download-core's
+// @cngeo/format-shapefile -- the `shapefile` FormatPlugin (download-core's
 // registry contract, design doc §3.4/§2.3). Zero dependencies: pure
 // JS (no wasm) writing of .shp/.shx/.dbf/.prj/.cpg, bundled into one
 // `.shp.zip` (download-core's Sink is one file per download; see
@@ -6,7 +6,7 @@
 // the "near-free" end of the format spectrum the heavy GeoPackage/GDAL
 // paths sit at the other end of.
 //
-// NOT streaming, for the same reason as @cng/format-gpkg: Shapefile's
+// NOT streaming, for the same reason as @cngeo/format-gpkg: Shapefile's
 // shape type is fixed for the whole file, and a null-geometry row can't
 // be written correctly until the file's shape type is known, which (for
 // an all-null-geometry result) isn't knowable until every row has been
@@ -106,9 +106,9 @@ export function createShapefileFormat() {
     estimateBytes: estimateShapefileBytes,
     async open(ctx) {
       if (ctx.crs !== 'EPSG:4326' && ctx.crs !== 'OGC:CRS84' && ctx.crs) {
-        const { CngError } = await import('@cng/spec');
+        const { CngError } = await import('@cngeo/spec');
         throw new CngError(
-          `@cng/format-shapefile only writes EPSG:4326/OGC:CRS84 (the .prj this plugin writes is fixed WGS84 WKT); got crs "${ctx.crs}".`,
+          `@cngeo/format-shapefile only writes EPSG:4326/OGC:CRS84 (the .prj this plugin writes is fixed WGS84 WKT); got crs "${ctx.crs}".`,
           'FORMAT_CAPABILITY',
           { context: { crs: ctx.crs } },
         );
@@ -136,9 +136,9 @@ export function createShapefileFormat() {
             const family = shapeFamilyOf(geom.type);
             if (shapeFamily === null) shapeFamily = family;
             else if (family !== shapeFamily) {
-              const { CngError } = await import('@cng/spec');
+              const { CngError } = await import('@cngeo/spec');
               throw new CngError(
-                `@cng/format-shapefile: a Shapefile has exactly one shape type per file; this result mixes ${shapeFamily} with ${family} geometry, which cannot be written as a single .shp.`,
+                `@cngeo/format-shapefile: a Shapefile has exactly one shape type per file; this result mixes ${shapeFamily} with ${family} geometry, which cannot be written as a single .shp.`,
                 'FORMAT_CAPABILITY',
                 { context: { first: shapeFamily, conflicting: family } },
               );

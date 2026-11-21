@@ -1,4 +1,4 @@
-// @cng/geocoder-core -- Jaro-Winkler fuzzy-match fallback (design doc
+// @cngeo/geocoder-core -- Jaro-Winkler fuzzy-match fallback (design doc
 // §3.2 amendment, 2026-11-13, "Fuzzy fallback").
 //
 // **Adapted from Development Seed's gazet** (MIT licensed):
