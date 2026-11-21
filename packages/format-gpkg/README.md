@@ -1,6 +1,6 @@
-# @cng/format-gpkg
+# @cngeo/format-gpkg
 
-GeoPackage output for `@cng/download-core`: the O5 design-doc decision
+GeoPackage output for `@cngeo/extract-core`: the O5 design-doc decision
 (`docs/design/widgets-architecture.md` §4.5/O5), implemented and measured.
 
 ## What this costs your page
@@ -21,13 +21,13 @@ path (sql.js itself got smaller between the versions compared), and about
 driver set).
 
 This weight is **not** paid by every page that imports
-`@cng/download-core`, or even every page that imports this package. It is
+`@cngeo/extract-core`, or even every page that imports this package. It is
 paid exactly once, the first time a `download()` for `format: 'gpkg'`
 actually runs:
 
 ```js
-import { registerLazyFormat, download } from '@cng/download-core';
-import { gpkgFormatDescriptor } from '@cng/format-gpkg';
+import { registerLazyFormat, download } from '@cngeo/extract-core';
+import { gpkgFormatDescriptor } from '@cngeo/format-gpkg';
 
 registerLazyFormat(gpkgFormatDescriptor); // ~0 bytes: just registers the id, label, and this weight table
 // ... later, only when the user picks "GeoPackage" in a format picker:
@@ -44,8 +44,8 @@ If you already have sql.js loaded for your own reasons, skip the lazy path
 and register eagerly instead:
 
 ```js
-import { registerFormat } from '@cng/download-core';
-import { createGpkgFormat } from '@cng/format-gpkg';
+import { registerFormat } from '@cngeo/extract-core';
+import { createGpkgFormat } from '@cngeo/format-gpkg';
 import initSqlJs from 'sql.js';
 
 registerFormat(createGpkgFormat(await initSqlJs()));
@@ -72,7 +72,7 @@ measured both:
 - **gdal3.js: 9.07 MB gzip, measured, not implemented.** Per O5's own
   framing ("gdal3.js becomes a second plugin for anyone who wants its
   other drivers and will pay for them"), this package exists because the
-  light path worked; gdal3.js stays future work (`@cng/format-gdal`) for
+  light path worked; gdal3.js stays future work (`@cngeo/format-gdal`) for
   whoever needs a driver this package doesn't have (File Geodatabase
   write, for instance — see the research doc).
 
@@ -88,7 +88,7 @@ measured both:
   `WHERE` on the file, which doesn't matter at the row counts a
   bbox-pruned browser download produces.
 - **No raster support.** Vector only — this plugin's whole job is the
-  `gpkg` entry in download-core's format registry, which only ever writes
+  `gpkg` entry in extract-core's format registry, which only ever writes
   feature tables.
 - **2D geometry only** (no Z/M). Every source this project reads (CGAZ,
   FTW, FIRMS) is 2D; the WKB encoder (`src/wkb.js`) throws a clear error
@@ -99,7 +99,7 @@ measured both:
 
 ## Memory ceiling (honest, not streaming)
 
-`FormatPlugin.streaming` is `false`, same category as download-core's own
+`FormatPlugin.streaming` is `false`, same category as extract-core's own
 `geoparquet` plugin, for the same structural reason: `gpkg_contents`'
 bbox and `gpkg_geometry_columns`' `geometry_type_name` are only knowable
 once every row has been seen, and sql.js's `Database.export()` serializes
@@ -157,13 +157,13 @@ conservative ceiling.
 
 For the row counts this system's download ceiling targets that's tens of
 MB in practice, not hundreds — but it is real, and it is what
-`download-core`'s own `effectiveCeiling({ format, sink })` actually
+`extract-core`'s own `effectiveCeiling({ format, sink })` actually
 protects a page against: because this plugin declares
 `capabilities.memoryFactor: 2.9` on a `streaming: false` format, its
 `outputBytes` ceiling is `memoryBudget / 2.9` — **≈353 MiB** at the 1 GiB
 default `memoryBudget` — regardless of which sink the download writes to,
 including a `memorySink` (the sink-exemption applies only to a format
-whose `memoryFactor` is `0`; see `@cng/download-core`'s README/AGENTS.md
+whose `memoryFactor` is `0`; see `@cngeo/extract-core`'s README/AGENTS.md
 for the full derivation). See `test/memory-factor.verify.mjs` for the
 measurement script itself (run by hand, not part of `npm test`) and its
 own in-script notes on why the smallest measured case is excluded from
@@ -173,7 +173,7 @@ the declared factor.
 
 `estimateBytes(schema, rows, ctx)` takes an additive, optional third
 argument (`ctx.avgGeometryBytes`: the dataset's own average geometry
-bytes per row, derived from parquet footer statistics by `download-core`).
+bytes per row, derived from parquet footer statistics by `extract-core`).
 `estimateGpkgBytes` is exported and shared by the plugin and
 `gpkgFormatDescriptor` — and is pure JS, so the descriptor models output
 bytes without loading sql.js, which is what
@@ -209,7 +209,7 @@ multi-gigabyte database in the wasm heap.
 ## Running this package's tests
 
 ```
-npm test -w @cng/format-gpkg
+npm test -w @cngeo/format-gpkg
 ```
 
 `gpkg-write.test.js` builds files in memory and validates them with the

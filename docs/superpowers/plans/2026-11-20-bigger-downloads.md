@@ -4,9 +4,9 @@
 
 **Goal:** Let users download complete GeoParquet partitions or datasets as the original bytes (one file verbatim, many as a zip), and make every download's size ceiling derive from what the chosen format and sink actually cost instead of one flat number.
 
-**Architecture:** A new passthrough branch inside `download()` copies object-storage bytes straight to the sink, using only the whole-file stages of the existing partition pruning and never touching hyparquet. A new in-repo streaming zip64 writer handles the multi-file case over a non-seekable sink. `defaultCeiling()`'s flat numbers are replaced by `effectiveCeiling({format, sink})`, driven by a new optional `memoryFactor` capability on each format plugin. Separately, `@cng/format-gpkg` stops holding every row in JS, which lifts its own (still memory-bound) ceiling.
+**Architecture:** A new passthrough branch inside `download()` copies object-storage bytes straight to the sink, using only the whole-file stages of the existing partition pruning and never touching hyparquet. A new in-repo streaming zip64 writer handles the multi-file case over a non-seekable sink. `defaultCeiling()`'s flat numbers are replaced by `effectiveCeiling({format, sink})`, driven by a new optional `memoryFactor` capability on each format plugin. Separately, `@cngeo/format-gpkg` stops holding every row in JS, which lifts its own (still memory-bound) ceiling.
 
-**Tech Stack:** Plain ESM, no build step, no new runtime dependencies. Node 22 `node --test`. hyparquet 1.33.0 / hyparquet-compressors 1.1.3 / hyparquet-writer 0.18.0 (unchanged). sql.js (existing devDependency) for `@cng/format-gpkg`.
+**Tech Stack:** Plain ESM, no build step, no new runtime dependencies. Node 22 `node --test`. hyparquet 1.33.0 / hyparquet-compressors 1.1.3 / hyparquet-writer 0.18.0 (unchanged). sql.js (existing devDependency) for `@cngeo/format-gpkg`.
 
 **Spec:** [`docs/superpowers/specs/2026-11-20-bigger-downloads-design.md`](../specs/2026-11-20-bigger-downloads-design.md)
 
@@ -39,8 +39,8 @@ Input classes the spec implies but no task's happy-path tests exercise. Each has
 ### Task 1: CRC-32 and the zip64 local/central record layout
 
 **Files:**
-- Create: `packages/download-core/src/zip.js`
-- Test: `packages/download-core/test/zip-records.test.js`
+- Create: `packages/extract-core/src/zip.js`
+- Test: `packages/extract-core/test/zip-records.test.js`
 
 **Interfaces:**
 - Produces: `crc32(bytes: Uint8Array, seed?: number): number` — streaming-capable, returns the unsigned CRC-32 after folding `bytes` into `seed` (seed defaults to 0). `localHeader({ name, flags }): Uint8Array`, `dataDescriptor({ crc, size }): Uint8Array`, `centralHeader({ name, crc, size, offset }): Uint8Array`, `endOfCentralDirectory({ entryCount, centralSize, centralOffset }): Uint8Array`. All little-endian; all zip64.
@@ -90,23 +90,23 @@ test('endOfCentralDirectory emits the zip64 record, its locator, and the legacy 
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test packages/download-core/test/zip-records.test.js`
+Run: `node --test packages/extract-core/test/zip-records.test.js`
 Expected: FAIL — `zip.js` does not exist.
 
-- [ ] **Step 3: Implement `crc32` and the four record builders in `packages/download-core/src/zip.js`**
+- [ ] **Step 3: Implement `crc32` and the four record builders in `packages/extract-core/src/zip.js`**
 
 `crc32` uses the standard reflected table (polynomial `0xEDB88320`), table built once at module load. Every record builder returns a fresh `Uint8Array` and writes the zip64 extra field (header id `0x0001`) on local and central headers, with the 32-bit size fields set to `0xffffffff`. The legacy EOCD that follows the zip64 locator carries `0xffff`/`0xffffffff` sentinels so readers that understand zip64 use the records above it.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test packages/download-core/test/zip-records.test.js`
+Run: `node --test packages/extract-core/test/zip-records.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/download-core/src/zip.js packages/download-core/test/zip-records.test.js
-git commit -m "feat(download-core): crc32 and zip64 record builders"
+git add packages/extract-core/src/zip.js packages/extract-core/test/zip-records.test.js
+git commit -m "feat(extract-core): crc32 and zip64 record builders"
 ```
 
 ---
@@ -114,9 +114,9 @@ git commit -m "feat(download-core): crc32 and zip64 record builders"
 ### Task 2: The streaming zip writer
 
 **Files:**
-- Modify: `packages/download-core/src/zip.js`
-- Test: `packages/download-core/test/zip-writer.test.js`
-- Test: `packages/download-core/test/zip-large.verify.mjs` (opt-in, not in `npm test`)
+- Modify: `packages/extract-core/src/zip.js`
+- Test: `packages/extract-core/test/zip-writer.test.js`
+- Test: `packages/extract-core/test/zip-large.verify.mjs` (opt-in, not in `npm test`)
 
 **Interfaces:**
 - Consumes: Task 1's record builders.
@@ -150,27 +150,27 @@ test('unzip -t reports no errors', async () => { /* skip when `unzip` is absent 
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test packages/download-core/test/zip-writer.test.js`
+Run: `node --test packages/extract-core/test/zip-writer.test.js`
 Expected: FAIL — `createZipWriter` is not exported.
 
-- [ ] **Step 3: Implement `createZipWriter` and `sanitizeEntryName` in `packages/download-core/src/zip.js`**
+- [ ] **Step 3: Implement `createZipWriter` and `sanitizeEntryName` in `packages/extract-core/src/zip.js`**
 
 `addEntry` writes the local header, then each chunk straight through to `writer` while folding it into a running `crc32` and byte count, then the data descriptor — so nothing is buffered and no header is ever rewritten. The writer tracks each entry's starting offset for the central directory it writes in `close()`. `sanitizeEntryName` splits on both separators, drops `.`/`..`/empty segments and any leading separator, then appends `-N` before the extension until the name is unused.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test packages/download-core/test/zip-writer.test.js`
+Run: `node --test packages/extract-core/test/zip-writer.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Write the opt-in large-archive verifier**
 
-`packages/download-core/test/zip-large.verify.mjs` writes a >4 GiB archive (two entries of synthetic bytes) to a temp file and asserts Python `zipfile` lists both with correct sizes. Not referenced by `npm test`; documented in the package README as `node packages/download-core/test/zip-large.verify.mjs`.
+`packages/extract-core/test/zip-large.verify.mjs` writes a >4 GiB archive (two entries of synthetic bytes) to a temp file and asserts Python `zipfile` lists both with correct sizes. Not referenced by `npm test`; documented in the package README as `node packages/extract-core/test/zip-large.verify.mjs`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/download-core/src/zip.js packages/download-core/test/zip-writer.test.js packages/download-core/test/zip-large.verify.mjs
-git commit -m "feat(download-core): streaming zip64 writer for non-seekable sinks"
+git add packages/extract-core/src/zip.js packages/extract-core/test/zip-writer.test.js packages/extract-core/test/zip-large.verify.mjs
+git commit -m "feat(extract-core): streaming zip64 writer for non-seekable sinks"
 ```
 
 ---
@@ -178,12 +178,12 @@ git commit -m "feat(download-core): streaming zip64 writer for non-seekable sink
 ### Task 3: `effectiveCeiling` and `memoryFactor`
 
 **Files:**
-- Modify: `packages/download-core/src/ceiling.js`
-- Modify: `packages/download-core/src/formats/geojson.js:73-74`, `packages/download-core/src/formats/geoparquet.js:93-94`
-- Modify: `packages/download-core/src/registry.js:38` (the `capabilities` typedef)
+- Modify: `packages/extract-core/src/ceiling.js`
+- Modify: `packages/extract-core/src/formats/geojson.js:73-74`, `packages/extract-core/src/formats/geoparquet.js:93-94`
+- Modify: `packages/extract-core/src/registry.js:38` (the `capabilities` typedef)
 - Modify: `packages/format-shapefile/src/index.js`, `packages/format-flatgeobuf/src/index.js` (declare or document the factor)
 - Modify: `packages/format-gpkg/src/index.js` and `packages/format-gpkg/src/gpkg-writer.js` (declare `memoryFactor: 3.5`)
-- Test: `packages/download-core/test/ceiling.test.js`
+- Test: `packages/extract-core/test/ceiling.test.js`
 
 **Interfaces:**
 - Produces: `effectiveCeiling({ format, sink, overrides }): Ceiling` where `format` is a `FormatPlugin` or `LazyFormatDescriptor` (only `streaming` and `capabilities.memoryFactor` are read) and `sink` is `{ kind: string }` or `null`. `memoryFactorOf(format): number`. `defaultCeiling()` stays exported, unchanged, as a compat shim.
@@ -216,7 +216,7 @@ test('memorySink is exempt from the memory budget', () => {
 });
 
 // Ruling R6: this assertion lives in packages/format-gpkg's OWN test suite,
-// not here -- download-core does not depend on format-gpkg, so a cross-package
+// not here -- extract-core does not depend on format-gpkg, so a cross-package
 // import resolves only via workspace hoisting. ceiling.test.js asserts
 // memoryFactorOf against literal descriptor shapes instead.
 
@@ -251,10 +251,10 @@ test('defaultCeiling() is unchanged for existing callers', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test packages/download-core/test/ceiling.test.js`
+Run: `node --test packages/extract-core/test/ceiling.test.js`
 Expected: FAIL — `effectiveCeiling` is not exported.
 
-- [ ] **Step 3: Implement `effectiveCeiling` and `memoryFactorOf` in `packages/download-core/src/ceiling.js`**
+- [ ] **Step 3: Implement `effectiveCeiling` and `memoryFactorOf` in `packages/extract-core/src/ceiling.js`**
 
 An explicit `overrides.outputBytes` wins over any derivation. `sink: null` (not yet created) is treated as memory-backed, the conservative direction. Add `memoryFactor: 0` to `geojson.js`'s capabilities and `memoryFactor: 2` to `geoparquet.js`'s, and document the field in `registry.js`'s `capabilities` typedef.
 
@@ -264,14 +264,14 @@ For `format-shapefile` and `format-flatgeobuf` (spec §8): either measure the fa
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test packages/download-core/test/ceiling.test.js`
+Run: `node --test packages/extract-core/test/ceiling.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/download-core/src/ceiling.js packages/download-core/src/formats packages/download-core/src/registry.js packages/download-core/test/ceiling.test.js
-git commit -m "feat(download-core): derive ceilings from format memory cost and sink kind"
+git add packages/extract-core/src/ceiling.js packages/extract-core/src/formats packages/extract-core/src/registry.js packages/extract-core/test/ceiling.test.js
+git commit -m "feat(extract-core): derive ceilings from format memory cost and sink kind"
 ```
 
 ---
@@ -279,9 +279,9 @@ git commit -m "feat(download-core): derive ceilings from format memory cost and 
 ### Task 4: Wire the derived ceiling into `estimate()` and `download()`
 
 **Files:**
-- Modify: `packages/download-core/src/estimate.js:320` (`estimate`), `:339` (`finalizeEstimate`), `:375-395`
-- Modify: `packages/download-core/src/download.js:136-186` (the gate), `:190` (sink creation)
-- Test: `packages/download-core/test/ceiling-wiring.test.js`
+- Modify: `packages/extract-core/src/estimate.js:320` (`estimate`), `:339` (`finalizeEstimate`), `:375-395`
+- Modify: `packages/extract-core/src/download.js:136-186` (the gate), `:190` (sink creation)
+- Test: `packages/extract-core/test/ceiling-wiring.test.js`
 
 **Interfaces:**
 - Consumes: Task 3's `effectiveCeiling`.
@@ -308,7 +308,7 @@ test('estimate() without options.output behaves exactly as before', async () => 
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test packages/download-core/test/ceiling-wiring.test.js`
+Run: `node --test packages/extract-core/test/ceiling-wiring.test.js`
 Expected: FAIL
 
 - [ ] **Step 3: Implement the wiring**
@@ -317,14 +317,14 @@ In `download.js`, move the `options.sink ?? await autoSink(...)` line to just be
 
 - [ ] **Step 4: Run the tests and the full suite**
 
-Run: `node --test packages/download-core/test/ceiling-wiring.test.js && npm test 2>&1 | tail -5`
+Run: `node --test packages/extract-core/test/ceiling-wiring.test.js && npm test 2>&1 | tail -5`
 Expected: new tests PASS; `npm test` at exactly the 4 baseline failures.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/download-core/src packages/download-core/test/ceiling-wiring.test.js
-git commit -m "feat(download-core): wire derived ceilings into estimate and download"
+git add packages/extract-core/src packages/extract-core/test/ceiling-wiring.test.js
+git commit -m "feat(extract-core): wire derived ceilings into estimate and download"
 ```
 
 ---
@@ -332,8 +332,8 @@ git commit -m "feat(download-core): wire derived ceilings into estimate and down
 ### Task 5: `large-download` and `slow-download` warnings
 
 **Files:**
-- Modify: `packages/download-core/src/estimate.js` (the `warnings` block)
-- Test: `packages/download-core/test/download-size-warnings.test.js`
+- Modify: `packages/extract-core/src/estimate.js` (the `warnings` block)
+- Test: `packages/extract-core/test/download-size-warnings.test.js`
 
 **Interfaces:**
 - Produces: two `EstimateWarning` codes, `large-download` with FLAT fields `{ bytes, estimatedSeconds }` and `slow-download` with `{ estimatedSeconds }` — flat, matching the nine incumbent warning codes in `estimate.js` (ruling R8; the original `context: {...}` wording was wrong). New option `throughputBytesPerSecond` (default `10_000_000`) and `largeDownloadBytes` (default 1 GiB) on `DownloadCoreOptions`.
@@ -350,7 +350,7 @@ test('neither fires on a small download', async () => { /* 10 MB => warnings has
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test packages/download-core/test/download-size-warnings.test.js`
+Run: `node --test packages/extract-core/test/download-size-warnings.test.js`
 Expected: FAIL
 
 - [ ] **Step 3: Implement the two warnings in `finalizeEstimate`**
@@ -359,14 +359,14 @@ Expected: FAIL
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test packages/download-core/test/download-size-warnings.test.js`
+Run: `node --test packages/extract-core/test/download-size-warnings.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/download-core/src/estimate.js packages/download-core/test/download-size-warnings.test.js
-git commit -m "feat(download-core): warn before large and slow downloads"
+git add packages/extract-core/src/estimate.js packages/extract-core/test/download-size-warnings.test.js
+git commit -m "feat(extract-core): warn before large and slow downloads"
 ```
 
 ---
@@ -374,8 +374,8 @@ git commit -m "feat(download-core): warn before large and slow downloads"
 ### Task 6: Raw passthrough planning
 
 **Files:**
-- Create: `packages/download-core/src/raw.js`
-- Test: `packages/download-core/test/raw-plan.test.js`
+- Create: `packages/extract-core/src/raw.js`
+- Test: `packages/extract-core/test/raw-plan.test.js`
 
 **Interfaces:**
 - Consumes: `partitionPruneCascade(parts, areaBBoxes, time, explicitPartitions) => { selected, stages }` from `partitions.js:353`; `enumeratePartitions` from the same module.
@@ -411,23 +411,23 @@ test('planRaw refuses an unsupported source kind with FORMAT_CAPABILITY', async 
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test packages/download-core/test/raw-plan.test.js`
+Run: `node --test packages/extract-core/test/raw-plan.test.js`
 Expected: FAIL — `raw.js` does not exist.
 
-- [ ] **Step 3: Implement `planRaw`, `rawEstimate` and `rawFormatDescriptor` in `packages/download-core/src/raw.js`**
+- [ ] **Step 3: Implement `planRaw`, `rawEstimate` and `rawFormatDescriptor` in `packages/extract-core/src/raw.js`**
 
 Supported source kinds: `parquet`, `parquet-set`, `hive`, `stac-geoparquet`. Part sizes come from `part.bytes` first, then one `HEAD` per sizeless part (each counted in `requests`); a `HEAD` that fails or omits `content-length` leaves that part's size `null` rather than throwing. Zip overhead per entry is computed from Task 1's record sizes for the sanitized name, plus the `ATTRIBUTION.txt` entry and the end records.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test packages/download-core/test/raw-plan.test.js`
+Run: `node --test packages/extract-core/test/raw-plan.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/download-core/src/raw.js packages/download-core/test/raw-plan.test.js
-git commit -m "feat(download-core): plan raw GeoParquet passthrough downloads"
+git add packages/extract-core/src/raw.js packages/extract-core/test/raw-plan.test.js
+git commit -m "feat(extract-core): plan raw GeoParquet passthrough downloads"
 ```
 
 ---
@@ -435,10 +435,10 @@ git commit -m "feat(download-core): plan raw GeoParquet passthrough downloads"
 ### Task 7: Raw passthrough execution
 
 **Files:**
-- Modify: `packages/download-core/src/raw.js`
-- Modify: `packages/download-core/src/download.js` (branch on `output.format === RAW_FORMAT_ID` before `engine.plan`)
-- Modify: `packages/download-core/src/index.js` (export `RAW_FORMAT_ID`, `rawFormatDescriptor`)
-- Test: `packages/download-core/test/raw-run.test.js`
+- Modify: `packages/extract-core/src/raw.js`
+- Modify: `packages/extract-core/src/download.js` (branch on `output.format === RAW_FORMAT_ID` before `engine.plan`)
+- Modify: `packages/extract-core/src/index.js` (export `RAW_FORMAT_ID`, `rawFormatDescriptor`)
+- Test: `packages/extract-core/test/raw-run.test.js`
 
 **Interfaces:**
 - Consumes: Task 2's `createZipWriter`, Task 6's `planRaw`/`rawEstimate`.
@@ -471,7 +471,7 @@ test('cancel() during copying aborts the in-flight fetch and the sink', async ()
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test packages/download-core/test/raw-run.test.js`
+Run: `node --test packages/extract-core/test/raw-run.test.js`
 Expected: FAIL
 
 - [ ] **Step 3: Implement `runRaw` and the `download()` branch**
@@ -480,14 +480,14 @@ Parts are fetched and written strictly sequentially — each response body is dr
 
 - [ ] **Step 4: Run the tests and the full suite**
 
-Run: `node --test packages/download-core/test/raw-run.test.js && npm test 2>&1 | tail -5`
+Run: `node --test packages/extract-core/test/raw-run.test.js && npm test 2>&1 | tail -5`
 Expected: new tests PASS; `npm test` at exactly the 4 baseline failures.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/download-core/src packages/download-core/test/raw-run.test.js
-git commit -m "feat(download-core): execute raw GeoParquet passthrough downloads"
+git add packages/extract-core/src packages/extract-core/test/raw-run.test.js
+git commit -m "feat(extract-core): execute raw GeoParquet passthrough downloads"
 ```
 
 ---
@@ -495,8 +495,8 @@ git commit -m "feat(download-core): execute raw GeoParquet passthrough downloads
 ### Task 8: Raw guard-rail warnings
 
 **Files:**
-- Modify: `packages/download-core/src/raw.js`
-- Test: `packages/download-core/test/raw-guardrails.test.js`
+- Modify: `packages/extract-core/src/raw.js`
+- Test: `packages/extract-core/test/raw-guardrails.test.js`
 
 **Interfaces:**
 - Produces: `raw-size-unknown` with FLAT fields `{ partsWithoutSize, partsTotal }`; `raw-no-pruning` with `{ basis }` where `basis` is `'parts declare no bbox'` or `'parts declare no interval'`. Flat, per ruling R8.
@@ -522,7 +522,7 @@ test('neither warning is a ceiling breach: the download still runs', async () =>
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test packages/download-core/test/raw-guardrails.test.js`
+Run: `node --test packages/extract-core/test/raw-guardrails.test.js`
 Expected: FAIL
 
 - [ ] **Step 3: Implement the two warnings in `rawEstimate`**
@@ -531,14 +531,14 @@ Expected: FAIL
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test packages/download-core/test/raw-guardrails.test.js`
+Run: `node --test packages/extract-core/test/raw-guardrails.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/download-core/src/raw.js packages/download-core/test/raw-guardrails.test.js
-git commit -m "feat(download-core): warn when raw sizes are unknown or pruning narrowed nothing"
+git add packages/extract-core/src/raw.js packages/extract-core/test/raw-guardrails.test.js
+git commit -m "feat(extract-core): warn when raw sizes are unknown or pruning narrowed nothing"
 ```
 
 ---
@@ -636,7 +636,7 @@ git commit -m "perf(format-gpkg): stream the database export"   # or: "docs(form
 **Files:**
 - Modify: `examples/download-demo/index.html:396-404` and the format picker
 - Modify: `examples/download-demo/verify.mjs`
-- Create: `packages/download-core/test/browser/raw-opfs.verify.mjs`
+- Create: `packages/extract-core/test/browser/raw-opfs.verify.mjs`
 
 **Interfaces:**
 - Consumes: `RAW_FORMAT_ID`, the new warning codes, `estimate()`'s `output` option.
@@ -670,12 +670,12 @@ Expected: PASS
 
 - [ ] **Step 5: Write the OPFS browser verifier**
 
-`packages/download-core/test/browser/raw-opfs.verify.mjs`, modelled on the existing `filesystem-sink.verify.mjs`: drives a real `parquet-raw` download into an OPFS writable and asserts the committed bytes, covering the disk-backed-sink ceiling path that `npm test` cannot reach.
+`packages/extract-core/test/browser/raw-opfs.verify.mjs`, modelled on the existing `filesystem-sink.verify.mjs`: drives a real `parquet-raw` download into an OPFS writable and asserts the committed bytes, covering the disk-backed-sink ceiling path that `npm test` cannot reach.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add examples/download-demo packages/download-core/test/browser
+git add examples/download-demo packages/extract-core/test/browser
 git commit -m "feat(download-demo): no default row cap, raw GeoParquet option, size warnings"
 ```
 
@@ -685,7 +685,7 @@ git commit -m "feat(download-demo): no default row cap, raw GeoParquet option, s
 
 **Files:**
 - Modify: `AGENTS.md` (recipes 3 and 4, the pitfalls list, the ceiling defaults)
-- Modify: `packages/download-core/README.md` (error codes, warning codes, formats, ceilings)
+- Modify: `packages/extract-core/README.md` (error codes, warning codes, formats, ceilings)
 - Modify: `packages/format-gpkg/README.md` (the measured `memoryFactor`)
 - Modify: `docs/verify-snippets.mjs`
 
@@ -698,7 +698,7 @@ Add a `parquet-raw` recipe under recipe 3; correct the ceiling defaults in recip
 
 - [ ] **Step 2: Update the two package READMEs**
 
-`download-core`: the new error code `FILTER_NO_MATCH`, the new warning codes, `effectiveCeiling`, `memoryFactor`, `parquet-raw`, `suggestedFormats` on `CEILING_EXCEEDED`, and the opt-in `zip-large.verify.mjs`. `format-gpkg`: the measured factor and the resulting practical size limit, linking issue #3 for what lifts it further.
+`extract-core`: the new error code `FILTER_NO_MATCH`, the new warning codes, `effectiveCeiling`, `memoryFactor`, `parquet-raw`, `suggestedFormats` on `CEILING_EXCEEDED`, and the opt-in `zip-large.verify.mjs`. `format-gpkg`: the measured factor and the resulting practical size limit, linking issue #3 for what lifts it further.
 
 - [ ] **Step 3: Add the new snippets to `docs/verify-snippets.mjs`**
 

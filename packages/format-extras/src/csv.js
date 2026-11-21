@@ -1,7 +1,7 @@
-// @cng/format-extras -- the `csv` FormatPlugin (design doc §2.3's format
+// @cngeo/format-extras -- the `csv` FormatPlugin (design doc §2.3's format
 // options table: `{ geometry?: 'wkt'|'drop' ('wkt'), delimiter?: string
 // (',') }`). Zero dependencies, streaming: a row is text the moment it
-// arrives, same as the `geojson` plugin in download-core itself.
+// arrives, same as the `geojson` plugin in extract-core itself.
 
 import { toGeoJsonGeometry, geometryToWkt } from './geometry.js';
 

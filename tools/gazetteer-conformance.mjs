@@ -22,7 +22,7 @@
 //    options object; a bare number is silently ignored.
 //  - parquet INT64 (row counts) decodes as BigInt; coerce with Number().
 
-import { normalizeName } from '@cng/spec';
+import { normalizeName } from '@cngeo/spec';
 
 let hyparquet;
 let compressors;

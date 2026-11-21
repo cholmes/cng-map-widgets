@@ -63,9 +63,9 @@ in `index.js` (which already imports both modules, keeping it cycle-free since
 parquet footers. Note `estimate` imported directly from `src/estimate.js` does
 not route; `index.js` is the public surface.
 
-**R6 — no cross-package imports in a `download-core` test.**
-The plan told `ceiling.test.js` to `import('@cng/format-gpkg')`.
-`download-core` does not depend on any format plugin, so that resolves only
+**R6 — no cross-package imports in a `extract-core` test.**
+The plan told `ceiling.test.js` to `import('@cngeo/format-gpkg')`.
+`extract-core` does not depend on any format plugin, so that resolves only
 via workspace hoisting. The "gpkg declares its factor" assertion lives in
 `format-gpkg`'s own suite.
 
@@ -179,7 +179,7 @@ The two remaining copies cannot be reduced within sql.js at all, so
 
 - **A real 4.4 GiB zip64 archive**, CRC-verified by both Python
   `zipfile.testzip()` and `unzip -t`. Run by hand via
-  `packages/download-core/test/zip-large.verify.mjs` (opt-in, not in
+  `packages/extract-core/test/zip-large.verify.mjs` (opt-in, not in
   `npm test`).
 - **The multi-file zip path against a live catalog** — FIRMS detections, 3
   hive partitions, 2.74 GiB, entry names `year=2022/detections.parquet`,
@@ -200,7 +200,7 @@ Two gating mistakes, both caught late:
   verifiers — so a `verify-snippets.mjs` regression introduced by registering
   `parquet-raw` sat on the branch for five tasks and was caught only because
   the docs task's brief required the verifier. **Any task touching
-  `download-core`'s public surface or the format registry should be gated on
+  `extract-core`'s public surface or the format registry should be gated on
   `node docs/verify-snippets.mjs` too.**
 - Three spec defects (R5, R8, and the `blobBytes`-on-a-buffering-format gap
   found by the whole-branch review) share one shape: a derived rule was

@@ -1,5 +1,5 @@
-// @cng/format-gpkg -- pinned sql.js CDN URL + a test-injection seam, the
-// same pattern download-core/src/cdn.js uses for hyparquet-writer (design
+// @cngeo/format-gpkg -- pinned sql.js CDN URL + a test-injection seam, the
+// same pattern extract-core/src/cdn.js uses for hyparquet-writer (design
 // doc §4.2). sql.js's `dist/sql-wasm.js` is a UMD/Emscripten factory, not
 // native ESM, but jsdelivr's `+esm` endpoint wraps it into one (measured:
 // `export { Module, default }`, the factory as `default` -- see
@@ -7,7 +7,7 @@
 // points the factory at the *same* pinned version's `dist/` so it fetches
 // the matching `.wasm` binary, exactly sql.js's documented browser usage.
 //
-// DEVIATION (documented, same reason as download-core/src/cdn.js): plain
+// DEVIATION (documented, same reason as extract-core/src/cdn.js): plain
 // Node ESM cannot `import()` an absolute https: URL, so this package's
 // tests inject the npm-installed `sql.js` (a devDependency) via
 // `setSqlJsModule` instead of exercising this CDN path directly.

@@ -1,4 +1,4 @@
-// @cng/format-extras -- the `esrijson` FormatPlugin: an Esri REST
+// @cngeo/format-extras -- the `esrijson` FormatPlugin: an Esri REST
 // FeatureSet JSON document (`{ geometryType, spatialReference, fields,
 // features: [{ attributes, geometry }] }`), the format ArcGIS Online, the
 // ArcGIS REST API, and ArcGIS Pro/Field Maps' "Add Data" accept directly.
@@ -6,7 +6,7 @@
 // nearly free" scope note. NOT streaming: a FeatureSet is one JSON
 // document (ArcGIS's own REST API returns it as a single object, never
 // newline-delimited), so this plugin buffers and emits once in `close()`,
-// the same shape as `@cng/format-flatgeobuf`.
+// the same shape as `@cngeo/format-flatgeobuf`.
 
 import { toGeoJsonGeometry, esriRingsOf } from './geometry.js';
 
@@ -51,7 +51,7 @@ function esriGeometryOf(geometry) {
     case 'MultiPolygon':
       return { rings: esriRingsOf(geometry) };
     default:
-      throw new Error(`@cng/format-extras: unsupported geometry type "${geometry.type}" for EsriJSON`);
+      throw new Error(`@cngeo/format-extras: unsupported geometry type "${geometry.type}" for EsriJSON`);
   }
 }
 
@@ -90,8 +90,8 @@ export function createEsriJsonFormat() {
     estimateBytes: estimateEsriJsonBytes,
     async open(ctx) {
       if (ctx.crs !== 'EPSG:4326' && ctx.crs !== 'OGC:CRS84' && ctx.crs) {
-        const { CngError } = await import('@cng/spec');
-        throw new CngError(`@cng/format-extras's esrijson writer only writes EPSG:4326; got crs "${ctx.crs}".`, 'FORMAT_CAPABILITY', { context: { crs: ctx.crs } });
+        const { CngError } = await import('@cngeo/spec');
+        throw new CngError(`@cngeo/format-extras's esrijson writer only writes EPSG:4326; got crs "${ctx.crs}".`, 'FORMAT_CAPABILITY', { context: { crs: ctx.crs } });
       }
       const attrColumns = ctx.schema.filter((c) => c.name !== ctx.geometryColumn);
       const features = [];
@@ -107,9 +107,9 @@ export function createEsriJsonFormat() {
               const esriType = ESRI_GEOMETRY_TYPE[geom.type];
               if (geometryType === null) geometryType = esriType;
               else if (esriType !== geometryType) {
-                const { CngError } = await import('@cng/spec');
+                const { CngError } = await import('@cngeo/spec');
                 throw new CngError(
-                  `@cng/format-extras's esrijson writer: an Esri FeatureSet has one geometryType for the whole set; this result mixes ${geometryType} with ${esriType}.`,
+                  `@cngeo/format-extras's esrijson writer: an Esri FeatureSet has one geometryType for the whole set; this result mixes ${geometryType} with ${esriType}.`,
                   'FORMAT_CAPABILITY',
                   { context: { first: geometryType, conflicting: esriType } },
                 );

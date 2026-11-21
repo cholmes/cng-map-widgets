@@ -1,4 +1,4 @@
-// @cng/upload-core -- the repair pipeline (design doc §1.2's `AreaRepair`
+// @cngeo/upload-core -- the repair pipeline (design doc §1.2's `AreaRepair`
 // taxonomy, §3.3's `UploadProvenance.repairs`).
 //
 // Format-agnostic: it runs on plain GeoJSON `Feature`-shaped objects
@@ -26,9 +26,9 @@
 // design doc's taxonomy. "Coordinate precision truncation" from the task
 // description is intentionally NOT implemented here: design doc §1.3 is
 // explicit that precision trimming happens "on serialization only" (i.e.
-// in a format writer, @cng/download-core's job), not on upload.
+// in a format writer, @cngeo/extract-core's job), not on upload.
 
-/** @typedef {import('@cng/spec').AreaGeometry} AreaGeometry */
+/** @typedef {import('@cngeo/spec').AreaGeometry} AreaGeometry */
 
 const MIN_RING_POINTS = 4; // 3 distinct vertices + the closing duplicate
 
@@ -58,7 +58,7 @@ function signedRingArea(ring) {
 function repairRing(ring, isExterior, counters) {
   if (!Array.isArray(ring) || ring.length === 0) return null;
 
-  // 1. Strip Z (and any further dimensions): every @cng geometry is 2D.
+  // 1. Strip Z (and any further dimensions): every @cngeo geometry is 2D.
   let hadZ = false;
   let pts = ring.map((pt) => {
     if (pt.length > 2) hadZ = true;
@@ -158,7 +158,7 @@ function repairPolygonal(geometry, counters) {
  * @param {ReadonlyArray<{ geometry?: unknown, type?: string, properties?: Record<string, unknown> }>} rawFeatures
  * @returns {{
  *   features: Array<{ geometry: AreaGeometry, properties: Record<string, unknown> }>,
- *   repairs: import('@cng/spec').AreaRepair[],
+ *   repairs: import('@cngeo/spec').AreaRepair[],
  * }}
  */
 export function repairFeatures(rawFeatures) {
@@ -199,7 +199,7 @@ export function repairFeatures(rawFeatures) {
     kept.push({ geometry: repaired, properties });
   }
 
-  /** @type {import('@cng/spec').AreaRepair[]} */
+  /** @type {import('@cngeo/spec').AreaRepair[]} */
   const repairs = [];
   if (droppedNonAreal > 0) {
     repairs.push({ kind: 'dropped-non-areal', count: droppedNonAreal, types: [...droppedNonArealTypes] });

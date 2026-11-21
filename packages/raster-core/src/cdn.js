@@ -1,5 +1,5 @@
-// @cng/raster-core -- pinned CDN dependency URLs + the host-injection seam,
-// mirroring @cng/download-core's src/cdn.js exactly (design doc §4.2: exact
+// @cngeo/raster-core -- pinned CDN dependency URLs + the host-injection seam,
+// mirroring @cngeo/extract-core's src/cdn.js exactly (design doc §4.2: exact
 // pinned URLs, never a bare specifier, never a range).
 //
 // Why jsdelivr's `+esm` endpoint and not `geotiff@2.1.3/dist-module/geotiff.js`:
@@ -9,9 +9,9 @@
 // absolute, version-pinned sibling URLs on the same CDN
 // (`/npm/@petamoriken/float16@3.8.4/+esm`), so the whole graph resolves with
 // no import map and every URL still names an exact version. This is the same
-// reason download-core pins hyparquet-compressors and hyparquet-writer via
+// reason extract-core pins hyparquet-compressors and hyparquet-writer via
 // `+esm`. §4.2's "esm.sh rewrites and re-bundles" objection does not apply:
-// geotiff is not shared with any other @cng package, so a rewritten copy
+// geotiff is not shared with any other @cngeo package, so a rewritten copy
 // cannot produce a duplicate-instance problem.
 //
 // Measured wire weight (gzip -9 of the served bundles, 2026-11-12):

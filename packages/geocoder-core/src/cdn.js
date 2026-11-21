@@ -1,8 +1,8 @@
-// @cng/geocoder-core -- pinned CDN dependency URLs.
+// @cngeo/geocoder-core -- pinned CDN dependency URLs.
 //
 // Design doc §4.2 requires externalizing hyparquet to a pinned, *exact*
 // CDN URL rather than inlining it, and §4.2's "version-unification
-// obligation" requires one hyparquet version per @cng release train.
+// obligation" requires one hyparquet version per @cngeo release train.
 //
 // VERSION-UNIFICATION NOTE (per task instructions): the design doc's own
 // package.json example pins hyparquet@1.26.0 / hyparquet-compressors@1.1.1
@@ -36,7 +36,7 @@ export const CDN = {
 // So a host that already has hyparquet may hand its own modules in, once,
 // before the first `load()`/`select()`. The CDN path stays the default and
 // is never bypassed unless a host calls this. The same seam exists in
-// `@cng/download-core`; a host with both packages calls both.
+// `@cngeo/extract-core`; a host with both packages calls both.
 /** @type {{ hyparquet: any, compressors: any } | null} */
 let injected = null;
 

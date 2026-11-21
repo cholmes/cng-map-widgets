@@ -1,6 +1,6 @@
-// @cng/geocoder-core -- public entry point.
+// @cngeo/geocoder-core -- public entry point.
 //
-// Same packaging deviation as @cng/spec (see its index.js): plain ESM +
+// Same packaging deviation as @cngeo/spec (see its index.js): plain ESM +
 // JSDoc, no build step, for this experiment phase. hyparquet itself is
 // still externalized to a pinned, exact CDN URL (design doc §4.2) via
 // ./cdn.js -- that part of the design is honored even without a bundler.

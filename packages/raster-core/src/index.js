@@ -1,6 +1,6 @@
-// @cng/raster-core -- public entry point.
+// @cngeo/raster-core -- public entry point.
 //
-// Plain ESM + JSDoc, no build step, exactly like the other @cng packages
+// Plain ESM + JSDoc, no build step, exactly like the other @cngeo packages
 // in this repo. geotiff.js (and, only for ZSTD sources, zstddec) load
 // lazily from exact pinned CDN URLs -- see src/cdn.js -- or are injected by
 // a host that already ships them.
@@ -33,15 +33,15 @@ import { APPROX_BYTES } from './cdn.js';
 
 /**
  * The deferred-plugin descriptor, in the `{ name, approxBytes, load }`
- * shape download-core's `registerLazyFormat` amendment established: a host
+ * shape extract-core's `registerLazyFormat` amendment established: a host
  * can advertise "GeoTIFF clip (+~28 KB)" in a format picker and only pay
  * for geotiff.js when the user picks it.
  *
- * Raster is NOT registered as a download-core `FormatPlugin`, and that is a
+ * Raster is NOT registered as a extract-core `FormatPlugin`, and that is a
  * design decision rather than an omission: a `FormatPlugin` consumes
  * `FeatureBatch`es (rows + WKB geometry) from a parquet engine, and a clip
  * has no rows. The raster path is a second pipeline that reuses
- * download-core's *contracts* -- `Bounded`, the ceiling/refusal gate, the
+ * extract-core's *contracts* -- `Bounded`, the ceiling/refusal gate, the
  * `Sink` interface, the handle state machine -- rather than its row engine.
  */
 export const rasterClipPlugin = {

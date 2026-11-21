@@ -1,14 +1,14 @@
 // Real end-to-end integration test (the one network-touching test this
-// package allows, same policy as download-core/test/integration.test.js):
+// package allows, same policy as extract-core/test/integration.test.js):
 // download the FTW Liechtenstein field-boundary slice -- the project's
 // established small-live-fixture -- straight to a .gpkg file through
-// @cng/download-core's real `download()` pipeline (resolveDataset ->
+// @cngeo/extract-core's real `download()` pipeline (resolveDataset ->
 // estimate -> hyparquet engine -> this package's `gpkg` FormatWriter),
 // then validate the file with `ogrinfo -al -so` and DuckDB's `ST_Read`,
 // asserting both attributes AND geometry.
 //
 // Skips cleanly (not a failure) if the network or `duckdb`/`ogrinfo` are
-// unavailable, same policy as download-core's own integration test.
+// unavailable, same policy as extract-core's own integration test.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,10 +18,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
-import { download, registerFormat, setHyparquetModules } from '@cng/download-core';
+import { download, registerFormat, setHyparquetModules } from '@cngeo/extract-core';
 import { initializedSqlJs } from './helpers/sqljs-setup.js';
 import { createGpkgFormat } from '../src/gpkg-writer.js';
-import { memorySink } from '@cng/download-core';
+import { memorySink } from '@cngeo/extract-core';
 
 setHyparquetModules({ hyparquet, compressors });
 

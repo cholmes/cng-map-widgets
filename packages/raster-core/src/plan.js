@@ -1,7 +1,7 @@
-// @cng/raster-core -- band resolution, window math, overview choice, and
+// @cngeo/raster-core -- band resolution, window math, overview choice, and
 // the pre-download estimate.
 //
-// The estimate contract is deliberately download-core's: `Bounded`
+// The estimate contract is deliberately extract-core's: `Bounded`
 // (min/max/estimate/exact), a `prune` trace, `warnings`, and a `ceiling`
 // block with `exceeded` + `breaches`, so one UI can render either. The
 // raster numbers that matter are different, though:
@@ -14,7 +14,7 @@
 // That is the opposite of the vector case, where rows are the uncertain
 // quantity, and it makes the raster refusal path unusually trustworthy.
 
-import { CngError } from '@cng/spec';
+import { CngError } from '@cngeo/spec';
 import { projectBbox } from './crs.js';
 import { DTYPE_BYTES, openRaster, tileBytes } from './source.js';
 
@@ -229,7 +229,7 @@ export function chooseLevel(source, bbox4326, resolution) {
  * per distinct file), never pixels.
  *
  * @param {object} descriptor from describeRasterDataset/describeRasterUrl
- * @param {import('@cng/spec').Area|null} area
+ * @param {import('@cngeo/spec').Area|null} area
  * @param {{ bands?: readonly string[], resolution?: 'native'|{maxPixels?:number, level?:number}, compression?: 'none'|'deflate', bbox?: readonly number[] }} filter
  * @param {{ fetch?: typeof fetch, signal?: AbortSignal, ceiling?: object, sources?: Map<string, object> }} [options]
  */

@@ -1,4 +1,4 @@
-// @cng/spec -- name normalization (design doc §3.2 `normalize`, §6.2
+// @cngeo/spec -- name normalization (design doc §3.2 `normalize`, §6.2
 // `name_norm`).
 //
 // Must agree with the index builder's `name_norm`: NFD -> strip combining

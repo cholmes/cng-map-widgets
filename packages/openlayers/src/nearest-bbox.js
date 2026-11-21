@@ -1,11 +1,11 @@
-// @cng/openlayers -- pure antimeridian fit-selection logic, factored out
+// @cngeo/openlayers -- pure antimeridian fit-selection logic, factored out
 // of fit-bounds.js so it has no `ol` import and is directly unit-testable
-// (mirrors @cng/maplibre's fit-bounds.js, which needed no extraction
+// (mirrors @cngeo/maplibre's fit-bounds.js, which needed no extraction
 // because MapLibre's own fitBounds takes plain arrays; OL's `view.fit()`
 // needs a projected extent, which is why this package splits the pure
 // selection from the OL-calling half).
 
-/** @typedef {import('@cng/spec').BBox} BBox */
+/** @typedef {import('@cngeo/spec').BBox} BBox */
 
 /**
  * Pick the bbox (from `Area.bboxes`, 1 or 2 entries per design doc §1.5)

@@ -1,4 +1,4 @@
-// @cng/geocoder-core -- the ranking total-order + result-diversity logic
+// @cngeo/geocoder-core -- the ranking total-order + result-diversity logic
 // (design doc §3.2 "The ranking rule, normatively", amended 2026-11-12 on
 // user feedback against the Overture-scale index -- see the amendment's
 // measured-examples table for why the order below is what it is).
@@ -6,9 +6,9 @@
 // Pure functions, no I/O, no DOM: easy to unit test independently of the
 // index loader.
 
-import { bboxesIntersect, bboxContainsPoint, bboxCenter, scaleBBox } from '@cng/spec';
+import { bboxesIntersect, bboxContainsPoint, bboxCenter, scaleBBox } from '@cngeo/spec';
 
-/** @typedef {import('@cng/spec').BBox} BBox */
+/** @typedef {import('@cngeo/spec').BBox} BBox */
 /** @typedef {'exact'|'prefix'|'word-prefix'|'substring'|'fuzzy'} MatchClass */
 /** @typedef {'inside'|'overlap'|'near'|'outside'} ViewportRank */
 

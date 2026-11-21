@@ -65,13 +65,13 @@ renders the attribution line, with zero console errors.
 <!-- Plain ESM, no bundler. Nothing is on npm yet, so these point at this
      repo's own packages/. When they publish, this block is the only thing
      that changes: swap each line for
-     https://cdn.jsdelivr.net/npm/@cng/<name>@0.2.0/src/index.js -->
+     https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.2.0/src/index.js -->
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec": "../../packages/spec/src/index.js",
-    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cng/maplibre": "../../packages/maplibre/src/index.js"
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cngeo/maplibre": "../../packages/maplibre/src/index.js"
   }
 }
 </script>
@@ -80,8 +80,8 @@ renders the attribution line, with zero console errors.
 <body>
 <div id="map"></div>
 <script type="module">
-import { Geocoder } from '@cng/geocoder-core';
-import { GeocoderControl } from '@cng/maplibre';
+import { Geocoder } from '@cngeo/geocoder-core';
+import { GeocoderControl } from '@cngeo/maplibre';
 
 const map = new maplibregl.Map({
   container: 'map',
@@ -103,7 +103,7 @@ const geocoder = new Geocoder({
 
 geocoder.on('select', ({ result, area }) => {
   console.log(result.name, area.bbox, area.vertexCount.display);
-  // `area` is now ready to hand to @cng/download-core.
+  // `area` is now ready to hand to @cngeo/extract-core.
 });
 
 // The control owns the combobox, the outline layer, fitBounds and the
@@ -143,19 +143,19 @@ build:
 ```html
 <!-- Map EVERY package you need transitively, not just the ones you import
      by name: these packages cross-import each other by bare specifier
-     (@cng/spec especially), and an unmapped specifier is a runtime failure
+     (@cngeo/spec especially), and an unmapped specifier is a runtime failure
      with no build step to catch it. An import map is strict JSON -- a //
      comment in this block stops it parsing and breaks every import. -->
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec":            "https://cholmes.github.io/cng-map-widgets/packages/spec/src/index.js",
-    "@cng/geocoder-core":   "https://cholmes.github.io/cng-map-widgets/packages/geocoder-core/src/index.js",
-    "@cng/upload-core":     "https://cholmes.github.io/cng-map-widgets/packages/upload-core/src/index.js",
-    "@cng/download-core":   "https://cholmes.github.io/cng-map-widgets/packages/download-core/src/index.js",
-    "@cng/raster-core":     "https://cholmes.github.io/cng-map-widgets/packages/raster-core/src/index.js",
-    "@cng/maplibre":        "https://cholmes.github.io/cng-map-widgets/packages/maplibre/src/index.js",
-    "@cng/openlayers":      "https://cholmes.github.io/cng-map-widgets/packages/openlayers/src/index.js"
+    "@cngeo/spec":            "https://cholmes.github.io/cng-map-widgets/packages/spec/src/index.js",
+    "@cngeo/geocoder-core":   "https://cholmes.github.io/cng-map-widgets/packages/geocoder-core/src/index.js",
+    "@cngeo/upload-core":     "https://cholmes.github.io/cng-map-widgets/packages/upload-core/src/index.js",
+    "@cngeo/extract-core":   "https://cholmes.github.io/cng-map-widgets/packages/extract-core/src/index.js",
+    "@cngeo/raster-core":     "https://cholmes.github.io/cng-map-widgets/packages/raster-core/src/index.js",
+    "@cngeo/maplibre":        "https://cholmes.github.io/cng-map-widgets/packages/maplibre/src/index.js",
+    "@cngeo/openlayers":      "https://cholmes.github.io/cng-map-widgets/packages/openlayers/src/index.js"
   }
 }
 </script>
@@ -180,7 +180,7 @@ https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.2.0/packages/geocoder-cor
 
 There is no good path here until this is published. **`npm i` cannot install a
 subdirectory of a git repo**, so `npm i github:cholmes/cng-map-widgets` cannot
-give you `@cng/geocoder-core`; the repo is a workspace monorepo and its
+give you `@cngeo/geocoder-core`; the repo is a workspace monorepo and its
 packages are not separately fetchable. Your options are to clone and
 `npm link` the packages you need, or to vendor `packages/` into your tree.
 
@@ -193,8 +193,8 @@ has hyparquet would otherwise run a second copy off the network:
 import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import * as writer from 'hyparquet-writer';
-import { setHyparquetModules as setGeocoderModules } from '@cng/geocoder-core';
-import { setHyparquetModules as setDownloadModules } from '@cng/download-core';
+import { setHyparquetModules as setGeocoderModules } from '@cngeo/geocoder-core';
+import { setHyparquetModules as setDownloadModules } from '@cngeo/extract-core';
 
 setGeocoderModules({ hyparquet, compressors });
 setDownloadModules({ hyparquet, compressors, writer });   // `writer` only for GeoParquet output
@@ -219,14 +219,14 @@ Pinned versions: `hyparquet@1.33.0`, `hyparquet-compressors@1.1.3`,
                                     │  HTTP range reads, no server
     THE WIDGETS (plain ESM, zero build)
     ┌───────────────────────────────▼──────────────────────────────────┐
-    │  @cng/geocoder-core    @cng/upload-core    (a draw tool)         │
+    │  @cngeo/geocoder-core    @cngeo/upload-core    (a draw tool)         │
     │  names index → ranked   GeoJSON file →       map draw →          │
     │  results → geometry     repair →                                 │
     │          │                      │                    │           │
     │          └──────────►  A r e a  ◄────────────────────┘           │
     │                           │        ← the only coupling           │
     │                           ▼                                      │
-    │               @cng/download-core    ◄── DatasetDescriptor        │
+    │               @cngeo/extract-core    ◄── DatasetDescriptor        │
     │               resolve / prune /          + FilterSpec            │
     │               estimate / download        (plain JSON, also the   │
     │                           │               QGIS-shared artifact)  │
@@ -235,8 +235,8 @@ Pinned versions: `hyparquet@1.33.0`, `hyparquet-compressors@1.1.3`,
     │      geojson writer  geoparquet     format plugins               │
     │        (in core)      (in core)     (lazy, weight shown)         │
     │                                                                  │
-    │  @cng/spec   the Area + error taxonomy + pure geo helpers        │
-    │  @cng/maplibre · @cng/openlayers   thin UI adapters              │
+    │  @cngeo/spec   the Area + error taxonomy + pure geo helpers        │
+    │  @cngeo/maplibre · @cngeo/openlayers   thin UI adapters              │
     └───────────────────────────────┬──────────────────────────────────┘
                                     │
     CONSUMING APPS
@@ -271,12 +271,12 @@ Three ideas carry the design:
 
 | package | what it does | size (gz, comments stripped) |
 |---|---|---|
-| [`@cng/spec`](packages/spec/README.md) | The `Area` contract, the `CngError` taxonomy, and pure helpers: bbox + antimeridian split, Visvalingam simplify (sync + chunked async), WKB → GeoJSON, name normalization. **No I/O, no dependencies.** | 6.2 KiB |
-| [`@cng/geocoder-core`](packages/geocoder-core/README.md) | Manifest + index load (full or HTTP-range), prefix search, ranking with result diversity, geometry resolution → `Area`. No DOM. | 11.0 KiB |
-| [`@cng/upload-core`](packages/upload-core/README.md) | GeoJSON file/drop/paste → the same `Area`, with every repair reported. | 4.3 KiB |
-| [`@cng/download-core`](packages/download-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 19.8 KiB |
-| [`@cng/maplibre`](packages/maplibre/README.md) | MapLibre adapter: search combobox control, `Area` outline layer, viewport provider, antimeridian-aware fitBounds. | 4.3 KiB |
-| [`@cng/openlayers`](packages/openlayers/README.md) | The same five things in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. | 5.1 KiB |
+| [`@cngeo/spec`](packages/spec/README.md) | The `Area` contract, the `CngError` taxonomy, and pure helpers: bbox + antimeridian split, Visvalingam simplify (sync + chunked async), WKB → GeoJSON, name normalization. **No I/O, no dependencies.** | 6.2 KiB |
+| [`@cngeo/geocoder-core`](packages/geocoder-core/README.md) | Manifest + index load (full or HTTP-range), prefix search, ranking with result diversity, geometry resolution → `Area`. No DOM. | 11.0 KiB |
+| [`@cngeo/upload-core`](packages/upload-core/README.md) | GeoJSON file/drop/paste → the same `Area`, with every repair reported. | 4.3 KiB |
+| [`@cngeo/extract-core`](packages/extract-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 19.8 KiB |
+| [`@cngeo/maplibre`](packages/maplibre/README.md) | MapLibre adapter: search combobox control, `Area` outline layer, viewport provider, antimeridian-aware fitBounds. | 4.3 KiB |
+| [`@cngeo/openlayers`](packages/openlayers/README.md) | The same five things in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. | 5.1 KiB |
 
 Output-format plugins. Each registers itself with its **weight declared up
 front**, and only fetches its implementation if a user actually picks that
@@ -285,16 +285,16 @@ charge nothing until then.
 
 | package | format | its own weight |
 |---|---|---|
-| [`@cng/format-gpkg`](packages/format-gpkg/README.md) | GeoPackage (a hand-written SQLite vector-features profile over sql.js) | 4.7 KiB + ~340 KB sql.js on first use |
-| [`@cng/format-shapefile`](packages/format-shapefile/README.md) | Shapefile `.shp.zip` — zero dependencies, no wasm, with Shapefile's real limits enforced | 6.4 KiB |
-| [`@cng/format-flatgeobuf`](packages/format-flatgeobuf/README.md) | FlatGeobuf, via the official package's GeoJSON serializer | 1.8 KiB + ~10 KB on first use |
-| [`@cng/format-extras`](packages/format-extras/README.md) | CSV (attributes + WKT) and Esri JSON — cheap enough to register eagerly | 3.3 KiB |
+| [`@cngeo/format-gpkg`](packages/format-gpkg/README.md) | GeoPackage (a hand-written SQLite vector-features profile over sql.js) | 4.7 KiB + ~340 KB sql.js on first use |
+| [`@cngeo/format-shapefile`](packages/format-shapefile/README.md) | Shapefile `.shp.zip` — zero dependencies, no wasm, with Shapefile's real limits enforced | 6.4 KiB |
+| [`@cngeo/format-flatgeobuf`](packages/format-flatgeobuf/README.md) | FlatGeobuf, via the official package's GeoJSON serializer | 1.8 KiB + ~10 KB on first use |
+| [`@cngeo/format-extras`](packages/format-extras/README.md) | CSV (attributes + WKT) and Esri JSON — cheap enough to register eagerly | 3.3 KiB |
 
 And one package that is not about vectors at all:
 
 | package | what it does | size |
 |---|---|---|
-| [`@cng/raster-core`](packages/raster-core/README.md) | Clip a window out of a remote Cloud-Optimized GeoTIFF in the browser, band-subset it from STAC metadata, and save a valid GeoTIFF — windowed range reads, an exact pre-download size estimate, a memory ceiling. | 11.8 KiB |
+| [`@cngeo/raster-core`](packages/raster-core/README.md) | Clip a window out of a remote Cloud-Optimized GeoTIFF in the browser, band-subset it from STAC metadata, and save a valid GeoTIFF — windowed range reads, an exact pre-download size estimate, a memory ceiling. | 11.8 KiB |
 
 Sizes are `cat src/*.js | gzip -9` with comments stripped — the honest stand-in
 for the minified build that does not exist yet. Every core package is inside
@@ -422,27 +422,27 @@ zero-build consumption (design doc §4.4):
 
 Verified working, against live published data, as of 2026-11-12:
 
-- **`@cng/spec`** — `Area` build/validate/round-trip, antimeridian split,
+- **`@cngeo/spec`** — `Area` build/validate/round-trip, antimeridian split,
   sync and async simplification, WKB decode.
-- **`@cng/geocoder-core`** — full-load and range index paths, ranking with
+- **`@cngeo/geocoder-core`** — full-load and range index paths, ranking with
   dedupe and viewport boost, `select()` at ADM0/1/2 including the
   `geometry_ref` fast path and the ADM0 join-on-country special case,
   progressive display→full upgrade, two-wave search against a
   `prominent_index`.
-- **`@cng/upload-core`** — GeoJSON read, the full repair pipeline,
+- **`@cngeo/upload-core`** — GeoJSON read, the full repair pipeline,
   multi-feature collect, every refusal path.
-- **`@cng/download-core`** — single-file, hive-partitioned and
+- **`@cngeo/extract-core`** — single-file, hive-partitioned and
   STAC-GeoParquet sources resolved from collection JSON; the pruning cascade
   (27 FIRMS files → 1 on a time filter); estimates; the ceiling refusal and
   `acceptCeiling()`; GeoJSON and GeoParquet output with a GeoParquet 1.1
   covering; real downloads from FTW, FIRMS and Sentinel-2.
-- **`@cng/maplibre` / `@cng/openlayers`** — the combobox control, outline
+- **`@cngeo/maplibre` / `@cngeo/openlayers`** — the combobox control, outline
   layer with a filter-geometry ghost, antimeridian fit, and (OpenLayers) the
   4326 ⇄ 3857 bridge.
 
 Also landed and documented in their own READMEs: the four output-format
 plugins (GeoPackage, Shapefile, FlatGeobuf, CSV/Esri JSON) and
-`@cng/raster-core`'s COG clip-and-download.
+`@cngeo/raster-core`'s COG clip-and-download.
 
 Not built: exact `clip`, a DuckDB engine, multi-source search, the published
 JSON Schemas, and any build step at all (no `dist/`, no minification, no

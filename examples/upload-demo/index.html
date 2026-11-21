@@ -33,20 +33,20 @@
   own packages/ since nothing is published yet). `ol` is this package's
   peer dependency, loaded from a single pinned, exact jsdelivr version
   via the "ol/" prefix mapping (design doc §4.2: never a floating
-  specifier) -- every `import ... from 'ol/xxx.js'` inside @cng/openlayers
+  specifier) -- every `import ... from 'ol/xxx.js'` inside @cngeo/openlayers
   and in this page resolves through this one entry. `rbush` is `ol`'s own
   transitive dependency (ol/source/Vector.js's spatial index), not a
   cng one -- pulled pre-bundled (its own `quickselect` dependency
   included) via jsdelivr's `+esm` endpoint, same technique
-  @cng/geocoder-core's cdn.js already uses for hyparquet-compressors.
+  @cngeo/geocoder-core's cdn.js already uses for hyparquet-compressors.
 -->
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec": "../../packages/spec/src/index.js",
-    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cng/upload-core": "../../packages/upload-core/src/index.js",
-    "@cng/openlayers": "../../packages/openlayers/src/index.js",
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cngeo/upload-core": "../../packages/upload-core/src/index.js",
+    "@cngeo/openlayers": "../../packages/openlayers/src/index.js",
     "ol/": "https://cdn.jsdelivr.net/npm/ol@10.11.0/",
     "rbush": "https://cdn.jsdelivr.net/npm/rbush@4.0.1/+esm"
   }
@@ -64,9 +64,9 @@
 </div>
 
 <script type="module">
-import { Geocoder } from '@cng/geocoder-core';
-import { areaFromFile, attachDropTarget } from '@cng/upload-core';
-import { GeocoderControl, addAreaLayer } from '@cng/openlayers';
+import { Geocoder } from '@cngeo/geocoder-core';
+import { areaFromFile, attachDropTarget } from '@cngeo/upload-core';
+import { GeocoderControl, addAreaLayer } from '@cngeo/openlayers';
 
 import Map from 'ol/Map.js';
 import View from 'ol/View.js';
@@ -112,7 +112,7 @@ const map = new Map({
   view: new View({ center: fromLonLat([-121.9, 37.9]), zoom: 7 }),
 });
 
-// -- Geocoder (search) half: proves @cng/openlayers' GeocoderControl +
+// -- Geocoder (search) half: proves @cngeo/openlayers' GeocoderControl +
 // projection bridge against the same gazetteer geocoder-demo's MapLibre
 // version uses.
 //

@@ -1,11 +1,11 @@
-// @cng/format-gpkg -- the `gpkg` FormatPlugin (download-core's registry
+// @cngeo/format-gpkg -- the `gpkg` FormatPlugin (extract-core's registry
 // contract, design doc §3.4/§2.3). Hand-writes the GeoPackage "vector
 // features" profile's required tables with sql.js (a SQLite-to-wasm
 // build), rather than driving a full GDAL build -- the O5 decision this
 // package resolves. See README.md for the measured weight and what a
 // consumer gives up versus the gdal3.js path.
 //
-// NOT streaming (`streaming: false`, same reason as download-core's own
+// NOT streaming (`streaming: false`, same reason as extract-core's own
 // `geoparquet` plugin): rows ARE inserted into the open sql.js database
 // as each `writeBatch` arrives (step 1 of GitHub issue #3 -- see below),
 // but `Database.export()` still serializes the *entire* in-memory
@@ -50,7 +50,7 @@ const SQLITE_TYPE_MAP = {
   int16: 'SMALLINT',
   int32: 'MEDIUMINT',
   int64: 'INTEGER', // GeoPackage's "INTEGER" affinity is 64-bit, per the spec's data type list
-  uint8: 'SMALLINT', // widened by one step, same reasoning as download-core's geoparquet.js TYPE_MAP: hold the full unsigned range in the next signed affinity up
+  uint8: 'SMALLINT', // widened by one step, same reasoning as extract-core's geoparquet.js TYPE_MAP: hold the full unsigned range in the next signed affinity up
   uint16: 'MEDIUMINT',
   uint32: 'INTEGER',
   uint64: 'INTEGER', // best-effort: a uint64 > 2^63-1 would still overflow; no real dataset here carries one
@@ -130,9 +130,9 @@ export function createGpkgFormat(SQL) {
       const layerName = ctx.options?.layerName || 'features';
       const srsId = (ctx.crs === 'EPSG:4326' || ctx.crs === 'OGC:CRS84' || !ctx.crs) ? 4326 : null;
       if (srsId === null) {
-        const { CngError } = await import('@cng/spec');
+        const { CngError } = await import('@cngeo/spec');
         throw new CngError(
-          `@cng/format-gpkg only writes EPSG:4326/OGC:CRS84 geometry (GeoPackage's gpkg_spatial_ref_sys is written with that single row); got crs "${ctx.crs}".`,
+          `@cngeo/format-gpkg only writes EPSG:4326/OGC:CRS84 geometry (GeoPackage's gpkg_spatial_ref_sys is written with that single row); got crs "${ctx.crs}".`,
           'FORMAT_CAPABILITY',
           { context: { crs: ctx.crs } },
         );

@@ -128,7 +128,7 @@ if ('assets' in parsed.features[0].properties) throw new Error('Expected the hea
 console.log('Confirmed: `assets` column excluded by default.');
 
 // --- Scenario C: the same query to GeoParquet. Exercises two real bugs
-// found and fixed in download-core while building this page: (1) a
+// found and fixed in extract-core while building this page: (1) a
 // GeoParquet-2.0 source hands back already-decoded geometry objects, which
 // the geoparquet writer used to push straight into its own byte column;
 // (2) s2-stac-geoparquet's `_hilbert` column is `uint32` with real values

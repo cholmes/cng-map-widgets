@@ -1,21 +1,21 @@
-# @cng/spec
+# @cngeo/spec
 
-The shared contracts every other `@cng` package speaks, plus the pure geo
+The shared contracts every other `@cngeo` package speaks, plus the pure geo
 helpers they all need. **No I/O, no DOM, no dependencies** — `fetch` is never
 called from this package, and nothing here knows what a map is.
 
 Three things live here:
 
 1. **The `Area`** — the object a geocoder selection, a GeoJSON upload or a map
-   draw tool all produce, and the only thing `@cng/download-core` consumes.
+   draw tool all produce, and the only thing `@cngeo/extract-core` consumes.
    This is the seam that makes the widgets composable.
 2. **The error taxonomy** — one `CngError` class with a stable string `code`.
 3. **Pure functions** — bbox math with real antimeridian handling, Visvalingam
    simplification (sync and chunked-async), WKB → GeoJSON, and the name
    normalization the gazetteer index builders use.
 
-`@cng/spec` is a separate package for one reason: a page that loads
-`geocoder-core` and `download-core` from a CDN must get **one** `Area`
+`@cngeo/spec` is a separate package for one reason: a page that loads
+`geocoder-core` and `extract-core` from a CDN must get **one** `Area`
 implementation, not two. See [Why one copy matters](#why-one-copy-matters).
 
 - **Status:** experimental, pre-npm. See the [root README](../../README.md).
@@ -30,21 +30,21 @@ Nothing is published to npm yet. Today you point an import map at the source:
 
 ```html
 <script type="importmap">
-{ "imports": { "@cng/spec": "/packages/spec/src/index.js" } }
+{ "imports": { "@cngeo/spec": "/packages/spec/src/index.js" } }
 </script>
 <script type="module">
-  import { buildArea, normalizeName } from '@cng/spec';
+  import { buildArea, normalizeName } from '@cngeo/spec';
 </script>
 ```
 
 In Node or a bundler, with this repo as a workspace:
 
 ```js
-import { buildArea, normalizeName } from '@cng/spec';
+import { buildArea, normalizeName } from '@cngeo/spec';
 ```
 
-**Coming:** `npm i @cng/spec`, and a CDN form —
-`import { buildArea } from 'https://cdn.jsdelivr.net/npm/@cng/spec@0.2.0/src/index.js'`.
+**Coming:** `npm i @cngeo/spec`, and a CDN form —
+`import { buildArea } from 'https://cdn.jsdelivr.net/npm/@cngeo/spec@0.2.0/src/index.js'`.
 The module code never changes between those; only the specifier does.
 
 ## Size
@@ -53,7 +53,7 @@ No build step exists yet, so what crosses the wire is the commented source.
 
 | | files | raw | gzip | gzip, comments stripped | design-doc budget (§4.5) |
 |---|---|---|---|---|---|
-| `@cng/spec` src | 9 | 47.0 KiB | 13.8 KiB | **6.2 KiB** | ≤ 10 KB min+gz |
+| `@cngeo/spec` src | 9 | 47.0 KiB | 13.8 KiB | **6.2 KiB** | ≤ 10 KB min+gz |
 
 Measured with `cat src/*.js | gzip -9`; the stripped column is the same with
 block and line comments removed, which is the closest honest stand-in for the
@@ -100,7 +100,7 @@ through a map style on every selection, and a 200,000-vertex ring makes every
 point-in-polygon test expensive. Collapsing them into one field forces a choice
 between a slow map and a dishonest download. `filterGeometry: null` means "no
 usable polygon" — filtering falls back to `bboxes` alone, and
-`@cng/download-core` emits a `degraded-to-bbox` warning on every estimate.
+`@cngeo/extract-core` emits a `degraded-to-bbox` warning on every estimate.
 
 **`bbox` is for people, `bboxes` is for arithmetic.** `bbox` is signed and may
 wrap (`west > east`) so it round-trips and reads correctly in a UI.
@@ -119,7 +119,7 @@ translation.
 ### Building one
 
 ```js
-import { buildArea, validateArea } from '@cng/spec';
+import { buildArea, validateArea } from '@cngeo/spec';
 
 const area = buildArea({
   name: 'A square over Liechtenstein',
@@ -154,7 +154,7 @@ buildArea({ name: 'p', geometry: { type: 'Point', coordinates: [0, 0] }, source:
 ### Serializing one
 
 ```js
-import { toAreaDocument, fromAreaDocument } from '@cng/spec';
+import { toAreaDocument, fromAreaDocument } from '@cngeo/spec';
 
 const doc = toAreaDocument(area);
 doc.type;                                          // 'Feature'
@@ -219,7 +219,7 @@ Every signature below was read off `src/` and exercised by
 `BBox` is `[west, south, east, north]` in EPSG:4326 degrees.
 
 ```js
-import { computeBBoxes, crossesAntimeridian, bboxOfGeometry } from '@cng/spec';
+import { computeBBoxes, crossesAntimeridian, bboxOfGeometry } from '@cngeo/spec';
 
 const fiji = {
   type: 'MultiPolygon',
@@ -273,7 +273,7 @@ inputVertices, outputVertices, areaDeltaRatio, degradedToBbox }`.
 Visvalingam is area-based; the field name follows the design doc.
 
 ```js
-import { simplifyToVertexCeiling, simplifyToVertexCeilingAsync, vertexCount } from '@cng/spec';
+import { simplifyToVertexCeiling, simplifyToVertexCeilingAsync, vertexCount } from '@cngeo/spec';
 
 const ring = [];
 for (let i = 0; i <= 1200; i++) {
@@ -309,7 +309,7 @@ wkbToGeoJson(polygonBytes);   // { type: 'Polygon', coordinates: [...] }
 wkbToGeoJson(pointBytes);     // throws: 'unsupported geometry type 1'
 ```
 
-If you need Point/MultiPoint, `@cng/download-core` exports
+If you need Point/MultiPoint, `@cngeo/extract-core` exports
 `decodeWkbGeometry` — a decorator over this one. Folding that back in here is a
 known follow-up.
 
@@ -335,7 +335,7 @@ not.** `retryable` defaults to `true` for `INDEX_FETCH_FAILED`,
 otherwise.
 
 ```js
-import { CngError, isCngError } from '@cng/spec';
+import { CngError, isCngError } from '@cngeo/spec';
 
 const err = new CngError('Only EPSG:4326 (lon/lat) data is supported.', 'AREA_INVALID_CRS', {
   context: { crs: 'EPSG:3857' },
@@ -349,7 +349,7 @@ new CngError('x', 'INDEX_FETCH_FAILED').retryable;  // true
 ```
 
 The full code table, with what a UI should say for each, is in
-[`@cng/download-core`'s README](../download-core/README.md#error-codes) —
+[`@cngeo/extract-core`'s README](../extract-core/README.md#error-codes) —
 it is the package that can throw most of them.
 
 ### Misc
@@ -362,18 +362,18 @@ it is the package that can throw most of them.
 
 ## Why one copy matters
 
-`@cng/spec` registers itself on `globalThis[Symbol.for('cng.spec')]` at import
+`@cngeo/spec` registers itself on `globalThis[Symbol.for('cng.spec')]` at import
 time. A second, *different* version logs one loud warning and defers to the
 first:
 
 ```
-@cng/spec: multiple versions loaded on this page (0.1.0 and 0.2.0).
+@cngeo/spec: multiple versions loaded on this page (0.1.0 and 0.2.0).
 instanceof checks and Area validation may diverge; the first-loaded version wins.
 ```
 
 This exists because `instanceof CngError` and `validateArea` only behave if
 there is one `spec` module on the page. In a zero-build page, the way to
-guarantee that is to have every `@cng` package import the **same URL** — which
+guarantee that is to have every `@cngeo` package import the **same URL** — which
 is why the packaging design externalizes dependencies to pinned absolute URLs
 rather than inlining them. If you see that warning, two packages disagree about
 which `spec` to load; fix it with one import-map line.
@@ -393,7 +393,7 @@ degradation, or use `simplifyToVertexCeilingAsync`.
 
 **`filterGeometry: null` is a real state, not an error.** It means the filter
 geometry could not be produced within `areaDeltaMaxRatio`. Consumers must handle
-it: `@cng/download-core` falls back to `bboxes` and warns. If you write your
+it: `@cngeo/extract-core` falls back to `bboxes` and warns. If you write your
 own consumer and dereference `area.filterGeometry.coordinates`, you will crash
 on exactly the big countries your users search for first.
 
@@ -402,7 +402,7 @@ on exactly the big countries your users search for first.
 
 **`wkbToGeoJson` only knows polygons.** By design — the gazetteer boundary
 files publish nothing else. A point dataset needs
-`@cng/download-core`'s `decodeWkbGeometry`.
+`@cngeo/extract-core`'s `decodeWkbGeometry`.
 
 **`validateArea` is a shape check, not a schema.** It will accept an `Area`
 with a nonsensical `provenance`. The JSON Schemas the design doc promises
@@ -411,7 +411,7 @@ with a nonsensical `provenance`. The JSON Schemas the design doc promises
 **Attribution keys are not normalized here.** `buildArea` copies
 `attribution` through verbatim, so an entry that came from an index manifest
 keeps its `snake_case` (`share_alike`) while one built by
-`@cng/download-core`'s collection resolver uses `camelCase` (`shareAlike`).
+`@cngeo/extract-core`'s collection resolver uses `camelCase` (`shareAlike`).
 Read both until that is unified. See the
 [root README's known issues](../../README.md#known-issues).
 

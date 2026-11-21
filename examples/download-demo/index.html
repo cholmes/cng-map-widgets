@@ -53,20 +53,20 @@
   Zero-build ESM, no bundler (design doc §4.3's "published import map"
   pattern, pointed at this repo's own packages/ instead of a CDN since
   nothing has been published yet). hyparquet/hyparquet-writer themselves
-  are pulled from pinned, exact CDN URLs by @cng/download-core's
+  are pulled from pinned, exact CDN URLs by @cngeo/extract-core's
   src/cdn.js internally, not by this map.
 -->
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec": "../../packages/spec/src/index.js",
-    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cng/maplibre": "../../packages/maplibre/src/index.js",
-    "@cng/download-core": "../../packages/download-core/src/index.js",
-    "@cng/format-gpkg": "../../packages/format-gpkg/src/index.js",
-    "@cng/format-shapefile": "../../packages/format-shapefile/src/index.js",
-    "@cng/format-flatgeobuf": "../../packages/format-flatgeobuf/src/index.js",
-    "@cng/format-extras": "../../packages/format-extras/src/index.js"
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cngeo/maplibre": "../../packages/maplibre/src/index.js",
+    "@cngeo/extract-core": "../../packages/extract-core/src/index.js",
+    "@cngeo/format-gpkg": "../../packages/format-gpkg/src/index.js",
+    "@cngeo/format-shapefile": "../../packages/format-shapefile/src/index.js",
+    "@cngeo/format-flatgeobuf": "../../packages/format-flatgeobuf/src/index.js",
+    "@cngeo/format-extras": "../../packages/format-extras/src/index.js"
   }
 }
 </script>
@@ -119,8 +119,8 @@
 </div>
 
 <script type="module">
-import { Geocoder, DEFAULT_INDEX_URL } from '@cng/geocoder-core';
-import { GeocoderControl, createDrawTool, createEditTool } from '@cng/maplibre';
+import { Geocoder, DEFAULT_INDEX_URL } from '@cngeo/geocoder-core';
+import { GeocoderControl, createDrawTool, createEditTool } from '@cngeo/maplibre';
 import {
   estimate,
   download,
@@ -129,14 +129,14 @@ import {
   registerLazyFormat,
   formats as listFormats,
   RAW_FORMAT_ID,
-} from '@cng/download-core';
+} from '@cngeo/extract-core';
 
 // Heavy/lazy output formats (design doc §3.4 amendment,
 // experiments/e10-heavy-formats/RESULTS.md §8: "the lazy-loading registry
 // amendment"). `registerLazyFormat` only lists the id/label/weight -- none
 // of these fetch anything over the network until a `download()` for that
 // format id actually runs. GeoJSON and GeoParquet need no registration
-// here: they're @cng/download-core's own eager built-ins (registered as a
+// here: they're @cngeo/extract-core's own eager built-ins (registered as a
 // side effect of importing that package).
 //
 // `format-gpkg` is the heavy one (sql.js, ~340KB min+gz) and
@@ -147,10 +147,10 @@ import {
 // picker can list and weight every non-built-in format through one
 // uniform code path -- exactly the thing RESULTS.md §8 says the registry
 // was designed to demonstrate.
-import { gpkgFormatDescriptor } from '@cng/format-gpkg';
-import { shapefileFormatDescriptor } from '@cng/format-shapefile';
-import { flatGeobufFormatDescriptor } from '@cng/format-flatgeobuf';
-import { csvFormatDescriptor, esriJsonFormatDescriptor } from '@cng/format-extras';
+import { gpkgFormatDescriptor } from '@cngeo/format-gpkg';
+import { shapefileFormatDescriptor } from '@cngeo/format-shapefile';
+import { flatGeobufFormatDescriptor } from '@cngeo/format-flatgeobuf';
+import { csvFormatDescriptor, esriJsonFormatDescriptor } from '@cngeo/format-extras';
 
 registerLazyFormat(gpkgFormatDescriptor);
 registerLazyFormat(shapefileFormatDescriptor);
@@ -256,7 +256,7 @@ function currentEntry() {
   return DATASETS.find((d) => d.key === datasetSelect.value);
 }
 
-// --- Area (search reuses @cng/geocoder-core + @cng/maplibre, pointed at
+// --- Area (search reuses @cngeo/geocoder-core + @cngeo/maplibre, pointed at
 // the LIVE published geoBoundaries gazetteer) --------------------------
 //
 // Default: the published portolan-mirrors/geoboundaries-catalog manifest
@@ -562,7 +562,7 @@ document.getElementById('estimateBtn').addEventListener('click', async () => {
   document.getElementById('confirmBox').style.display = 'none';
   try {
     const filter = buildFilter(entry);
-    // `@cng/download-core`'s public `estimate()` routes `output.format ===
+    // `@cngeo/extract-core`'s public `estimate()` routes `output.format ===
     // RAW_FORMAT_ID` to the decode-free raw path internally (index.js) --
     // no special-casing needed here for any format, including parquet-raw.
     const est = await estimate(entry.dataset, area, filter, { output: outputFor(entry, selectedFormat), sink: MEMORY_SINK, ...sizeWarningOptions() });
@@ -576,7 +576,7 @@ document.getElementById('maxRows').addEventListener('input', resetDownloadUi);
 
 // --- Format picker ---------------------------------------------------------
 //
-// Built from download-core's own `formats()` listing (eager + lazy,
+// Built from extract-core's own `formats()` listing (eager + lazy,
 // uniformly) rather than hardcoded markup, so a lazy format's weight and
 // load state are always read from the one place that tracks them
 // (registry.js's `lazyLoadState`/`resolvedLazyFormats`) instead of being
@@ -891,7 +891,7 @@ async function confirmAndDownload(formatId) {
     infoEl.textContent = formatId === RAW_FORMAT_ID
       ? 'Checking estimated size before starting… (reads part metadata/HEAD only, no footer, no row data)'
       : 'Checking estimated size before starting… (reads parquet footer metadata only, no row data)';
-    // `@cng/download-core`'s public `estimate()` routes `output.format ===
+    // `@cngeo/extract-core`'s public `estimate()` routes `output.format ===
     // RAW_FORMAT_ID` to raw.js's decode-free `planRaw`/`rawEstimate`
     // internally (index.js), so this one call is correct -- and gets the
     // real raw-specific warnings (raw-passthrough-unfiltered etc.) -- for

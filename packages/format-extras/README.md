@@ -1,6 +1,6 @@
-# @cng/format-extras
+# @cngeo/format-extras
 
-The "nearly free" `@cng/download-core` output formats: **CSV** (attributes
+The "nearly free" `@cngeo/extract-core` output formats: **CSV** (attributes
 + WKT geometry) and **Esri JSON** (a REST `FeatureSet` document). Both
 zero-dependency, zero-wasm, and cheap enough to register eagerly.
 
@@ -12,8 +12,8 @@ are exported anyway, for a page that lists every format uniformly through
 `registerLazyFormat` — their `load()` resolves immediately.
 
 ```js
-import { registerFormat } from '@cng/download-core';
-import { createCsvFormat, createEsriJsonFormat } from '@cng/format-extras';
+import { registerFormat } from '@cngeo/extract-core';
+import { createCsvFormat, createEsriJsonFormat } from '@cngeo/format-extras';
 registerFormat(createCsvFormat());
 registerFormat(createEsriJsonFormat());
 ```
@@ -61,7 +61,7 @@ type, and the mixed-type refusal.
 
 `estimateBytes(schema, rows, ctx)` takes an additive, optional third
 argument (`ctx.avgGeometryBytes`: the dataset's own average geometry
-bytes per row, derived from parquet footer statistics by `download-core`).
+bytes per row, derived from parquet footer statistics by `extract-core`).
 Both plugins here, and both of their `LazyFormatDescriptor`s, share one
 implementation each — `estimateCsvBytes` / `estimateEsriJsonBytes`, both
 exported — so a descriptor's estimate and its loaded plugin's can never
@@ -103,7 +103,7 @@ file's 4,470 B/row average.
   `experiments/e10-heavy-formats/RESULTS.md`. There is no lightweight,
   zero-wasm path to File Geodatabase the way there is to GeoPackage (a
   documented SQLite schema) or Shapefile (a documented flat-file format);
-  it stays future work under the `gdal3.js`-backed `@cng/format-gdal`
+  it stays future work under the `gdal3.js`-backed `@cngeo/format-gdal`
   package note in the design doc, not something this package could do
   cheaply.
 - **KML.** Dropped from this round's scope under time pressure, not

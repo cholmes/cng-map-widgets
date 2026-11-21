@@ -1,4 +1,4 @@
-// @cng/spec -- error taxonomy (design doc §3.5).
+// @cngeo/spec -- error taxonomy (design doc §3.5).
 //
 // One base class, a stable string `code`, and a `retryable` flag. The
 // `code` is the API: messages are for humans and may be reworded, codes

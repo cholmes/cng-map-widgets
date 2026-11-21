@@ -1,5 +1,5 @@
 {
-  "name": "@cng/raster-core",
+  "name": "@cngeo/raster-core",
   "version": "0.2.0",
   "description": "In-browser raster clip-and-download: windowed reads from remote COGs (geotiff.js over HTTP ranges), band subsetting from STAC band metadata, an exact pre-download size estimate with a memory ceiling, and a dependency-free GeoTIFF writer that preserves dtype and georeferencing.",
   "keywords": [
@@ -16,7 +16,6 @@
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
-  "private": true,
   "main": "./src/index.js",
   "exports": {
     ".": "./src/index.js",
@@ -28,10 +27,22 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cng/spec": "0.1.0"
+    "@cngeo/spec": "0.2.0"
   },
   "devDependencies": {
     "geotiff": "2.1.3",
     "zstddec": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cholmes/cng-map-widgets.git",
+    "directory": "packages/raster-core"
+  },
+  "homepage": "https://github.com/cholmes/cng-map-widgets#readme",
+  "bugs": {
+    "url": "https://github.com/cholmes/cng-map-widgets/issues"
   }
 }

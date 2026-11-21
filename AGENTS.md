@@ -1,4 +1,4 @@
-# AGENTS.md — wiring up `@cng/*`
+# AGENTS.md — wiring up `@cngeo/*`
 
 For AI agents and anyone who wants the facts without the prose. Every snippet
 here is executed against live published data by
@@ -20,10 +20,10 @@ Queries are place names; results are boundaries. No street addresses, ever.
 
 1. A **cloud-native gazetteer** is published static data: a names-index parquet
    + an `index.json` manifest + per-level boundary parquets, on object storage.
-2. `@cng/geocoder-core` reads it over HTTP range requests and emits an
+2. `@cngeo/geocoder-core` reads it over HTTP range requests and emits an
    **`Area`**.
-3. `@cng/upload-core` emits the same `Area` from a GeoJSON file.
-4. `@cng/download-core` consumes an `Area` + a `DatasetDescriptor` +
+3. `@cngeo/upload-core` emits the same `Area` from a GeoJSON file.
+4. `@cngeo/extract-core` consumes an `Area` + a `DatasetDescriptor` +
    a `FilterSpec` and writes a file.
 5. There is **no server and no build step**. An import map is the setup.
 
@@ -47,11 +47,11 @@ OV  https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec":            "/packages/spec/src/index.js",
-    "@cng/geocoder-core":   "/packages/geocoder-core/src/index.js",
-    "@cng/upload-core":     "/packages/upload-core/src/index.js",
-    "@cng/download-core":   "/packages/download-core/src/index.js",
-    "@cng/maplibre":        "/packages/maplibre/src/index.js"
+    "@cngeo/spec":            "/packages/spec/src/index.js",
+    "@cngeo/geocoder-core":   "/packages/geocoder-core/src/index.js",
+    "@cngeo/upload-core":     "/packages/upload-core/src/index.js",
+    "@cngeo/extract-core":   "/packages/extract-core/src/index.js",
+    "@cngeo/maplibre":        "/packages/maplibre/src/index.js"
   }
 }
 </script>
@@ -60,7 +60,7 @@ OV  https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.
 Do **not** add `hyparquet` to that map. The packages `import()` it themselves
 from pinned absolute CDN URLs (`src/cdn.js` in each). Nothing is on npm yet;
 when it is, each line becomes
-`https://cdn.jsdelivr.net/npm/@cng/<name>@0.2.0/src/index.js` and no module
+`https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.2.0/src/index.js` and no module
 code changes.
 
 **Without a clone**, swap the relative paths for the published site — the
@@ -78,7 +78,7 @@ https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.2.0/packages/<name>/src/i
 
 Either way, **map every package you need transitively**, not just the ones
 you `import` by name: these packages cross-import each other by bare
-specifier (`@cng/spec` above all), and an unmapped specifier fails at
+specifier (`@cngeo/spec` above all), and an unmapped specifier fails at
 runtime with no build step to catch it. And note an import map is strict
 JSON — a `//` comment inside the block stops it parsing and silently
 disables every import in it.
@@ -99,8 +99,8 @@ before the first `load()`/`estimate()`**:
 import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import * as writer from 'hyparquet-writer';
-import { setHyparquetModules as setGeocoderModules } from '@cng/geocoder-core';
-import { setHyparquetModules as setDownloadModules } from '@cng/download-core';
+import { setHyparquetModules as setGeocoderModules } from '@cngeo/geocoder-core';
+import { setHyparquetModules as setDownloadModules } from '@cngeo/extract-core';
 
 setGeocoderModules({ hyparquet, compressors });
 setDownloadModules({ hyparquet, compressors, writer });   // `writer` only for GeoParquet output
@@ -115,7 +115,7 @@ calls in place.
 ## Recipe 1 — an `Area` from a live gazetteer
 
 ```js
-import { Geocoder } from '@cng/geocoder-core';
+import { Geocoder } from '@cngeo/geocoder-core';
 
 const geocoder = new Geocoder({
   indexUrl: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json',
@@ -148,7 +148,7 @@ on `area.displayGeometry`. Listen for `'area:upgrading'` (fires right after
 "loading full detail…" notice, and call `geocoder.cancelUpgrade()` any time
 before `'area:upgraded'` fires to abort it and keep the simplified
 `geometry` — that emits `'area:upgrade-cancelled'` instead. See
-[`@cng/geocoder-core`'s README](packages/geocoder-core/README.md#upgradedisplay-true--swap-the-outline-too-with-a-cancel-handle).
+[`@cngeo/geocoder-core`'s README](packages/geocoder-core/README.md#upgradedisplay-true--swap-the-outline-too-with-a-cancel-handle).
 
 Hard rules:
 
@@ -208,7 +208,7 @@ Serialize it as a GeoJSON `Feature` — it opens in geojson.io, QGIS and
 `ogr2ogr` unchanged:
 
 ```js
-import { toAreaDocument, fromAreaDocument } from '@cng/spec';
+import { toAreaDocument, fromAreaDocument } from '@cngeo/spec';
 
 const doc = toAreaDocument(area);       // extras under `area:*`, snake_case
 const restored = fromAreaDocument(JSON.parse(JSON.stringify(doc)));  // validates on the way in
@@ -216,7 +216,7 @@ const restored = fromAreaDocument(JSON.parse(JSON.stringify(doc)));  // validate
 
 ```js
 // Attribution: read BOTH key styles. A geocoder Area's entries come
-// straight off the manifest (snake_case); download-core's derived ones are
+// straight off the manifest (snake_case); extract-core's derived ones are
 // camelCase. Checking only `shareAlike` silently misses ODbL obligations.
 for (const a of area.provenance.attribution) {
   const shareAlike = a.shareAlike ?? a.share_alike;
@@ -284,7 +284,7 @@ literally named `bbox` — i.e. a full scan. Declare it when you know it.
 ### 3b. Hive-partitioned (`kind: 'hive'`) — derive it, don't write it
 
 ```js
-import { resolveDataset, estimate } from '@cng/download-core';
+import { resolveDataset, estimate } from '@cngeo/extract-core';
 
 const dataset = await resolveDataset({
   spec: 'cng-dataset/1.0',
@@ -415,7 +415,7 @@ on this path the way there is on the decoded one. See pitfall 13 for
 ### Checking a collection before building anything
 
 ```js
-import { collectionDownloadSupport } from '@cng/download-core';
+import { collectionDownloadSupport } from '@cngeo/extract-core';
 
 const collection = await fetch(collectionUrl).then((r) => r.json());
 const support = collectionDownloadSupport(collection, { baseUrl: collectionUrl });
@@ -434,7 +434,7 @@ dialog. That is what this function is for.
 ## Recipe 4 — run a download, handling the estimate and the ceiling
 
 ```js
-import { download, memorySink, autoSink } from '@cng/download-core';
+import { download, memorySink, autoSink } from '@cngeo/extract-core';
 
 // In a browser, from a user gesture (showSaveFilePicker needs one):
 //   const sink = await autoSink({ suggestedName: 'fields.geojson' });
@@ -526,7 +526,7 @@ overrides: options.ceiling })`:
     `gpkg` through a `memorySink` unbounded).
 
 Import `effectiveCeiling`, `memoryFactorOf`, `UNBOUNDED_BYTES`,
-`MEMORY_BUDGET_DEFAULT` from `@cng/download-core` to compute the same numbers
+`MEMORY_BUDGET_DEFAULT` from `@cngeo/extract-core` to compute the same numbers
 a UI would show before calling `download()`.
 
 `CeilingExceededError.context.suggestedFormats` lists OTHER registered
@@ -597,7 +597,7 @@ decode at all — recipe 3e). Anything else must be registered first;
 ## Recipe 5 — an uploaded `Area` is interchangeable
 
 ```js
-import { areaFromFile, areaFromGeoJson, attachDropTarget } from '@cng/upload-core';
+import { areaFromFile, areaFromGeoJson, attachDropTarget } from '@cngeo/upload-core';
 
 const { area, warnings } = await areaFromFile(file);
 // ...or from a value you already have:
@@ -663,7 +663,7 @@ Index columns — required: `name`, `name_norm`, `level`, `country`,
 
 **The sort guarantee:** rows ascend by `name_norm` compared **byte-wise on its
 UTF-8 encoding** — not locale collation — so a JavaScript `a < b` agrees with
-the file. `normalizeName` from `@cng/spec` is the function that produces it:
+the file. `normalizeName` from `@cngeo/spec` is the function that produces it:
 NFD → strip `\p{M}` → lowercase → keep only `[\p{L}\p{N} '-]` → collapse
 whitespace → trim. Override `GeocoderOptions.normalize` and you break the
 binary search unless you also rebuilt the index.
@@ -712,7 +712,7 @@ And separately again: a GeoParquet **2.0** file (native Parquet `GEOMETRY`
 logical type — FIRMS, s2-stac-geoparquet) is auto-decoded *unconditionally*,
 independent of the `geoparquet` flag, which only ever governed the older
 sidecar-metadata convention. Use `decodeWkbGeometry` from
-`@cng/download-core`, which normalizes bytes-or-object.
+`@cngeo/extract-core`, which normalizes bytes-or-object.
 
 ### 2. `area.filterGeometry` can be `null`
 
@@ -766,7 +766,7 @@ Use `bboxes`.
 
 ### 7. Synchronous simplification is O(m²)
 
-`@cng/spec`'s `simplifyToVertexCeiling` measured 38 ms at 1,000 vertices,
+`@cngeo/spec`'s `simplifyToVertexCeiling` measured 38 ms at 1,000 vertices,
 921 ms at 5,000, 3,852 ms at 10,000 — and a little over the ceiling is not
 cheap, because one binary-search trial always strips the ring to nothing.
 Canada's ADM0 ring is ~195,000 points and hung a browser for ~24 s before the
@@ -872,13 +872,13 @@ before the first byte moved. This is the accepted trade-off of proceeding
 on an unknown size, not a bug to work around; `SINK_QUOTA_EXCEEDED` already
 names the lever (a filesystem-backed sink has no such cap).
 
-The public `estimate()` (from `@cng/download-core`'s `index.js`) routes
+The public `estimate()` (from `@cngeo/extract-core`'s `index.js`) routes
 `output.format === 'parquet-raw'` to `planRaw`/`rawEstimate` — both
 exported — and reads **no parquet footers at all**, which is the point of
-the path. `estimate` imported directly from `download-core/src/estimate.js`
+the path. `estimate` imported directly from `extract-core/src/estimate.js`
 (as that module's own unit tests do) does **not** route; only the package's
 public entry point does, so always import `estimate` from
-`@cng/download-core` itself, never a deeper path.
+`@cngeo/extract-core` itself, never a deeper path.
 
 `suggestedFormats` (on a `CEILING_EXCEEDED` error's context, recipe 4) never
 names `parquet-raw`: it works by running each registered format's
@@ -917,7 +917,7 @@ rely on the check catching a rebuilt catalog.
 ## Error handling
 
 ```js
-import { isCngError } from '@cng/spec';   // or from @cng/download-core
+import { isCngError } from '@cngeo/spec';   // or from @cngeo/extract-core
 
 try {
   await handle.result;
@@ -937,7 +937,7 @@ try {
 **The `code` is the API. Messages are for humans and may be reworded; codes may
 not.** `retryable` is `true` by default for `INDEX_FETCH_FAILED`,
 `DATASET_UNRESOLVED`, `SINK_PERMISSION_DENIED`, `NETWORK`. Full tables:
-[download-core](packages/download-core/README.md#error-codes),
+[extract-core](packages/extract-core/README.md#error-codes),
 [upload-core](packages/upload-core/README.md#error-codes),
 [spec](packages/spec/README.md#errors).
 
@@ -964,7 +964,7 @@ node examples/download-demo/verify.mjs 8000
 # `FileSystemWritableFileStream` and no headless browser can open a save
 # dialog. Drives the real `download()` into a real OPFS writable, which has
 # the same swap-file commit semantics a picker handle does.
-node packages/download-core/test/browser/filesystem-sink.verify.mjs
+node packages/extract-core/test/browser/filesystem-sink.verify.mjs
 ```
 
 If you add a widget to a page, copy the shape of one of the

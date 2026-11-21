@@ -1,6 +1,6 @@
-# @cng/format-shapefile
+# @cngeo/format-shapefile
 
-Shapefile output for `@cng/download-core`. Part of O5's research scope:
+Shapefile output for `@cngeo/extract-core`. Part of O5's research scope:
 "evaluate a credible Shapefile writer, same validation bar as GeoPackage."
 It was credible — zero dependencies, no wasm — so it shipped.
 
@@ -13,8 +13,8 @@ hand-write (see `src/shp.js`, `src/dbf.js`, `src/zip.js`). Register it
 eagerly:
 
 ```js
-import { registerFormat } from '@cng/download-core';
-import { createShapefileFormat } from '@cng/format-shapefile';
+import { registerFormat } from '@cngeo/extract-core';
+import { createShapefileFormat } from '@cngeo/format-shapefile';
 registerFormat(createShapefileFormat());
 ```
 
@@ -22,17 +22,17 @@ A `shapefileFormatDescriptor` is also exported for a page that lists every
 format through the lazy-registration API uniformly — its `load()`
 resolves immediately, so this costs nothing extra either way.
 
-`capabilities` declares no `memoryFactor` (`@cng/download-core`'s
+`capabilities` declares no `memoryFactor` (`@cngeo/extract-core`'s
 `ceiling.js`): this writer buffers every row before `close()`, same as
 GeoPackage, but the multiplier has not been measured the way GeoPackage's
-(2.9, measured; see `@cng/format-gpkg`'s README) was. Leaving it absent
+(2.9, measured; see `@cngeo/format-gpkg`'s README) was. Leaving it absent
 falls back to the generic buffering default of 3 rather than a guessed
 number.
 
 ## Why a `.shp.zip`, not four separate files
 
 A Shapefile is really five sibling files (`.shp`/`.shx`/`.dbf`/`.prj`/
-`.cpg`), but `download-core`'s `Sink` writes exactly one file per
+`.cpg`), but `extract-core`'s `Sink` writes exactly one file per
 download. This package bundles them into one `.shp.zip` — the container
 GDAL/`ogr2ogr`, QGIS, and ArcGIS all open directly, no manual unzip step
 (`ogrinfo -al -so out.shp.zip` just works; confirmed in
@@ -61,7 +61,7 @@ what doesn't fit. This package doesn't:
 | dBase `N`/`F` fields are fixed-width | a value too wide for its declared field is clamped to `*` (the classic dBase overflow marker GDAL itself recognizes), not corrupted | `shapefile-numeric-overflow` |
 
 These come back on `FormatWriter.close()`'s result as `{ rows, bytes,
-warnings }`; `download-core`'s `download()` re-emits each one through its
+warnings }`; `extract-core`'s `download()` re-emits each one through its
 existing `'warning'` event and attaches them to the `DownloadResult` as
 `formatWarnings` (an additive change to `download.js`, documented in the
 design doc's lazy-loading amendment).
@@ -83,7 +83,7 @@ mess.
 
 `estimateBytes(schema, rows, ctx)` takes an additive, optional third
 argument (`ctx.avgGeometryBytes`: the dataset's own average geometry
-bytes per row, derived from parquet footer statistics by `download-core`).
+bytes per row, derived from parquet footer statistics by `extract-core`).
 `estimateShapefileBytes` is exported and shared by the plugin and
 `shapefileFormatDescriptor`, so the two can never drift; called with two
 arguments it falls back to the old flat per-row constant.

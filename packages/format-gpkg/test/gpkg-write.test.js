@@ -1,6 +1,6 @@
 // Writes a small multi-type batch (Point + MultiPolygon layers, mixed
 // attribute types) through `createGpkgFormat`, then validates the bytes
-// the same way download-core's geoparquet-write.test.js validates its
+// the same way extract-core's geoparquet-write.test.js validates its
 // output: with `ogrinfo -al -so` and, where duckdb is installed, DuckDB's
 // spatial `ST_Read`. This is the empirical bar O5 set for the sql.js path
 // (design doc O5 / this package's README).
@@ -15,7 +15,7 @@ import { initializedSqlJs } from './helpers/sqljs-setup.js';
 import { createGpkgFormat } from '../src/gpkg-writer.js';
 import { geojsonToWkb } from '../src/wkb.js';
 import { gpkgFormatDescriptor } from '../src/index.js';
-import { memoryFactorOf } from '@cng/download-core';
+import { memoryFactorOf } from '@cngeo/extract-core';
 
 function hasCli(bin, args = ['--version']) {
   try {
@@ -174,7 +174,7 @@ test('gpkg format: a source column literally named "geom" or "fid" is renamed, n
 });
 
 test('gpkg declares the measured memoryFactor: 2.9 on both its lazy descriptor and its plugin, not the default 3', async () => {
-  // Both declaration sites (download-core's ceiling.js's module doc:
+  // Both declaration sites (extract-core's ceiling.js's module doc:
   // "the registry reads whichever is used") must agree, so both are
   // checked here rather than just one. 2.9 is the post-task-9 value
   // (down from 3.5) -- see test/memory-factor.verify.mjs.

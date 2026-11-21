@@ -1,4 +1,4 @@
-// @cng/spec -- WKB -> GeoJSON decoder.
+// @cngeo/spec -- WKB -> GeoJSON decoder.
 //
 // Deliberately minimal: handles Polygon (type 3) and MultiPolygon (type 6)
 // only, which is all CGAZ (geoBoundaries) publishes, per the task scope.

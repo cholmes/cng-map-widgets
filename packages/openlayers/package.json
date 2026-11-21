@@ -1,7 +1,7 @@
 {
-  "name": "@cng/openlayers",
+  "name": "@cngeo/openlayers",
   "version": "0.2.0",
-  "description": "OpenLayers adapter for the @cng widgets: an accessible search combobox control, an Area outline layer, a viewport provider, antimeridian-aware fit, and the EPSG:4326 <-> view-projection bridge OpenLayers needs that MapLibre's GeoJSON-native sources do not.",
+  "description": "OpenLayers adapter for the @cngeo widgets: an accessible search combobox control, an Area outline layer, a viewport provider, antimeridian-aware fit, and the EPSG:4326 <-> view-projection bridge OpenLayers needs that MapLibre's GeoJSON-native sources do not.",
   "keywords": [
     "openlayers",
     "ol",
@@ -16,7 +16,6 @@
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
-  "private": true,
   "main": "./src/index.js",
   "exports": {
     ".": "./src/index.js",
@@ -31,6 +30,18 @@
     "ol": "^10.0.0"
   },
   "dependencies": {
-    "@cng/spec": "0.1.0"
+    "@cngeo/spec": "0.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cholmes/cng-map-widgets.git",
+    "directory": "packages/openlayers"
+  },
+  "homepage": "https://github.com/cholmes/cng-map-widgets#readme",
+  "bugs": {
+    "url": "https://github.com/cholmes/cng-map-widgets/issues"
   }
 }

@@ -1,6 +1,6 @@
-# @cng/format-flatgeobuf
+# @cngeo/format-flatgeobuf
 
-FlatGeobuf output for `@cng/download-core`, wrapping the official
+FlatGeobuf output for `@cngeo/extract-core`, wrapping the official
 [`flatgeobuf`](https://www.npmjs.com/package/flatgeobuf) package's
 GeoJSON serializer.
 
@@ -22,15 +22,15 @@ for" — is most of why this measured lighter than guessed.
 Load it on demand, like the heavier formats:
 
 ```js
-import { registerLazyFormat } from '@cng/download-core';
-import { flatGeobufFormatDescriptor } from '@cng/format-flatgeobuf';
+import { registerLazyFormat } from '@cngeo/extract-core';
+import { flatGeobufFormatDescriptor } from '@cngeo/format-flatgeobuf';
 registerLazyFormat(flatGeobufFormatDescriptor);
 ```
 
-`capabilities` declares no `memoryFactor` (`@cng/download-core`'s
+`capabilities` declares no `memoryFactor` (`@cngeo/extract-core`'s
 `ceiling.js`): this writer buffers every row before `close()`, same as
 GeoPackage, but the multiplier has not been measured the way GeoPackage's
-(2.9, measured; see `@cng/format-gpkg`'s README) was. Leaving it absent
+(2.9, measured; see `@cngeo/format-gpkg`'s README) was. Leaving it absent
 falls back to the generic buffering default of 3 rather than a guessed
 number.
 
@@ -55,7 +55,7 @@ number.
 
 `estimateBytes(schema, rows, ctx)` takes an additive, optional third
 argument (`ctx.avgGeometryBytes`: the dataset's own average geometry
-bytes per row, derived from parquet footer statistics by `download-core`).
+bytes per row, derived from parquet footer statistics by `extract-core`).
 `estimateFlatGeobufBytes` is exported and shared by the plugin and
 `flatGeobufFormatDescriptor` — and is pure JS, so the descriptor can model
 output bytes without loading the flatgeobuf module at all. Called with two

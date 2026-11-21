@@ -110,16 +110,16 @@ design doc used ("concatenated, gzip -9").
 
 | artifact | raw | min+gz | status | shipped? |
 |---|---|---|---|---|
-| sql.js 1.13.0 (`sql-wasm.wasm` + `sql-wasm.js`) | 708,594 B | **339,245 B** | **measured** | ✅ `@cng/format-gpkg` |
-| `@cng/format-gpkg`'s own code | ~9 KB | ~3 KB | measured (concatenated, gzip -9) | ✅ |
-| Hand-rolled Shapefile writer (`@cng/format-shapefile`, zero deps) | ~15 KB | ~5 KB | measured | ✅ |
-| `flatgeobuf@4.6.1`'s `geojson` submodule (jsdelivr `+esm`) | 37,603 B | **10,074 B** | **measured** | ✅ `@cng/format-flatgeobuf` |
-| `@cng/format-extras` (CSV + Esri JSON, zero deps) | ~6 KB | ~2 KB | measured | ✅ |
+| sql.js 1.13.0 (`sql-wasm.wasm` + `sql-wasm.js`) | 708,594 B | **339,245 B** | **measured** | ✅ `@cngeo/format-gpkg` |
+| `@cngeo/format-gpkg`'s own code | ~9 KB | ~3 KB | measured (concatenated, gzip -9) | ✅ |
+| Hand-rolled Shapefile writer (`@cngeo/format-shapefile`, zero deps) | ~15 KB | ~5 KB | measured | ✅ |
+| `flatgeobuf@4.6.1`'s `geojson` submodule (jsdelivr `+esm`) | 37,603 B | **10,074 B** | **measured** | ✅ `@cngeo/format-flatgeobuf` |
+| `@cngeo/format-extras` (CSV + Esri JSON, zero deps) | ~6 KB | ~2 KB | measured | ✅ |
 | `jszip@3.10.2` (`+esm`) | 121,334 B | 37,153 B | measured | ❌ not used (hand-rolled STORED zip instead, see format-shapefile's README) |
 | `dbf@0.2.0` (`+esm`) | 2,431 B | 1,273 B | measured | ❌ not used (hand-rolled .dbf) |
 | `@mapbox/shp-write@0.4.3` (`+esm`) | 5,825 B | 2,578 B | measured | ❌ not used |
 | `sql.js` RTREE module | — | — | **measured absent**: `CREATE VIRTUAL TABLE ... USING rtree` throws `"no such module: rtree"` on the published wasm build | documented as a known gap, not implemented |
-| `gdal3.js@2.8.1` (`gdal3WebAssembly.wasm`) | 28,219,835 B (28.2 MB) | **9,074,360 B (9.07 MB)** | **measured** | ❌ future work (`@cng/format-gdal`) |
+| `gdal3.js@2.8.1` (`gdal3WebAssembly.wasm`) | 28,219,835 B (28.2 MB) | **9,074,360 B (9.07 MB)** | **measured** | ❌ future work (`@cngeo/format-gdal`) |
 | `terrio-js@0.8.0` full (`terrio_bg.wasm`) | 29,446,421 B | **10,623,358 B** | **measured** | ❌ (§1 verdict) |
 | `terrio-js@0.8.0` `/core` (`core/terrio_bg.wasm`) | 15,876,817 B | **6,059,247 B** | **measured** | ❌ (§1 verdict) |
 
@@ -140,7 +140,7 @@ this plugin writes cleanly (feature count, geometry type, CRS, attribute
 types all correct); DuckDB's `ST_Read` agrees on both attributes and
 geometry. A real, live download (FTW field boundaries, Liechtenstein, 100
 rows, bbox + confidence-filtered) round-trips end to end through
-`@cng/download-core`'s real `download()` pipeline and validates both
+`@cngeo/extract-core`'s real `download()` pipeline and validates both
 ways — see `packages/format-gpkg/test/gpkg-integration.test.js`.
 
 Implemented: `gpkg_contents`, `gpkg_spatial_ref_sys` (the three required
@@ -161,11 +161,11 @@ back to a full table scan for a spatial `WHERE` on the file, immaterial at
 the row counts a bbox-pruned browser download produces.
 
 **Non-streaming, memory ceiling stated honestly** (same category as
-download-core's own `geoparquet` plugin): peak memory is roughly three
+extract-core's own `geoparquet` plugin): peak memory is roughly three
 copies of the data — buffered JS row arrays, sql.js's in-memory SQLite
 database (comparable to the final file size), and the exported
 `Uint8Array` copy. See `packages/format-gpkg/README.md` for the full
-statement download-core's `blobBytes` ceiling check is what actually
+statement extract-core's `blobBytes` ceiling check is what actually
 protects a page from this at scale.
 
 ---
@@ -175,7 +175,7 @@ protects a page from this at scale.
 **Credible path found: a zero-dependency, hand-rolled writer.** Assessed
 and rejected `shp-write`/`@mapbox/shp-write` (measured above: tiny, but
 still a `jszip` + `dbf` dependency chain for a format simple enough to
-write directly) in favor of `@cng/format-shapefile`'s own
+write directly) in favor of `@cngeo/format-shapefile`'s own
 `.shp`/`.shx`/`.dbf` binary writer and a hand-rolled STORED-only ZIP (no
 compression needed for five already-small files, so no need for
 `jszip`'s 37 KB).
@@ -224,8 +224,8 @@ double.
 
 | format | path | verdict |
 |---|---|---|
-| **Esri JSON (FeatureSet)** | hand-written, zero deps | **shipped** (`@cng/format-extras`). A trivial writer — `{ geometryType, spatialReference, fields, features }` — with the same ring-winding correctness as Shapefile (Esri's `rings` convention is identical: outer CW, holes CCW) and the same one-geometry-type-per-set restriction enforced as a refusal. Validated: GDAL's `ESRIJSON` driver reads it. |
-| **File Geodatabase** | GDAL's `OpenFileGDB` driver (read+write since GDAL 3.6) [measured: `gdal3.js@2.8.1`'s README format table lists `OpenFileGDB` under "Read & Write"] | **not reachable without the full `gdal3.js` path** (9.07 MB gzip, §2). There is no lightweight FileGDB writer the way GeoPackage has sql.js or Shapefile has a flat-file format simple enough to hand-write — FileGDB is a proprietary, undocumented-by-Esri binary format; every open implementation (GDAL's own `OpenFileGDB` driver included) is a reverse-engineering effort, not something this survey could responsibly hand-roll in scope. Stays future work under the `gdal3.js`-backed `@cng/format-gdal` note. |
+| **Esri JSON (FeatureSet)** | hand-written, zero deps | **shipped** (`@cngeo/format-extras`). A trivial writer — `{ geometryType, spatialReference, fields, features }` — with the same ring-winding correctness as Shapefile (Esri's `rings` convention is identical: outer CW, holes CCW) and the same one-geometry-type-per-set restriction enforced as a refusal. Validated: GDAL's `ESRIJSON` driver reads it. |
+| **File Geodatabase** | GDAL's `OpenFileGDB` driver (read+write since GDAL 3.6) [measured: `gdal3.js@2.8.1`'s README format table lists `OpenFileGDB` under "Read & Write"] | **not reachable without the full `gdal3.js` path** (9.07 MB gzip, §2). There is no lightweight FileGDB writer the way GeoPackage has sql.js or Shapefile has a flat-file format simple enough to hand-write — FileGDB is a proprietary, undocumented-by-Esri binary format; every open implementation (GDAL's own `OpenFileGDB` driver included) is a reverse-engineering effort, not something this survey could responsibly hand-roll in scope. Stays future work under the `gdal3.js`-backed `@cngeo/format-gdal` note. |
 
 ---
 
@@ -239,7 +239,7 @@ escaping, matches the design doc's existing format-options entry exactly
 **KML: not shipped.** Explicitly in Chris's "if nearly free" scope and
 genuinely would have been — a `Placemark`/`coordinates` XML writer is
 the same shape as this round's CSV/EsriJSON writers — but it didn't make
-this round under time pressure. Noted in `@cng/format-extras/README.md`
+this round under time pressure. Noted in `@cngeo/format-extras/README.md`
 as the one explicitly-scoped format left undone, rather than silently
 dropped from this report.
 
@@ -249,16 +249,16 @@ dropped from this report.
 
 Chris's mid-task addition: a heavy format should load "on the fly...
 just when people select that format," with its weight shown *before*
-that fetch happens. Implemented in `packages/download-core/src/
+that fetch happens. Implemented in `packages/extract-core/src/
 registry.js`: `registerLazyFormat(descriptor)` takes `{ id, label,
 extension, mediaType, approxBytes, capabilities, estimateBytes, load: ()
 => Promise<FormatPlugin> }`; `formats()` lists it (with `approxBytes` and
 a `loadState`) without ever calling `load()`; `resolveFormat(id)` is the
 one place that calls it, exactly once per id (concurrent callers share
 one in-flight promise), with failures mapped to a new `FORMAT_LOAD_FAILED`
-error code (`@cng/spec`). `download()` now resolves the format lazily
+error code (`@cngeo/spec`). `download()` now resolves the format lazily
 inside its internal `run()`, emitting a `'loading-format'` progress event
-first — see `packages/download-core/test/registry-lazy.test.js` and the
+first — see `packages/extract-core/test/registry-lazy.test.js` and the
 new tests appended to `download-handle.test.js` for coverage (load
 exactly once, concurrent-resolve sharing, failure → `FORMAT_LOAD_FAILED`,
 caching). Every package in this round (`format-gpkg`, `format-flatgeobuf`)
@@ -280,7 +280,7 @@ same-file commit race rather than risking it).
 - **No real browser smoke test** for any CDN-URL dynamic-import path in
   this round (sql.js, flatgeobuf, terrio) — every functional validation
   here ran in Node against the npm-installed equivalent package (the same
-  test-injection pattern `download-core/src/cdn.js` already established
+  test-injection pattern `extract-core/src/cdn.js` already established
   for hyparquet-writer), which is strong but not conclusive evidence for
   the actual `import('https://cdn.jsdelivr.net/...')` path a zero-build
   page would take.
@@ -289,7 +289,7 @@ same-file commit race rather than risking it).
   the light path" mandate (O5's own framing: "gdal3.js becomes a second
   plugin for anyone who wants its other drivers and will pay for them"),
   so neither was driven to actually convert a file in this session.
-  `@cng/format-gdal` (gdal3.js-backed) remains the documented future-work
+  `@cngeo/format-gdal` (gdal3.js-backed) remains the documented future-work
   path for File Geodatabase and anything else outside this round's four
   shipped formats.
 - **KML.** See §7 — scoped in, not done.
@@ -321,8 +321,8 @@ absolute-URL dynamic `import()` at all.
 
 - **The real `import('https://cdn.jsdelivr.net/...')` path works, in an
   actual browser, for both heavy/lazy formats.** sql.js
-  (`@cng/format-gpkg`) and flatgeobuf's `geojson` submodule
-  (`@cng/format-flatgeobuf`) both load via their exact pinned CDN URLs
+  (`@cngeo/format-gpkg`) and flatgeobuf's `geojson` submodule
+  (`@cngeo/format-flatgeobuf`) both load via their exact pinned CDN URLs
   from `cdn.js` in each package -- `https://cdn.jsdelivr.net/npm/sql.js@1.13.0/+esm`
   (plus `dist/sql-wasm.wasm` via `locateFile`) and
   `https://cdn.jsdelivr.net/npm/flatgeobuf@4.6.1/dist/esm/geojson.js/+esm`
@@ -370,7 +370,7 @@ absolute-URL dynamic `import()` at all.
   language retry hint. The picker's GeoPackage row simultaneously
   reflects the registry's `loadState: 'failed'`.
 - **A real UI bug found and fixed in the demo's own wiring** (not in any
-  `@cng/format-*` package, and not a pre-existing bug -- it was
+  `@cngeo/format-*` package, and not a pre-existing bug -- it was
   introduced, and caught, in this same round of work): `download.js`'s
   `run()` emits the `'loading-format'` progress event **before** calling
   `resolveFormat()`, and `resolveFormat()` is what actually flips

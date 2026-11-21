@@ -4,8 +4,8 @@
 **Status:** design, awaiting approval. Builder check done 2026-11-20; the
 two open questions it surfaced were answered by Chris and are recorded in
 §7.1 and §7.5.
-**Scope:** `@cng/download-core`, `examples/download-demo`. A separate,
-filed issue covers making `@cng/format-gpkg` streaming; it is a non-goal
+**Scope:** `@cngeo/extract-core`, `examples/download-demo`. A separate,
+filed issue covers making `@cngeo/format-gpkg` streaming; it is a non-goal
 here.
 
 ---
@@ -203,7 +203,7 @@ link to the same file.
 
 ### 7.2 The zip writer
 
-A new in-repo module, `packages/download-core/src/zip.js`. No
+A new in-repo module, `packages/extract-core/src/zip.js`. No
 dependency, no package of its own — it has exactly one caller.
 
 - **STORE (method 0), never DEFLATE.** Parquet is already compressed;
@@ -447,7 +447,7 @@ Listed here because each is visible in the public surface.
   `verify.mjs` unable to exercise the feature at all. `blobSink` stays
   capped at 256 MiB. The demo keeps `memorySink` for headless
   verification, and gains an OPFS-backed browser verify script modelled
-  on `packages/download-core/test/browser/filesystem-sink.verify.mjs`.
+  on `packages/extract-core/test/browser/filesystem-sink.verify.mjs`.
 - **`estimate()` gains optional `output` and `sink`** in its options —
   additive, so §5's no-break constraint holds. It is what lets a UI get
   a format-aware estimate before any bytes move, and it is how the demo
@@ -490,5 +490,5 @@ Listed here because each is visible in the public surface.
   acceptable.
 - Test layout, beyond the two verification requirements already named
   (zip round-trip in `npm test`; >4 GiB zip opt-in).
-- Doc updates to `AGENTS.md`, `packages/download-core/README.md` and
+- Doc updates to `AGENTS.md`, `packages/extract-core/README.md` and
   `docs/verify-snippets.mjs` — required, shape is the builder's.

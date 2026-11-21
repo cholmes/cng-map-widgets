@@ -1,9 +1,9 @@
-// @cng/format-shapefile -- minimal WKB -> GeoJSON decoder, 2D, the same
-// six types `@cng/format-gpkg/src/wkb.js` encodes. Duplicated rather than
+// @cngeo/format-shapefile -- minimal WKB -> GeoJSON decoder, 2D, the same
+// six types `@cngeo/format-gpkg/src/wkb.js` encodes. Duplicated rather than
 // shared: these are independent plugin packages (design doc §3.4 plugin
-// seam), each with no dependency on the other or on download-core's
+// seam), each with no dependency on the other or on extract-core's
 // internals, matching the project's existing precedent
-// (download-core/src/wkb-geometry.js is its own local decorator rather
+// (extract-core/src/wkb-geometry.js is its own local decorator rather
 // than importing another plugin's copy).
 
 const TYPE_NAME = { 1: 'Point', 2: 'LineString', 3: 'Polygon', 4: 'MultiPoint', 5: 'MultiLineString', 6: 'MultiPolygon' };
@@ -33,7 +33,7 @@ export function wkbToGeoJson(bytes) {
   const le = view.getUint8(c.offset) === 1; c.offset += 1;
   const type = view.getUint32(c.offset, le); c.offset += 4;
   const name = TYPE_NAME[type];
-  if (!name) throw new Error(`@cng/format-shapefile: unsupported WKB geometry type ${type}`);
+  if (!name) throw new Error(`@cngeo/format-shapefile: unsupported WKB geometry type ${type}`);
 
   if (name === 'Point') return { type: 'Point', coordinates: readPoint(view, c, le) };
   if (name === 'LineString') return { type: 'LineString', coordinates: readLine(view, c, le) };

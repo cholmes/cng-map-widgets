@@ -1,7 +1,7 @@
 {
   "type": "FeatureCollection",
   "properties": {
-    "note": "Deliberately damaged, for the upload-demo Playwright verification: a Point (dropped as non-areal), and a polygon whose ring has a Z coordinate, a duplicated consecutive point, is left unclosed, and is wound clockwise (exterior should be counterclockwise per RFC 7946). @cng/upload-core should repair all of it and report every repair kind."
+    "note": "Deliberately damaged, for the upload-demo Playwright verification: a Point (dropped as non-areal), and a polygon whose ring has a Z coordinate, a duplicated consecutive point, is left unclosed, and is wound clockwise (exterior should be counterclockwise per RFC 7946). @cngeo/upload-core should repair all of it and report every repair kind."
   },
   "features": [
     {

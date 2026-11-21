@@ -1,4 +1,4 @@
-// @cng/spec -- Visvalingam-Whyatt simplification + the tolerance search
+// @cngeo/spec -- Visvalingam-Whyatt simplification + the tolerance search
 // described in design doc §1.3.
 //
 // `maxSyncInputVertices` / `MAX_SYNC_SIMPLIFY_VERTICES` (fix history,
@@ -34,9 +34,9 @@
 // `degradedToBbox`) once the input exceeds it, rather than ever running
 // the O(m^2) search on it. The parameter defaults to `undefined` (no
 // guard, original unbounded behavior) so existing callers that already
-// accept running this search on moderate inputs (e.g. `@cng/upload-core`,
+// accept running this search on moderate inputs (e.g. `@cngeo/upload-core`,
 // which has no interactive-latency budget the way a map click does) are
-// unaffected; `@cng/geocoder-core`'s `select()` -- the main-thread-latency-
+// unaffected; `@cngeo/geocoder-core`'s `select()` -- the main-thread-latency-
 // sensitive caller -- opts in via `buildArea({ maxSyncInputVertices })`.
 // Use `simplifyToVertexCeilingAsync` (`simplify-async.js`) for the O(m log
 // m), chunked/yielding version that's actually safe to run on raw

@@ -13,7 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Geocoder, DEFAULT_INDEX_URL } from '../src/index.js';
-import { isCngError } from '@cng/spec';
+import { isCngError } from '@cngeo/spec';
 
 /** Read back the manifest URL a constructed Geocoder will actually load. */
 function manifestUrlOf(options) {

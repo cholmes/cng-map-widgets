@@ -23,7 +23,7 @@
  * examples/index.html's "Verifying them yourself" table.
  *
  * Why `setHyparquetModules` appears at the top of every group: in a browser
- * the @cng packages load hyparquet by `import()`-ing a pinned absolute CDN
+ * the @cngeo packages load hyparquet by `import()`-ing a pinned absolute CDN
  * URL (design doc section 4.2). Node has no network imports, so this
  * injects the npm-installed copies instead -- the same host-injection seam
  * a bundled app (portolan-browser) uses to avoid shipping two hyparquets.
@@ -83,7 +83,7 @@ function ftwLiechtensteinDescriptor() {
 
 /** A square around Liechtenstein, so a download snippet needs no geocoder. */
 async function liechtensteinBoxArea() {
-  const { areaFromGeoJson } = await import('@cng/upload-core');
+  const { areaFromGeoJson } = await import('@cngeo/upload-core');
   const { area } = await areaFromGeoJson(
     {
       type: 'Polygon',
@@ -98,7 +98,7 @@ async function liechtensteinBoxArea() {
 // packages/spec/README.md
 // ===========================================================================
 async function groupSpec() {
-  console.log('\n@cng/spec');
+  console.log('\n@cngeo/spec');
   const {
     buildArea,
     validateArea,
@@ -117,7 +117,7 @@ async function groupSpec() {
     CngError,
     isCngError,
     VERSION,
-  } = await import('@cng/spec');
+  } = await import('@cngeo/spec');
 
   await snippet('spec/README', 'VERSION', async () => {
     assert.equal(VERSION, '0.2.0');
@@ -287,10 +287,10 @@ async function groupSpec() {
 // packages/geocoder-core/README.md
 // ===========================================================================
 async function groupGeocoder() {
-  console.log('\n@cng/geocoder-core (live: data.source.coop)');
+  console.log('\n@cngeo/geocoder-core (live: data.source.coop)');
   const { Geocoder, setHyparquetModules, classifyMatch, computeViewportRank, prefixRange, VERSION, DEFAULT_INDEX_URL } =
-    await import('@cng/geocoder-core');
-  const { normalizeName } = await import('@cng/spec');
+    await import('@cngeo/geocoder-core');
+  const { normalizeName } = await import('@cngeo/spec');
 
   setHyparquetModules({ hyparquet, compressors });
 
@@ -326,7 +326,7 @@ async function groupGeocoder() {
     return 'multi-source refuses; a one-element array is accepted';
   });
 
-  /** @type {import('@cng/geocoder-core').Geocoder} */
+  /** @type {import('@cngeo/geocoder-core').Geocoder} */
   let shared;
   let sharedArea;
 
@@ -519,8 +519,8 @@ async function groupGeocoder() {
 // packages/upload-core/README.md
 // ===========================================================================
 async function groupUpload() {
-  console.log('\n@cng/upload-core');
-  const { areaFromGeoJson, areaFromFile, registerReader, repairFeatures, VERSION } = await import('@cng/upload-core');
+  console.log('\n@cngeo/upload-core');
+  const { areaFromGeoJson, areaFromFile, registerReader, repairFeatures, VERSION } = await import('@cngeo/upload-core');
 
   await snippet('upload-core/README', 'VERSION', async () => {
     assert.equal(VERSION, '0.2.0');
@@ -660,10 +660,10 @@ async function groupUpload() {
 }
 
 // ===========================================================================
-// packages/download-core/README.md
+// packages/extract-core/README.md
 // ===========================================================================
 async function groupDownload() {
-  console.log('\n@cng/download-core (live: data.source.coop)');
+  console.log('\n@cngeo/extract-core (live: data.source.coop)');
   const {
     setHyparquetModules,
     estimate,
@@ -683,12 +683,12 @@ async function groupDownload() {
     rowMatchesArea,
     isCngError,
     VERSION,
-  } = await import('@cng/download-core');
-  const { toAreaDocument } = await import('@cng/spec');
+  } = await import('@cngeo/extract-core');
+  const { toAreaDocument } = await import('@cngeo/spec');
 
   setHyparquetModules({ hyparquet, compressors, writer: hyparquetWriter });
 
-  await snippet('download-core/README', 'VERSION + the built-in registries', async () => {
+  await snippet('extract-core/README', 'VERSION + the built-in registries', async () => {
     assert.equal(VERSION, '0.2.0');
     // `parquet-raw` (recipe 3e / the raw-passthrough format) is registered
     // as a side effect of this package's index.js alongside geojson and
@@ -719,7 +719,7 @@ async function groupDownload() {
     columns: { include: ['id', 'confidence'] },
   };
 
-  await snippet('download-core/README', 'estimate() reads footers only', async () => {
+  await snippet('extract-core/README', 'estimate() reads footers only', async () => {
     const est = await estimate(dataset, area, filter);
 
     assert.equal(est.readBytes.exact, true); // straight from column-chunk sizes
@@ -743,7 +743,7 @@ async function groupDownload() {
     return `${est.rows.min}–${est.rows.max} rows, ${est.readBytes.estimate.toLocaleString()} B, ${est.requests} requests`;
   });
 
-  await snippet('download-core/README', 'download() to GeoJSON', async () => {
+  await snippet('extract-core/README', 'download() to GeoJSON', async () => {
     const sink = memorySink();
     const handle = download(dataset, area, filter, { spec: 'cng-output/1.0', format: 'geojson', filename: 'fields.geojson' }, { sink });
 
@@ -767,7 +767,7 @@ async function groupDownload() {
     return `${result.rows} features, ${result.bytes.toLocaleString()} bytes, ${result.requests} data request`;
   });
 
-  await snippet('download-core/README', 'download() to GeoParquet, with a 1.1 covering', async () => {
+  await snippet('extract-core/README', 'download() to GeoParquet, with a 1.1 covering', async () => {
     const sink = memorySink();
     const result = await download(
       dataset,
@@ -794,7 +794,7 @@ async function groupDownload() {
     return `${result.bytes.toLocaleString()} bytes, covering written so the output is itself prunable`;
   });
 
-  await snippet('download-core/README', 'zstd is refused, not silently downgraded', async () => {
+  await snippet('extract-core/README', 'zstd is refused, not silently downgraded', async () => {
     const handle = download(
       dataset,
       area,
@@ -805,12 +805,12 @@ async function groupDownload() {
     await assert.rejects(handle.result, (e) => e.code === 'FORMAT_CAPABILITY');
   });
 
-  await snippet('download-core/README', 'an unregistered format refuses by name', async () => {
+  await snippet('extract-core/README', 'an unregistered format refuses by name', async () => {
     const handle = download(dataset, area, filter, { spec: 'cng-output/1.0', format: 'gpkg' }, { sink: memorySink() });
     await assert.rejects(handle.result, (e) => e.code === 'FORMAT_UNAVAILABLE');
   });
 
-  await snippet('download-core/README', 'the ceiling refuses by rejecting, and acceptCeiling() hands back the continued run', async () => {
+  await snippet('extract-core/README', 'the ceiling refuses by rejecting, and acceptCeiling() hands back the continued run', async () => {
     // (1) Blocked: `result` REJECTS with CeilingExceededError. It does not
     // wait (which is what it used to do, forever -- the 2026-11-12 §3.4
     // "blocked handles reject" amendment). The error carries the estimate,
@@ -844,7 +844,7 @@ async function groupDownload() {
     return 'blocked -> result rejects CEILING_EXCEEDED; acceptCeiling() returns the continued run';
   });
 
-  await snippet('download-core/README', 'downloadRequest() runs a serialized DownloadRequest', async () => {
+  await snippet('extract-core/README', 'downloadRequest() runs a serialized DownloadRequest', async () => {
     const request = {
       spec: 'cng-request/1.0',
       dataset,
@@ -859,7 +859,7 @@ async function groupDownload() {
     return 'the whole request is one copy-pasteable JSON document';
   });
 
-  await snippet('download-core/README', 'progress events', async () => {
+  await snippet('extract-core/README', 'progress events', async () => {
     const handle = download(dataset, area, filter, { spec: 'cng-output/1.0', format: 'geojson' }, { sink: memorySink() });
     const phases = new Set();
     handle.on('progress', (p) => phases.add(p.phase));
@@ -873,7 +873,7 @@ async function groupDownload() {
     return [...phases].join(', ');
   });
 
-  await snippet('download-core/README', 'requirementsOf() + FILTER_REQUIRES_ENGINE', async () => {
+  await snippet('extract-core/README', 'requirementsOf() + FILTER_REQUIRES_ENGINE', async () => {
     assert.deepEqual([...requirementsOf({ spatial: { mode: 'intersects' } })], []);
     assert.deepEqual([...requirementsOf({ spatial: { mode: 'clip' } })], ['exact-clip']);
     assert.deepEqual(
@@ -888,7 +888,7 @@ async function groupDownload() {
     );
   });
 
-  await snippet('download-core/README', 'predicates: evaluateWhere, dotted paths', async () => {
+  await snippet('extract-core/README', 'predicates: evaluateWhere, dotted paths', async () => {
     const row = { confidence: 0.95, kind: 'field', names: { primary: 'Westfield' }, tags: ['a', 'b'], retired: null };
     assert.equal(evaluateWhere([{ col: 'confidence', op: '>=', value: 0.9 }], row), true);
     assert.equal(evaluateWhere([{ col: 'confidence', op: '>=', value: 0.99 }], row), false);
@@ -906,7 +906,7 @@ async function groupDownload() {
     assert.equal(getPath(row, 'nothing.here'), undefined);
   });
 
-  await snippet('download-core/README', 'rowMatchesArea(): bbox prune, then exact test', async () => {
+  await snippet('extract-core/README', 'rowMatchesArea(): bbox prune, then exact test', async () => {
     const triangle = { type: 'Polygon', coordinates: [[[0, 0], [10, 0], [0, 10], [0, 0]]] };
     const areaLike = { bboxes: [[0, 0, 10, 10]], filterGeometry: triangle };
     // Inside the bbox but outside the triangle.
@@ -917,7 +917,7 @@ async function groupDownload() {
     assert.equal(rowMatchesArea({ featureBBox: [50, 50, 51, 51] }, areaLike, { mode: 'intersects' }), false);
   });
 
-  await snippet('download-core/README', 'resolveDataset(): a Portolan collection -> a concrete descriptor', async () => {
+  await snippet('extract-core/README', 'resolveDataset(): a Portolan collection -> a concrete descriptor', async () => {
     const resolved = await resolveDataset({
       spec: 'cng-dataset/1.0',
       id: 'firms-detections',
@@ -938,7 +938,7 @@ async function groupDownload() {
     return `${resolved.table.rowCount.toLocaleString()} rows, ${resolved.source.fileCount} year= partitions`;
   });
 
-  await snippet('download-core/README', 'stac-geoparquet is recognized from table:columns', async () => {
+  await snippet('extract-core/README', 'stac-geoparquet is recognized from table:columns', async () => {
     const resolved = await resolveDataset({
       spec: 'cng-dataset/1.0',
       source: { kind: 'portolan-collection', url: S2_COLLECTION_URL },
@@ -950,7 +950,7 @@ async function groupDownload() {
     return `${resolved.table.columns.length} columns, share_alike: true`;
   });
 
-  await snippet('download-core/README', 'descriptorFromCollection()/collectionDownloadSupport() are synchronous', async () => {
+  await snippet('extract-core/README', 'descriptorFromCollection()/collectionDownloadSupport() are synchronous', async () => {
     const collection = await fetch(FIRMS_COLLECTION_URL).then((r) => r.json());
     const descriptor = descriptorFromCollection(collection, { baseUrl: FIRMS_COLLECTION_URL });
     assert.equal(descriptor.source.kind, 'hive');
@@ -974,7 +974,7 @@ async function groupDownload() {
     return raster.message;
   });
 
-  await snippet('download-core/README', 'every error carries a stable code', async () => {
+  await snippet('extract-core/README', 'every error carries a stable code', async () => {
     const handle = download(
       { spec: 'cng-dataset/1.0', source: { kind: 'parquet', url: 'https://data.source.coop/does-not-exist-404.parquet' } },
       null,
@@ -995,7 +995,7 @@ async function groupDownload() {
 // packages/openlayers/README.md (the projection half; the DOM half is Playwright)
 // ===========================================================================
 async function groupOpenLayers() {
-  console.log('\n@cng/openlayers (pure helpers only; the control is Playwright-verified)');
+  console.log('\n@cngeo/openlayers (pure helpers only; the control is Playwright-verified)');
   const {
     isMercatorCode,
     isLonLatCode,
@@ -1059,16 +1059,16 @@ async function groupOpenLayers() {
 // ===========================================================================
 async function groupAgents() {
   console.log('\nAGENTS.md (live: data.source.coop)');
-  const { Geocoder, setHyparquetModules: setGeocoderModules } = await import('@cng/geocoder-core');
+  const { Geocoder, setHyparquetModules: setGeocoderModules } = await import('@cngeo/geocoder-core');
   const {
     setHyparquetModules: setDownloadModules,
     estimate,
     download,
     memorySink,
     resolveDataset,
-  } = await import('@cng/download-core');
-  const { areaFromGeoJson } = await import('@cng/upload-core');
-  const { toAreaDocument, fromAreaDocument } = await import('@cng/spec');
+  } = await import('@cngeo/extract-core');
+  const { areaFromGeoJson } = await import('@cngeo/upload-core');
+  const { toAreaDocument, fromAreaDocument } = await import('@cngeo/spec');
 
   setGeocoderModules({ hyparquet, compressors });
   setDownloadModules({ hyparquet, compressors, writer: hyparquetWriter });

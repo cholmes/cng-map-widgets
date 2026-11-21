@@ -29,13 +29,13 @@
 > §8) · portolan-browser card (multi-asset picker, time filters: FIRMS
 > 10.2GB→962MB, pause/resume/cancel/success, 7 formats in-app, mobile,
 > en+es; 912 unit/253 e2e) · finisher in flight: AreaDownload new-contract
-> update + 2 download-core API lies.
+> update + 2 extract-core API lies.
 > **Upstream-report queue (not filed):** hyparquet ×3 + geoparquet-2.0
 > unconditional decode · geotiff.js writer truncation/geokey corruption ·
 > gpq null-geometry panic · geoBoundaries mojibake/invalid-geoms/ADM1-drift
 > · FIRMS extent vs newest partition + row-group stats · fieldmaps STAC
 > license field · sort-on-filtered-column advocacy.
-> **Chris's queue:** @cng scope (resolved 2026-11-17) · gbOpen ADM3/4 (rec: skip) · browser-card
+> **Chris's queue:** @cngeo scope (org registered 2026-11-21; `cng` was taken) · gbOpen ADM3/4 (rec: skip) · browser-card
 > decisions (date-window ≥2yr default, "More formats" grouping, CDN writers)
 > · tge-labs deletion after cutover. (WOF source.coop repo + MIT: done —
 > catalog LIVE 2026-11-13 with prominent index; demo ?index=wof points at
@@ -45,7 +45,7 @@
 > gazetteers** — the names indexes and the catalogs that publish them
 > (geoboundaries-catalog, cn-gazetteer-overture — renamed from
 > cn-geocoder-overture — whosonfirst-catalog). The client widget keeps
-> **geocoder** naming (@cng/geocoder-core etc.) because that's the term
+> **geocoder** naming (@cngeo/geocoder-core etc.) because that's the term
 > developers search for; docs state it's place-name/boundary lookup over
 > gazetteer data, not address geocoding. A future public umbrella repo name
 > should prefer "gazetteer" over "geocoding".
@@ -208,7 +208,7 @@ numbers, recommended file recipe (this doubles as the upstream advocacy doc).
 > **Design DONE 2026-11-12** — `docs/design/widgets-architecture.md`: Area
 > contract (display vs filter geometry, antimeridian via bboxes[]),
 > declarative DownloadRequest spec shared with the Python QGIS plugin,
-> `@cng/*` package design, zero-build CDN packaging (geocoder ~139KB min+gz
+> `@cngeo/*` package design, zero-build CDN packaging (geocoder ~139KB min+gz
 > incl. hyparquet), index interface (plain parquet, byte-wise UTF-8 sort,
 > catalog_version pinning). 13 open items each with a shipping default; two
 > flagged for Chris: (1) one pinned hyparquet version per release train must
@@ -228,7 +228,7 @@ optional heavier plugin for more formats (gdal3.js, shapefile-js) with
 bundle-weight documentation; implement GeoJSON only for now.
 
 ### E5 — Download widget *(opus design, sonnet implement)*
-`packages/download-core`: given `Area` + dataset descriptor (GeoParquet URL /
+`packages/extract-core`: given `Area` + dataset descriptor (GeoParquet URL /
 STAC item-collection), run spatial filter in-browser (DuckDB-WASM spatial;
 compare hyparquet+manual bbox filter for lighter core), stream to file.
 Format plugins: **geojson** (light, core), **geoparquet** (DuckDB-WASM COPY),
@@ -259,7 +259,7 @@ at same feature), plus unicode normalization/transliteration in `name_norm`.
 
 - **DONE:** E0 recon · E1 benchmarks · E3 design + implementation (spec,
   geocoder-core, maplibre; demo verified) · E4 (upload-core, openlayers; demo
-  verified) · E5 (download-core, geojson+geoparquet formats; demo verified,
+  verified) · E5 (extract-core, geojson+geoparquet formats; demo verified,
   in-browser GeoParquet writing works via hyparquet-writer @ 28.5KB gz core)
   · progressive display/full geometry (UK outline 86ms, Canada 1.1s; display
   files outward-buffered) · E9 ADM3/4 survey · geoboundaries-catalog built,
@@ -283,7 +283,7 @@ at same feature), plus unicode normalization/transliteration in `name_norm`.
 - **PENDING Chris:** gbOpen ADM3/4 (survey says: license-mixed — only
   17–25% strict CC-BY, 25% ODbL incl. CAN/CHN/IND — and 35% country
   coverage; recommendation: skip, let Overture carry cities) · source-coop
-  login · npm scope (@cng, resolved).
+  login · npm scope (@cngeo, org registered 2026-11-21).
 - **NEXT:** E6 example explorers (firms, s2) · E7 portolan-browser branch ·
   demo index-source toggle (geoBoundaries ↔ Overture) once both publish.
 
@@ -305,7 +305,7 @@ every documented snippet now runs against real published data, not fixtures.
     an `Area`, a `DownloadRequest` per dataset kind (parquet / hive /
     stac-geoparquet / parquet-set), download with estimate+ceiling handling,
     the manifest contract as a field table, 12 ranked pitfalls.
-  - **Six package READMEs** (spec, geocoder-core, upload-core, download-core,
+  - **Six package READMEs** (spec, geocoder-core, upload-core, extract-core,
     maplibre, openlayers) — API reference read off the actual exports, sizes,
     runnable minimal examples, error tables, gotchas from this repo's own fix
     history.
@@ -326,8 +326,8 @@ every documented snippet now runs against real published data, not fixtures.
   - **Consistency pass:** `0.1.0` everywhere (package.json, dependency pins,
     exported `VERSION`), MIT `LICENSE` in the root and every package,
     real `description`/`keywords`/`license`/`files`, `exports["./package.json"]`.
-    `npm install` relinked the workspace, picking up `@cng/upload-core` and
-    `@cng/openlayers`, which had never been symlinked into `node_modules`.
+    `npm install` relinked the workspace, picking up `@cngeo/upload-core` and
+    `@cngeo/openlayers`, which had never been symlinked into `node_modules`.
 - **MEASURED tonight (live, over the public path):** index load
   **3.8s from Node; 5.3s in a browser genuinely cold, 1.9s with a warm CDN**
   for the 3.9MB geoBoundaries index
@@ -348,10 +348,10 @@ every documented snippet now runs against real published data, not fixtures.
      `acceptCeiling()` or `cancel()`. **The most dangerous one for an
      automated caller.**
   2. **Attribution key casing is inconsistent:** a geocoder `Area` carries
-     the manifest's `snake_case` (`share_alike`), download-core's derived
+     the manifest's `snake_case` (`share_alike`), extract-core's derived
      attribution uses `shareAlike`. Checking only `shareAlike` **silently
      reports no share-alike obligation on ODbL data.** Wants one
-     normalization in `@cng/spec`.
+     normalization in `@cngeo/spec`.
   3. `indexUrl` as an array (multi-source) is unimplemented and *silently*
      falls back to `DEFAULT_INDEX_URL`, which is itself the relative dev path
      `'./data/index.json'`, not the published URL §10 specifies.
@@ -372,9 +372,9 @@ every documented snippet now runs against real published data, not fixtures.
   placeholder in the root and all six packages; Apache-2.0 (patent grant) or
   BSD-3-Clause are the plausible alternatives and it is a one-line change in
   seven files. Also still open from before: source.coop login · npm scope
-  (`@cng`, resolved) · gbOpen ADM3/4.
+  (`@cngeo`, resolved) · gbOpen ADM3/4.
 - **NEXT (recommended order before any npm publish):** (1) one normalization
-  of attribution casing in `@cng/spec`; (2) make a blocked handle's `result`
+  of attribution casing in `@cngeo/spec`; (2) make a blocked handle's `result`
   reject as specified, or rename the promise; (3) parallel row-group reads —
   838 requests for one S2 query is the biggest remaining performance lever;
   (4) a prebundled hyparquet to collapse the 27-file cold-load waterfall;
@@ -498,7 +498,7 @@ exist.
    whole prominence component to a measured no-op on the index that
    populates it most widely. Drift #5.
 4. **Format load state is observable.** `onFormatState(handler) =>
-   unsubscribe` on the download-core registry, fired on registration and on
+   unsubscribe` on the extract-core registry, fired on registration and on
    every lazy `load()` transition. Replaces portolan-browser's polling
    (it was bumping a reactivity counter to re-read `formats()`).
 
@@ -531,7 +531,7 @@ exist.
    instead of *silently* loading the default — drift #3's real hazard was
    the silence, not the missing feature.
 
-**Performance (download-core)**
+**Performance (extract-core)**
 
 10. **Parallel row-group reads: 11x, measured end to end.**
     `maxConcurrentRequests` was documented with a default of 12 and read by
@@ -643,7 +643,7 @@ exist.
   instruction; geometry is still read internally whenever row-level
   filtering needs it (`columns.js`'s `geometryNeededForFilter`) — is
   documented there and in the design doc's §3.4 amendment below. Tests:
-  `packages/download-core/test/infer-table.test.js`,
+  `packages/extract-core/test/infer-table.test.js`,
   `columns.test.js`, `drop-geometry.test.js`.
 - **`limit: 0`** now returns zero rows instead of one. Called it a bug fix.
 - The **measurement discrepancy I thought I had found is not real** —
@@ -682,7 +682,7 @@ lock the data layer before widget APIs in E3/E5 are finalized.
 cng-map-widgets/
   PLAN.md
   experiments/        # e0-data-recon/ e1-search-index/ e2-geometry/ ...
-  packages/           # geocoder-core/ download-core/ upload-core/
+  packages/           # geocoder-core/ extract-core/ upload-core/
                       # maplibre/ openlayers/
   tools/              # index-builder/ mirror-builder/
   examples/           # firms-explorer/ s2-footprints/
@@ -702,7 +702,7 @@ marked for Chris to override):
    hyparquet; we follow. hyparquet(+writer) is the core engine; DuckDB-WASM
    is an opt-in heavy plugin and a benchmark baseline only. GeoParquet
    output = hyparquet-writer + hand-built geo metadata (scoped into E5).
-3. **Download bounds:** `download-core` takes `Area` **plus** first-class
+3. **Download bounds:** `extract-core` takes `Area` **plus** first-class
    filters (time window, column predicates, column projection), gives a
    pre-download row/byte estimate from parquet metadata, and streams via
    File System Access API; refusal path above a configurable ceiling.

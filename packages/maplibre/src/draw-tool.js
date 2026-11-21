@@ -1,15 +1,15 @@
-// @cng/maplibre -- createDrawTool (design doc §5.2, un-demoted from §8's
+// @cngeo/maplibre -- createDrawTool (design doc §5.2, un-demoted from §8's
 // "specified here, not implemented" table). Three tools: rectangle (drag),
 // polygon (click vertices, double-click/Enter to close) and viewport (one
 // click, no drag). Each emits an `Area` with `provenance.source: 'draw'`,
-// built through `@cng/spec`'s `buildArea` -- this file never constructs an
+// built through `@cngeo/spec`'s `buildArea` -- this file never constructs an
 // Area field by hand, per §5.1's "an adapter must not construct an Area
-// from raw coordinates without going through @cng/spec's normalizer."
+// from raw coordinates without going through @cngeo/spec's normalizer."
 //
 // POLYGON, AND WHY IT IS HERE NOW. This file used to say polygon was out
 // of scope, warn when it was declared and throw from `arm('polygon')`, on
 // the grounds that "a half-working draw tool is worse than none" and that a
-// host needing it could reach for terra-draw plus `@cng/upload-core`'s
+// host needing it could reach for terra-draw plus `@cngeo/upload-core`'s
 // `areaFromGeoJson`. That escape hatch turned out to cost ~262 KB of CDN
 // dependency (the figure edit-tool.js measured for terra-draw + its
 // MapLibre adapter) for what is, below, about a hundred lines of click
@@ -22,9 +22,9 @@
 // The geometry helpers stay pure and exported for the same reason the
 // rectangle ones are: they are the part worth unit-testing without a map.
 
-import { buildArea } from '@cng/spec';
+import { buildArea } from '@cngeo/spec';
 
-/** @typedef {import('@cng/spec').Area} Area */
+/** @typedef {import('@cngeo/spec').Area} Area */
 /** @typedef {[number, number]} LngLat */
 
 // Below this, a mousedown+mouseup with no real drag (a stray click, or a

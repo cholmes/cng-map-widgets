@@ -1,8 +1,8 @@
-// @cng/openlayers -- the outline layer (design doc §5.1 item 3, §5.2).
+// @cngeo/openlayers -- the outline layer (design doc §5.1 item 3, §5.2).
 //
 // Renders `Area.geometry`, and optionally a dashed "ghost" of
 // `Area.filterGeometry` when it differs from the display geometry.
-// Mirrors @cng/maplibre/src/area-layer.js, but every geometry handed to
+// Mirrors @cngeo/maplibre/src/area-layer.js, but every geometry handed to
 // OL must first go through the projection bridge ("in" direction): Area
 // geometry is always EPSG:4326 (design doc §1), OL vector sources render
 // in the view's projection.
@@ -18,7 +18,7 @@ import { projectGeometry, isMercatorCode } from './projection.js';
 import { olTransform } from './ol-proj-bridge.js';
 import { fitAreaBounds } from './fit-bounds.js';
 
-/** @typedef {import('@cng/spec').Area} Area */
+/** @typedef {import('@cngeo/spec').Area} Area */
 
 /**
  * @typedef {{

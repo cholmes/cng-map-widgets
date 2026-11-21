@@ -1,4 +1,4 @@
-// @cng/format-shapefile -- .shp/.shx binary writer (ESRI Shapefile Technical
+// @cngeo/format-shapefile -- .shp/.shx binary writer (ESRI Shapefile Technical
 // Description, 1998). Zero dependencies. Mixed-endianness is the classic
 // gotcha this file gets right deliberately: file-header lengths and every
 // per-record header are BIG-endian int32; everything else (version, shape
@@ -16,7 +16,7 @@ export function shapeFamilyOf(geojsonType) {
   if (geojsonType === 'LineString' || geojsonType === 'MultiLineString') return 'PolyLine';
   if (geojsonType === 'Point') return 'Point';
   if (geojsonType === 'MultiPoint') return 'MultiPoint';
-  throw new Error(`@cng/format-shapefile: unsupported geometry type "${geojsonType}"`);
+  throw new Error(`@cngeo/format-shapefile: unsupported geometry type "${geojsonType}"`);
 }
 
 /** Shoelace signed area; positive = counter-clockwise in standard (y-up) orientation. */
@@ -167,7 +167,7 @@ export function buildShapeRecordContent(shapeType, geometry) {
   if (shapeType === SHAPE_TYPE.MultiPoint) return buildMultiPointRecord(geometry.coordinates);
   if (shapeType === SHAPE_TYPE.Polygon) return buildPartsRecord(shapeType, polygonRingsForShapefile(geometry));
   if (shapeType === SHAPE_TYPE.PolyLine) return buildPartsRecord(shapeType, linePartsFor(geometry));
-  throw new Error(`@cng/format-shapefile: unsupported shape type ${shapeType}`);
+  throw new Error(`@cngeo/format-shapefile: unsupported shape type ${shapeType}`);
 }
 
 /**

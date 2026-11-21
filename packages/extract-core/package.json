@@ -1,0 +1,50 @@
+{
+  "name": "@cngeo/extract-core",
+  "version": "0.2.0",
+  "description": "Clip-free, server-free dataset download in the browser: STAC/Portolan collection resolution, a metadata-only pruning cascade (partition -> part bbox/time -> row-group stats -> row), pre-download estimates with a ceiling and an explicit refusal path, streaming sinks, and geojson + geoparquet writers.",
+  "keywords": [
+    "geoparquet",
+    "parquet",
+    "hyparquet",
+    "download",
+    "stac",
+    "portolan",
+    "spatial-filter",
+    "row-group-pruning",
+    "cloud-native",
+    "cng"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@cngeo/spec": "0.2.0"
+  },
+  "devDependencies": {
+    "hyparquet": "1.33.0",
+    "hyparquet-compressors": "1.1.3",
+    "hyparquet-writer": "0.18.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cholmes/cng-map-widgets.git",
+    "directory": "packages/extract-core"
+  },
+  "homepage": "https://github.com/cholmes/cng-map-widgets#readme",
+  "bugs": {
+    "url": "https://github.com/cholmes/cng-map-widgets/issues"
+  }
+}

@@ -6,7 +6,7 @@
 <title>cng-map-widgets E3 demo — geocoder + OpenLayers</title>
 <!--
   Minimal twin of index.html (the MapLibre demo), added only to exercise
-  @cng/openlayers's GeocoderControl live during its UX-polish pass --
+  @cngeo/openlayers's GeocoderControl live during its UX-polish pass --
   same Geocoder wiring, same ?index= switch, OL's Map/View/TileLayer in
   place of maplibre-gl's Map. `ol` is a peer dependency: pinned exact CDN
   URL per design doc §4.2, same pattern as maplibre-gl's <script> tag in
@@ -23,9 +23,9 @@
 <script type="importmap">
 {
   "imports": {
-    "@cng/spec": "../../packages/spec/src/index.js",
-    "@cng/geocoder-core": "../../packages/geocoder-core/src/index.js",
-    "@cng/openlayers": "../../packages/openlayers/src/index.js",
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/geocoder-core": "../../packages/geocoder-core/src/index.js",
+    "@cngeo/openlayers": "../../packages/openlayers/src/index.js",
     "ol/": "https://cdn.jsdelivr.net/npm/ol@10.11.0/",
     "rbush": "https://cdn.jsdelivr.net/npm/rbush@4.0.1/+esm"
   }
@@ -41,8 +41,8 @@ import Map from 'ol/Map.js';
 import View from 'ol/View.js';
 import TileLayer from 'ol/layer/Tile.js';
 import OSM from 'ol/source/OSM.js';
-import { Geocoder } from '@cng/geocoder-core';
-import { GeocoderControl } from '@cng/openlayers';
+import { Geocoder } from '@cngeo/geocoder-core';
+import { GeocoderControl } from '@cngeo/openlayers';
 
 const statusEl = document.getElementById('status');
 function setStatus(text) { statusEl.textContent = text; }

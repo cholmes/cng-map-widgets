@@ -1,6 +1,6 @@
-// @cng/format-gpkg -- GeoJSON <-> WKB, and the GeoPackage binary geometry
+// @cngeo/format-gpkg -- GeoJSON <-> WKB, and the GeoPackage binary geometry
 // header (OGC GeoPackage spec, clause "GeoPackage Binary Header"). No
-// dependency: hyparquet-writer (which download-core's own geoparquet
+// dependency: hyparquet-writer (which extract-core's own geoparquet
 // plugin uses for the same job) is a CDN-loaded, parquet-specific
 // dependency this package has no other reason to pull in, and the encode
 // itself is ~80 lines of DataView arithmetic. Handles the six geometry
@@ -35,7 +35,7 @@ function wkbByteLength(geometry) {
     case 'MultiPolygon':
       return 1 + 4 + 4 + geometry.coordinates.reduce((sum, poly) => sum + 1 + 4 + ringsByteLength(poly), 0);
     default:
-      throw new Error(`@cng/format-gpkg: unsupported geometry type "${geometry.type}" (supports Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon)`);
+      throw new Error(`@cngeo/format-gpkg: unsupported geometry type "${geometry.type}" (supports Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon)`);
   }
 }
 
@@ -107,7 +107,7 @@ function writeGeometry(view, c, geometry) {
       }
       return;
     default:
-      throw new Error(`@cng/format-gpkg: unsupported geometry type "${geometry.type}"`);
+      throw new Error(`@cngeo/format-gpkg: unsupported geometry type "${geometry.type}"`);
   }
 }
 
@@ -133,7 +133,7 @@ function writeRings(view, c, rings) {
 /**
  * Peek a WKB buffer's geometry type code and byte order without fully
  * decoding it -- used to pass through already-WKB-encoded batch geometry
- * (the common case: download-core's engine hands rows WKB bytes straight
+ * (the common case: extract-core's engine hands rows WKB bytes straight
  * from the source parquet file) without a decode+re-encode round trip.
  * @param {Uint8Array} bytes
  */
@@ -155,10 +155,10 @@ export function wkbTypeName(code) {
 
 /**
  * True when `v` is already a decoded GeoJSON geometry object rather than
- * raw WKB bytes -- the same ambiguity download-core's own
+ * raw WKB bytes -- the same ambiguity extract-core's own
  * `wkb-geometry.js` documents (a GeoParquet-2.0 source hands back decoded
  * objects for its native-GEOMETRY-logical-type column). This package has
- * no dependency on download-core, so it re-checks the same shape locally.
+ * no dependency on extract-core, so it re-checks the same shape locally.
  * @param {unknown} v
  */
 export function isDecodedGeometry(v) {
@@ -251,7 +251,7 @@ export function bboxOfWkb(bytes) {
         readRings(c, le);
       }
     } else {
-      throw new Error(`@cng/format-gpkg: bboxOfWkb: unsupported geometry type ${type}`);
+      throw new Error(`@cngeo/format-gpkg: bboxOfWkb: unsupported geometry type ${type}`);
     }
   }
   readGeom({ offset: 0 });
