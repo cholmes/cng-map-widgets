@@ -1,0 +1,115 @@
+# Publish the @cngeo packages to npm with trusted publishing (OIDC).
+#
+# No npm token is stored anywhere. The job proves its identity to npm with a
+# short-lived GitHub OIDC token, which npm exchanges for a publish
+# credential. The `id-token: write` permission below is what lets the runner
+# mint that token. Without it the publish fails.
+#
+# BEFORE THE FIRST RUN, each package needs a trusted publisher on npm:
+#
+#   npmjs.com -> Packages -> <package> -> Settings -> Trusted publishing
+#
+#   Organization or user   cholmes
+#   Repository            cng-map-widgets
+#   Workflow filename     release.yml
+#   Environment           (leave empty)
+#
+# Every field is case-sensitive. The workflow filename is the file name
+# alone, not a path. A configuration expires if it does not publish inside 2
+# days, so add the 11 entries just before a release, not in advance.
+#
+# npm cannot attach a trusted publisher to a package that does not exist, so
+# a package's FIRST version goes up with a short-lived granular token. Later
+# versions use this workflow.
+#
+# The run publishes nothing when a version is already on the registry, so a
+# re-run after a partial failure is safe.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Pack every package and publish none of them
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  # Trusted publishing reads this. Keep it.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          # `registry-url` also writes an .npmrc that points NODE_AUTH_TOKEN at
+          # the job's GitHub token. npm then authenticates with that instead of
+          # the OIDC exchange, and the publish fails as unauthorized. The
+          # publish step unsets the variable for that reason.
+          registry-url: 'https://registry.npmjs.org'
+          # A release build resolves every dependency from the registry.
+          package-manager-cache: false
+
+      # Trusted publishing needs npm 11.5.1 or later. ubuntu-latest ships an
+      # older npm with Node 24.
+      - name: Install a version of npm that supports OIDC
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Verify the documentation snippets against live catalogs
+        run: npm run verify:docs
+
+      # @cngeo/spec first. The other ten declare it as a dependency, so it has
+      # to resolve from the registry before they go up.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ''
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -euo pipefail
+          unset NODE_AUTH_TOKEN
+
+          order="spec geocoder-core upload-core download-core maplibre openlayers
+                 raster-core format-gpkg format-shapefile format-flatgeobuf
+                 format-extras"
+
+          for pkg in $order; do
+            dir="packages/$pkg"
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::group::$name@$version (dry run)"
+              (cd "$dir" && npm publish --dry-run)
+              echo "::endgroup::"
+              continue
+            fi
+
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is on the registry already. Skipping."
+              continue
+            fi
+
+            echo "::group::publish $name@$version"
+            (cd "$dir" && npm publish --access public)
+            echo "::endgroup::"
+          done
+
+      - name: Report what the registry now holds
+        if: ${{ !inputs.dry-run }}
+        run: |
+          for pkg in packages/*/; do
+            name=$(node -p "require('./$pkg/package.json').name")
+            printf '%-28s %s\n' "$name" "$(npm view "$name" version 2>&1 || echo 'NOT FOUND')"
+          done
