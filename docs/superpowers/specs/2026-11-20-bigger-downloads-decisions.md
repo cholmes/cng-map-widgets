@@ -23,7 +23,7 @@ entirely", and that is what was built: the memory-sink branch short-circuited
 ahead of the buffering branch, making GeoPackage **unbounded** on a
 `memorySink`. Spec §7.3 rule 3 has no sink condition, and §7.8's note exists
 to stop the *blobBytes* cap applying to `memorySink`, not to waive a format's
-own buffering cost — gpkg's 3.5× is spent inside the writer and is identical
+own buffering cost — gpkg's 2.9× is spent inside the writer and is identical
 wherever the bytes land. A buffering format is `memoryBudget / memoryFactor`
 regardless of sink.
 
