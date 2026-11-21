@@ -149,8 +149,21 @@ export function download(dataset, area, filter, output, options = {}) {
    * `setState('failed'|'cancelled')` logic `run()`'s own catch already
    * has, so this function does not duplicate any of that.
    */
+  /**
+   * A cancel that landed while planning, or while a save dialog was open,
+   * found no ceiling gate to release (`cancel()` only resolves a gate that
+   * already exists) and is now awaiting `runSettled`. Planning does not
+   * always notice the abort itself -- a custom `fetch` may ignore the
+   * signal, and `autoSink`'s picker knows nothing of it -- so without
+   * this check the run would go on to arm the gate and sit `blocked`
+   * with `cancel()` never resolving, or open the sink and download.
+   */
+  function throwIfCancelRequested() {
+    if (cancelRequested || controller.signal.aborted) throw new CancelledError('Download cancelled during planning.');
+  }
+
   async function runRawDownload() {
-    const rawPlan = await planRaw(dataset, area, filter, { fetch: options.fetch, signal: controller.signal });
+    const rawPlan = await planRaw(dataset, area, filter, { fetch: options.fetch, signal: controller.signal, ceiling: options.ceiling });
 
     // Mirrors the normal path's design doc §7.8 ordering: the sink is
     // created BEFORE the ceiling gate (and before `rawEstimate`, which
@@ -160,6 +173,7 @@ export function download(dataset, area, filter, output, options = {}) {
 
     const est = options.estimateOverride ?? (await rawEstimate(rawPlan, filter, { ...options, sink }));
 
+    throwIfCancelRequested();
     resolveEstimate(est);
     estimateSettled = true;
     emitter.emit('estimate', est);
@@ -326,6 +340,7 @@ export function download(dataset, area, filter, output, options = {}) {
       }
       const est = options.estimateOverride ?? (await finalizeEstimate(plan, area, filter, { ...options, output, sink, formatOverride: format, outputBytesOverride: format.estimateBytes(schema, plan.rows, estimateCtx) }));
 
+      throwIfCancelRequested();
       resolveEstimate(est);
       estimateSettled = true;
       emitter.emit('estimate', est);
@@ -470,7 +485,16 @@ export function download(dataset, area, filter, output, options = {}) {
       // is a no-op in both cases (sinks.js's `managedWritable` guard), so
       // this can never abort a commit that already happened, nor double
       // an abort the inner catch already performed.
-      await sink?.abort(cancelReason ?? cngErr.message);
+      //
+      // That is true of this package's own sinks. A host-supplied
+      // `options.sink` promises no such thing -- its `abort()` may throw
+      // on a writer it never created -- and a throw here would skip the
+      // `current.reject` below and leave `handle.result` pending forever.
+      try {
+        await sink?.abort(cancelReason ?? cngErr.message);
+      } catch {
+        // The run has already failed with `cngErr`; that is the error to report.
+      }
       // A no-op when the ceiling gate already rejected this deferred and
       // the caller then cancelled instead of accepting: the handle's
       // `state` becomes `'cancelled'`, but the promise a caller is holding

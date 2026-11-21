@@ -163,9 +163,13 @@ export function rawZipEntryNames(selectedParts) {
  * @param {{ url: string }[]} selectedParts
  * @returns {number}
  */
-function zipOverheadBytes(selectedParts) {
+function zipOverheadBytes(selectedParts, attribution = []) {
   const { parts: partNames, attribution: attributionName } = rawZipEntryNames(selectedParts);
-  let overhead = 0;
+  // The `ATTRIBUTION.txt` entry's CONTENT, not just its headers: it lists
+  // every source URL, so on a many-file archive it is tens of KB that an
+  // `exact: true` outputBytes must include. Built by the same function
+  // `runRaw` writes it with, so the two cannot drift.
+  let overhead = new TextEncoder().encode(buildAttributionText(selectedParts, attribution)).length;
   const addEntry = (name) => {
     overhead += localHeader({ name }).length;
     overhead += dataDescriptor({ crc: 0, size: 0 }).length;
@@ -193,38 +197,77 @@ function zipOverheadBytes(selectedParts) {
  * handles that before the presence check, so a declared `BigInt` size is
  * honored here rather than silently falling through to an unnecessary
  * `HEAD`.
+ *
+ * Two exceptions to "never fails the plan":
+ *  - an ABORT is not an uncooperative server. A cancelled signal throws
+ *    `CancelledError`, so a cancel during this phase actually stops the
+ *    run instead of being swallowed with the network errors.
+ *  - when `skipHeads` is set (the selection already exceeds the `files`
+ *    ceiling, see `planRaw`) no HEAD is issued at all: every sizeless
+ *    part stays `null` and `raw-size-unknown` reports it.
+ *
+ * The HEADs run `HEAD_CONCURRENCY` at a time, not serially: a
+ * STAC-enumerated dataset declares no sizes at all, so a 2,000-file
+ * selection is 2,000 HEADs, and one-at-a-time that is minutes.
  * @param {{ url: string, bytes?: number|bigint }[]} selectedParts
  * @param {typeof fetch} fetchImpl
  * @param {AbortSignal|undefined} signal
+ * @param {{ skipHeads?: boolean }} [opts]
  * @returns {Promise<{ sizes: Map<string, number|null>, requests: number }>}
  */
-async function resolvePartSizes(selectedParts, fetchImpl, signal) {
+async function resolvePartSizes(selectedParts, fetchImpl, signal, opts = {}) {
   /** @type {Map<string, number|null>} */
   const sizes = new Map();
-  let requests = 0;
+  /** @type {{ url: string }[]} */
+  const sizeless = [];
   for (const part of selectedParts) {
     const declaredBytes = toNumber(part.bytes);
     if (typeof declaredBytes === 'number') {
       sizes.set(part.url, declaredBytes);
-      continue;
+    } else {
+      sizes.set(part.url, null); // keeps `selectedParts` order in the map
+      sizeless.push(part);
     }
-    requests += 1;
-    let size = null;
-    try {
-      const res = await fetchImpl(part.url, { method: 'HEAD', signal });
-      const header = res?.ok ? res.headers?.get?.('content-length') : null;
-      if (header != null) {
-        const n = Number(header);
-        if (Number.isFinite(n)) size = n;
-      }
-    } catch {
-      // Network failure, CORS, an abort -- leave this part's size null
-      // rather than letting one uncooperative server fail the whole plan.
-    }
-    sizes.set(part.url, size);
   }
+  if (opts.skipHeads || sizeless.length === 0) return { sizes, requests: 0 };
+
+  const throwIfAborted = () => {
+    if (signal?.aborted) throw cancellationOf(null, signal, 'resolving file sizes');
+  };
+  let requests = 0;
+  let cursor = 0;
+  async function worker() {
+    for (;;) {
+      throwIfAborted();
+      const part = sizeless[cursor++];
+      if (!part) return;
+      requests += 1;
+      try {
+        const res = await fetchImpl(part.url, { method: 'HEAD', signal });
+        const header = res?.ok ? res.headers?.get?.('content-length') : null;
+        if (header != null) {
+          const n = Number(header);
+          if (Number.isFinite(n)) sizes.set(part.url, n);
+        }
+      } catch {
+        // Network failure or CORS -- leave this part's size null rather
+        // than letting one uncooperative server fail the whole plan. An
+        // abort is NOT that case:
+        throwIfAborted();
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(HEAD_CONCURRENCY, sizeless.length) }, worker);
+  // allSettled, then rethrow: a worker that threw while its siblings were
+  // still in flight must not leave their later rejections unhandled.
+  const settled = await Promise.allSettled(workers);
+  const failed = settled.find((s) => s.status === 'rejected');
+  if (failed) throw failed.reason;
   return { sizes, requests };
 }
+
+/** How many size-resolving `HEAD`s `resolvePartSizes` keeps in flight. */
+const HEAD_CONCURRENCY = 8;
 
 /**
  * Decide which whole files a raw-passthrough download will fetch, and
@@ -278,7 +321,15 @@ export async function planRaw(dataset, area, filter, options = {}) {
     );
   }
 
-  const { sizes, requests: headRequests } = await resolvePartSizes(selected, fetchImpl, signal);
+  // A selection already over the `files` ceiling is going to be refused on
+  // that count alone (`rawEstimate`), whatever the sizes turn out to be --
+  // so don't spend one HEAD per file (50,000 of them, on a big enough
+  // dataset) finding out. `files` does not depend on the sink, so
+  // `sink: null` here reads the same limit `rawEstimate` will.
+  const filesCeiling = effectiveCeiling({ format: rawFormatDescriptor, sink: null, overrides: options.ceiling }).files;
+  const { sizes, requests: headRequests } = await resolvePartSizes(selected, fetchImpl, signal, {
+    skipHeads: selected.length > filesCeiling,
+  });
   requests += headRequests;
 
   // `resolved` is the fully-concrete `DatasetDescriptor` `resolveDataset`
@@ -327,7 +378,8 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
     : boundedRange(sumKnownBytes, Infinity, sumKnownBytes, false);
 
   const readBytes = rawBytes; // bytes pulled from storage; no decode changes this.
-  const overhead = selected.length > 1 ? zipOverheadBytes(selected) : 0;
+  const attribution = rawPlan.resolved?.attribution ?? [];
+  const overhead = selected.length > 1 ? zipOverheadBytes(selected, attribution) : 0;
   const outputBytes = overhead > 0 ? addBounded(rawBytes, boundedExact(overhead)) : rawBytes;
 
   const rowCounts = selected.map((p) => toNumber(p.rowCount));
@@ -335,6 +387,13 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
   const rows = allRowsKnown ? boundedExact(rowCounts.reduce((n, r) => n + r, 0)) : null;
 
   const warnings = [...planWarnings];
+
+  // Same warning, same shape, as `finalizeEstimate` on the decoded path:
+  // this is the path that hands out the complete original files, so it is
+  // the last place a licence obligation should go unmentioned. It matters
+  // most for a single file, which gets no `ATTRIBUTION.txt` beside it.
+  const shareAlike = attribution.filter((a) => a.shareAlike ?? a.share_alike);
+  if (shareAlike.length > 0) warnings.push({ code: 'share-alike', attribution: shareAlike });
 
   // Case 1 (design doc §7.5): at least one selected part's size could not
   // be resolved (no declared `bytes` and a failed/CORS-blocked/missing
@@ -433,8 +492,12 @@ export async function rawEstimate(rawPlan, filter, options = {}) {
   // stays the hard backstop per §7.5 regardless of size knowledge.
   const knownOutputBytes = sumKnownBytes + overhead;
   const ceiling = effectiveCeiling({ format: rawFormatDescriptor, sink: options.sink ?? null, overrides: options.ceiling });
+  // No `rows` breach on this path. The row ceiling protects a decode, and
+  // nothing is decoded here; checking it would also be arbitrary, refusing
+  // a dataset whose parts happen to declare row counts while letting the
+  // identical files through when they don't (`rows === null`). Bytes and
+  // file count are the limits that mean something for a byte copy.
   const breaches = [];
-  if (rows && rows.max > ceiling.rows) breaches.push('rows');
   if (knownOutputBytes > ceiling.outputBytes) breaches.push('outputBytes');
   if (sumKnownBytes > ceiling.readBytes) breaches.push('readBytes');
   if (selected.length > ceiling.files) breaches.push('files');

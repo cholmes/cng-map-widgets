@@ -110,6 +110,8 @@ export function blobSink(opts = {}) {
   let managed = null;
   return {
     kind: 'blob',
+    /** The limit this sink refuses above -- read by `effectiveCeiling`, so the up-front ceiling matches the sink's own. */
+    maxBytes,
     get blob() {
       return new Blob(chunks, { type: mediaType });
     },

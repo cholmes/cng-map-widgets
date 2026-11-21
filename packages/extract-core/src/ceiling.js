@@ -101,6 +101,12 @@ export function effectiveCeiling({ format, sink, overrides = {} } = {}) {
   const base = baseCeiling();
   const blobBytes = overrides.blobBytes ?? base.blobBytes;
   const memoryBudget = overrides.memoryBudget ?? MEMORY_BUDGET_DEFAULT;
+  // What a blob-backed destination will really accept. `blobBytes` is only
+  // this package's DEFAULT for that; a `blobSink({ maxBytes })` the caller
+  // configured larger (or smaller) states its true limit on `sink.maxBytes`,
+  // and clamping it to the default would refuse up front a download the
+  // sink itself would take. An explicit `overrides.blobBytes` still wins.
+  const blobLimit = overrides.blobBytes ?? (typeof sink?.maxBytes === 'number' ? sink.maxBytes : blobBytes);
 
   let outputBytes;
   if (Object.prototype.hasOwnProperty.call(overrides, 'outputBytes')) {
@@ -114,7 +120,7 @@ export function effectiveCeiling({ format, sink, overrides = {} } = {}) {
       // end-to-end (see module doc) -- while `sink == null` is treated
       // the same as `blob`, the conservative choice when the real sink
       // isn't known yet.
-      outputBytes = sink?.kind === 'memory' ? UNBOUNDED_BYTES : sink == null || sink.kind === 'blob' ? blobBytes : UNBOUNDED_BYTES;
+      outputBytes = sink?.kind === 'memory' ? UNBOUNDED_BYTES : sink == null || sink.kind === 'blob' ? blobLimit : UNBOUNDED_BYTES;
     } else {
       // Buffering: the format's own memory cost (JS row arrays, a wasm
       // heap, an exported copy, ...) is spent inside the writer and
@@ -134,7 +140,7 @@ export function effectiveCeiling({ format, sink, overrides = {} } = {}) {
       // no real write-time cap to predict. `sink == null` is treated the
       // same conservative way as the streaming branch: as if it were `blob`.
       if (sink == null || sink.kind === 'blob') {
-        outputBytes = Math.min(outputBytes, blobBytes);
+        outputBytes = Math.min(outputBytes, blobLimit);
       }
     }
   }

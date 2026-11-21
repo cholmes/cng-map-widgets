@@ -9,7 +9,7 @@ import { openParquetFile } from './parquet-io.js';
 import { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, readBytesForRowGroups, coveringPaths, avgColumnBytesPerRow } from './prune.js';
 import { resolveOutputColumns, resolveReadColumns, geometryNeededForFilter } from './columns.js';
 import { effectiveCeiling, requirementsOf } from './ceiling.js';
-import { getFormat } from './registry.js';
+import { getFormat, formats } from './registry.js';
 import { boundedExact, boundedRange, sumBounded, capBounded, isEstimateWide } from './bounded.js';
 import { sha256Hex } from './digest.js';
 import { bboxesIntersect } from '@cngeo/spec';
@@ -399,9 +399,29 @@ export async function estimate(dataset, area, filter, options = {}) {
  * @param {number} [t0]
  */
 export async function finalizeEstimate(plan, area, filter, options = {}, t0 = performance.now()) {
-  const format = options.formatOverride ?? (options.output ? getFormat(options.output.format) : undefined);
+  let format = options.formatOverride ?? (options.output ? getFormat(options.output.format) : undefined);
+  // A lazy format that has not loaded yet is invisible to `getFormat()` --
+  // but its registered descriptor already declares everything this
+  // function reads (`streaming`, `capabilities.memoryFactor`, and usually
+  // `estimateBytes`), which is the whole reason a descriptor carries them.
+  // Without this, a pre-flight `estimate(..., { output })` for csv/gpkg/
+  // flatgeobuf/shapefile fell back to the generic byte model and the
+  // factor-3 buffering ceiling, disagreed with what `download()` then did
+  // with the real plugin, and changed its own answer once the format had
+  // loaded. `suggestedFormatsFor` (download.js) already reads descriptors
+  // this way. Listing never triggers a `load()`.
+  let ceilingFormat = format;
+  if (!format && options.output) {
+    const descriptor = formats().find((f) => f.lazy && f.id === options.output.format);
+    if (descriptor) {
+      ceilingFormat = descriptor;
+      // A descriptor without `estimateBytes` still supplies the ceiling;
+      // the generic byte model below stands in for the size.
+      if (typeof descriptor.estimateBytes === 'function') format = descriptor;
+    }
+  }
   const sink = options.sink ?? null;
-  const ceiling = effectiveCeiling({ format, sink, overrides: options.ceiling });
+  const ceiling = effectiveCeiling({ format: ceilingFormat, sink, overrides: options.ceiling });
 
   // Whole-branch review item 9 (one-liners): the public `estimate()`/
   // `download()` surface is safe (`format` here only ever comes from

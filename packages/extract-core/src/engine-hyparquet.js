@@ -7,7 +7,7 @@ import { planRequest } from './estimate.js';
 import { readRows } from './parquet-io.js';
 import { rowMatchesArea } from './spatial.js';
 import { evaluateWhere } from './predicate.js';
-import { coveringPaths } from './prune.js';
+import { coveringPaths, timeRowPredicate } from './prune.js';
 import { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 
 export const HYPARQUET_ENGINE_ID = 'hyparquet';
@@ -202,6 +202,12 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
   /** @type {Promise<void>|null} */
   let progressBarrier = null;
 
+  // `filter.time`, per row. Only with a declared time column: it is what
+  // `resolveReadColumns` added to the read set, and without one there is
+  // no cell to test (`finalizeEstimate` already warns `no-statistics`).
+  const timeColumn = plan.table?.timeColumn ?? null;
+  const timeOk = timeColumn ? timeRowPredicate(filter.time) : null;
+
   /** The per-row filter the old sequential loop ran inline. Pure; no awaits. */
   function matchRows(decoded) {
     const cache = new WeakMap();
@@ -214,6 +220,7 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
         const ok = rowMatchesArea({ featureBBox, featureGeometry }, area, filter.spatial);
         if (!ok) continue;
       }
+      if (timeOk && !timeOk(row[timeColumn])) continue;
       if (!evaluateWhere(filter.where, row)) continue;
       matched.push(row);
       // No single row group can contribute more than `limit` rows to the

@@ -702,6 +702,10 @@ function resetDownloadUi() {
   // step -- a format is downloadable the instant an area/dataset exist,
   // which is always true since "no area" means the whole dataset).
   // startDownload() disables it only for the duration of an actual run.
+  // It IS re-enabled here: a reset abandons whatever flow disabled it (a
+  // preflight estimate in flight, or a confirm dialog this reset just hid
+  // and whose promise will now never settle), and nothing else would.
+  document.getElementById('downloadBtn').disabled = false;
   document.getElementById('cancelBtn').disabled = true;
   lastEstimate = null;
   activeHandle = null;
@@ -709,8 +713,11 @@ function resetDownloadUi() {
   renderFormatPicker();
 }
 
-function startDownload(formatId, filter, filesSelected) {
-  const entry = currentEntry();
+function startDownload(formatId, filter, filesSelected, entry = currentEntry(), runArea = area) {
+  // `entry` and `runArea` are the ones confirmAndDownload captured at
+  // click time and estimated against -- NOT re-read here. Re-reading them
+  // after its awaits let a dataset switched mid-preflight be downloaded
+  // with the previous dataset's filter.
   // `filter` is the SAME object confirmAndDownload already built and
   // estimated against for the confirm gate (including whatever "Max rows"
   // held at that moment) -- rebuilding it here from the live inputs could
@@ -730,7 +737,7 @@ function startDownload(formatId, filter, filesSelected) {
   window.__cngLastError = null;
 
   const sink = memorySink();
-  const handle = download(entry.dataset, area, filter, output, { sink, ...sizeWarningOptions() });
+  const handle = download(entry.dataset, runArea, filter, output, { sink, ...sizeWarningOptions() });
   activeHandle = handle;
 
   // Feature 1 auto-fill: download() runs its own internal estimate
@@ -865,6 +872,11 @@ function startDownload(formatId, filter, filesSelected) {
  */
 async function confirmAndDownload(formatId) {
   const entry = currentEntry();
+  // Captured with `entry`: both awaits below (the preflight estimate, the
+  // confirm dialog) leave the dataset select and the map live, so either
+  // can change underneath this flow. `stale()` is how it notices.
+  const runArea = area;
+  const stale = () => currentEntry() !== entry || area !== runArea;
   const filter = buildFilter(entry);
   const infoEl = document.getElementById('estimateInfo');
   const confirmBox = document.getElementById('confirmBox');
@@ -896,9 +908,18 @@ async function confirmAndDownload(formatId) {
     // internally (index.js), so this one call is correct -- and gets the
     // real raw-specific warnings (raw-passthrough-unfiltered etc.) -- for
     // every format, with no special-casing needed here.
-    preflight = await estimate(entry.dataset, area, filter, { output: outputFor(entry, formatId), sink: MEMORY_SINK, ...sizeWarningOptions() });
+    preflight = await estimate(entry.dataset, runArea, filter, { output: outputFor(entry, formatId), sink: MEMORY_SINK, ...sizeWarningOptions() });
   } catch (err) {
+    if (stale()) return; // the switch already reset the UI; this error is about a request nobody is looking at
     infoEl.textContent = `Error: ${err.code ?? 'INTERNAL'} — ${err.message}`;
+    downloadBtn.disabled = false;
+    return;
+  }
+  // The dataset or area changed while the estimate was in flight. That
+  // change already reset this panel for the NEW selection; painting the
+  // old one's estimate over it, or going on to download, would describe
+  // (and fetch) something the user is no longer asking for.
+  if (stale()) {
     downloadBtn.disabled = false;
     return;
   }
@@ -915,6 +936,10 @@ async function confirmAndDownload(formatId) {
       document.getElementById('cancelConfirmBtn').onclick = () => resolve(false);
     });
     confirmBox.style.display = 'none';
+    if (stale()) {
+      downloadBtn.disabled = false;
+      return;
+    }
     if (!proceed) {
       downloadBtn.disabled = false;
       infoEl.textContent = 'Cancelled before starting (large download not confirmed). No bytes were fetched.';
@@ -922,7 +947,7 @@ async function confirmAndDownload(formatId) {
     }
   }
 
-  startDownload(formatId, filter, preflight.files.selected);
+  startDownload(formatId, filter, preflight.files.selected, entry, runArea);
 }
 
 document.getElementById('downloadBtn').addEventListener('click', () => confirmAndDownload(selectedFormat));

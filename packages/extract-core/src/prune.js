@@ -113,6 +113,36 @@ export function pruneRowGroupsByBBox(rowGroups, covering, areaBBoxes, geometryCo
 }
 
 /**
+ * The per-ROW half of a `TimeFilter`: a predicate over one decoded cell of
+ * the time column, with exactly the bounds `pruneRowGroupsByTime` uses on
+ * row-group statistics (`closed`, default `'[)'`). Pruning alone only
+ * discards row groups that lie wholly outside the window; every row of a
+ * group that merely OVERLAPS it survives, so without this test a download
+ * carried rows from outside the requested window, and two adjacent `[)`
+ * windows both carried the rows of any group straddling their boundary.
+ *
+ * A null/missing time is not inside any window and is rejected. A value
+ * that is present but unreadable as a time is KEPT -- the same "cannot
+ * decide, so do not drop" rule the statistics prune follows.
+ * @param {import('./types.js').TimeFilter|undefined} time
+ * @returns {((value: unknown) => boolean)|null} `null` when there is nothing to test.
+ */
+export function timeRowPredicate(time) {
+  if (!time || (!time.start && !time.end)) return null;
+  const startMs = time.start ? Date.parse(time.start) : -Infinity;
+  const endMs = time.end ? Date.parse(time.end) : Infinity;
+  const closed = time.closed ?? '[)';
+  return (value) => {
+    if (value === null || value === undefined) return false;
+    const ms = toEpochMs(value);
+    if (ms === null) return true;
+    const startOk = closed[0] === '[' ? ms >= startMs : ms > startMs;
+    const endOk = closed[1] === ']' ? ms <= endMs : ms < endMs;
+    return startOk && endOk;
+  };
+}
+
+/**
  * Prune row groups by a time column's min/max statistics against a
  * `TimeFilter` window. Stats that are missing or non-comparable leave the
  * row group selected (honest "can't prune" rather than a silent drop).
@@ -404,7 +434,12 @@ export function pruneRowGroupsByWhere(rowGroups, where) {
   };
 }
 
-function toEpochMs(v) {
+/**
+ * A time value -- footer statistic or decoded row cell -- as epoch ms, or
+ * `null` when it cannot be read as one.
+ * @param {unknown} v @returns {number|null}
+ */
+export function toEpochMs(v) {
   if (v instanceof Date) return v.getTime();
   if (typeof v === 'number') return v;
   if (typeof v === 'bigint') return Number(v);

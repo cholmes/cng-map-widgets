@@ -205,7 +205,13 @@ Omit `table` entirely and it is inferred from the first file's parquet schema â€
 | `clip` | designed, **not implemented in core**: refused with `FILTER_REQUIRES_ENGINE`. Clipping mutates features, so it will never be implicit. |
 
 `time.closed` defaults to `'[)'` so adjacent windows tile without
-double-counting.
+double-counting. The window is tested **per row** on the table's declared
+`timeColumn`, with the same bounds the row-group statistics prune uses â€”
+pruning alone only discards row groups wholly outside the window, and
+before 0.3.0 that was all that ran, so a download carried every row of any
+group that merely overlapped it. A row whose time is null is in no window.
+With no declared `timeColumn` there is nothing to test per row; the
+estimate says so with `no-statistics`.
 
 ### `OutputRequest` + `DownloadRequest`
 
