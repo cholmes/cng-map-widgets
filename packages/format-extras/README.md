@@ -1,6 +1,6 @@
 # @cngeo/format-extras
 
-The "nearly free" `@cngeo/download-core` output formats: **CSV** (attributes
+The "nearly free" `@cngeo/extract-core` output formats: **CSV** (attributes
 + WKT geometry) and **Esri JSON** (a REST `FeatureSet` document). Both
 zero-dependency, zero-wasm, and cheap enough to register eagerly.
 
@@ -12,7 +12,7 @@ are exported anyway, for a page that lists every format uniformly through
 `registerLazyFormat` — their `load()` resolves immediately.
 
 ```js
-import { registerFormat } from '@cngeo/download-core';
+import { registerFormat } from '@cngeo/extract-core';
 import { createCsvFormat, createEsriJsonFormat } from '@cngeo/format-extras';
 registerFormat(createCsvFormat());
 registerFormat(createEsriJsonFormat());
@@ -61,7 +61,7 @@ type, and the mixed-type refusal.
 
 `estimateBytes(schema, rows, ctx)` takes an additive, optional third
 argument (`ctx.avgGeometryBytes`: the dataset's own average geometry
-bytes per row, derived from parquet footer statistics by `download-core`).
+bytes per row, derived from parquet footer statistics by `extract-core`).
 Both plugins here, and both of their `LazyFormatDescriptor`s, share one
 implementation each — `estimateCsvBytes` / `estimateEsriJsonBytes`, both
 exported — so a descriptor's estimate and its loaded plugin's can never

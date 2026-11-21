@@ -23,7 +23,7 @@ Queries are place names; results are boundaries. No street addresses, ever.
 2. `@cngeo/geocoder-core` reads it over HTTP range requests and emits an
    **`Area`**.
 3. `@cngeo/upload-core` emits the same `Area` from a GeoJSON file.
-4. `@cngeo/download-core` consumes an `Area` + a `DatasetDescriptor` +
+4. `@cngeo/extract-core` consumes an `Area` + a `DatasetDescriptor` +
    a `FilterSpec` and writes a file.
 5. There is **no server and no build step**. An import map is the setup.
 
@@ -50,7 +50,7 @@ OV  https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.
     "@cngeo/spec":            "/packages/spec/src/index.js",
     "@cngeo/geocoder-core":   "/packages/geocoder-core/src/index.js",
     "@cngeo/upload-core":     "/packages/upload-core/src/index.js",
-    "@cngeo/download-core":   "/packages/download-core/src/index.js",
+    "@cngeo/extract-core":   "/packages/extract-core/src/index.js",
     "@cngeo/maplibre":        "/packages/maplibre/src/index.js"
   }
 }
@@ -100,7 +100,7 @@ import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import * as writer from 'hyparquet-writer';
 import { setHyparquetModules as setGeocoderModules } from '@cngeo/geocoder-core';
-import { setHyparquetModules as setDownloadModules } from '@cngeo/download-core';
+import { setHyparquetModules as setDownloadModules } from '@cngeo/extract-core';
 
 setGeocoderModules({ hyparquet, compressors });
 setDownloadModules({ hyparquet, compressors, writer });   // `writer` only for GeoParquet output
@@ -216,7 +216,7 @@ const restored = fromAreaDocument(JSON.parse(JSON.stringify(doc)));  // validate
 
 ```js
 // Attribution: read BOTH key styles. A geocoder Area's entries come
-// straight off the manifest (snake_case); download-core's derived ones are
+// straight off the manifest (snake_case); extract-core's derived ones are
 // camelCase. Checking only `shareAlike` silently misses ODbL obligations.
 for (const a of area.provenance.attribution) {
   const shareAlike = a.shareAlike ?? a.share_alike;
@@ -284,7 +284,7 @@ literally named `bbox` — i.e. a full scan. Declare it when you know it.
 ### 3b. Hive-partitioned (`kind: 'hive'`) — derive it, don't write it
 
 ```js
-import { resolveDataset, estimate } from '@cngeo/download-core';
+import { resolveDataset, estimate } from '@cngeo/extract-core';
 
 const dataset = await resolveDataset({
   spec: 'cng-dataset/1.0',
@@ -383,7 +383,7 @@ source: {
 ### Checking a collection before building anything
 
 ```js
-import { collectionDownloadSupport } from '@cngeo/download-core';
+import { collectionDownloadSupport } from '@cngeo/extract-core';
 
 const collection = await fetch(collectionUrl).then((r) => r.json());
 const support = collectionDownloadSupport(collection, { baseUrl: collectionUrl });
@@ -402,7 +402,7 @@ dialog. That is what this function is for.
 ## Recipe 4 — run a download, handling the estimate and the ceiling
 
 ```js
-import { download, memorySink, autoSink } from '@cngeo/download-core';
+import { download, memorySink, autoSink } from '@cngeo/extract-core';
 
 // In a browser, from a user gesture (showSaveFilePicker needs one):
 //   const sink = await autoSink({ suggestedName: 'fields.geojson' });
@@ -598,7 +598,7 @@ And separately again: a GeoParquet **2.0** file (native Parquet `GEOMETRY`
 logical type — FIRMS, s2-stac-geoparquet) is auto-decoded *unconditionally*,
 independent of the `geoparquet` flag, which only ever governed the older
 sidecar-metadata convention. Use `decodeWkbGeometry` from
-`@cngeo/download-core`, which normalizes bytes-or-object.
+`@cngeo/extract-core`, which normalizes bytes-or-object.
 
 ### 2. `area.filterGeometry` can be `null`
 
@@ -725,7 +725,7 @@ rely on the check catching a rebuilt catalog.
 ## Error handling
 
 ```js
-import { isCngError } from '@cngeo/spec';   // or from @cngeo/download-core
+import { isCngError } from '@cngeo/spec';   // or from @cngeo/extract-core
 
 try {
   await handle.result;
@@ -745,7 +745,7 @@ try {
 **The `code` is the API. Messages are for humans and may be reworded; codes may
 not.** `retryable` is `true` by default for `INDEX_FETCH_FAILED`,
 `DATASET_UNRESOLVED`, `SINK_PERMISSION_DENIED`, `NETWORK`. Full tables:
-[download-core](packages/download-core/README.md#error-codes),
+[extract-core](packages/extract-core/README.md#error-codes),
 [upload-core](packages/upload-core/README.md#error-codes),
 [spec](packages/spec/README.md#errors).
 
@@ -772,7 +772,7 @@ node examples/download-demo/verify.mjs 8000
 # `FileSystemWritableFileStream` and no headless browser can open a save
 # dialog. Drives the real `download()` into a real OPFS writable, which has
 # the same swap-file commit semantics a picker handle does.
-node packages/download-core/test/browser/filesystem-sink.verify.mjs
+node packages/extract-core/test/browser/filesystem-sink.verify.mjs
 ```
 
 If you add a widget to a page, copy the shape of one of the

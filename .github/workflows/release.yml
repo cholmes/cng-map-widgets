@@ -80,7 +80,7 @@ jobs:
           set -euo pipefail
           unset NODE_AUTH_TOKEN
 
-          order="spec geocoder-core upload-core download-core maplibre openlayers
+          order="spec geocoder-core upload-core extract-core maplibre openlayers
                  raster-core format-gpkg format-shapefile format-flatgeobuf
                  format-extras"
 

@@ -29,7 +29,7 @@
 > §8) · portolan-browser card (multi-asset picker, time filters: FIRMS
 > 10.2GB→962MB, pause/resume/cancel/success, 7 formats in-app, mobile,
 > en+es; 912 unit/253 e2e) · finisher in flight: AreaDownload new-contract
-> update + 2 download-core API lies.
+> update + 2 extract-core API lies.
 > **Upstream-report queue (not filed):** hyparquet ×3 + geoparquet-2.0
 > unconditional decode · geotiff.js writer truncation/geokey corruption ·
 > gpq null-geometry panic · geoBoundaries mojibake/invalid-geoms/ADM1-drift
@@ -228,7 +228,7 @@ optional heavier plugin for more formats (gdal3.js, shapefile-js) with
 bundle-weight documentation; implement GeoJSON only for now.
 
 ### E5 — Download widget *(opus design, sonnet implement)*
-`packages/download-core`: given `Area` + dataset descriptor (GeoParquet URL /
+`packages/extract-core`: given `Area` + dataset descriptor (GeoParquet URL /
 STAC item-collection), run spatial filter in-browser (DuckDB-WASM spatial;
 compare hyparquet+manual bbox filter for lighter core), stream to file.
 Format plugins: **geojson** (light, core), **geoparquet** (DuckDB-WASM COPY),
@@ -259,7 +259,7 @@ at same feature), plus unicode normalization/transliteration in `name_norm`.
 
 - **DONE:** E0 recon · E1 benchmarks · E3 design + implementation (spec,
   geocoder-core, maplibre; demo verified) · E4 (upload-core, openlayers; demo
-  verified) · E5 (download-core, geojson+geoparquet formats; demo verified,
+  verified) · E5 (extract-core, geojson+geoparquet formats; demo verified,
   in-browser GeoParquet writing works via hyparquet-writer @ 28.5KB gz core)
   · progressive display/full geometry (UK outline 86ms, Canada 1.1s; display
   files outward-buffered) · E9 ADM3/4 survey · geoboundaries-catalog built,
@@ -305,7 +305,7 @@ every documented snippet now runs against real published data, not fixtures.
     an `Area`, a `DownloadRequest` per dataset kind (parquet / hive /
     stac-geoparquet / parquet-set), download with estimate+ceiling handling,
     the manifest contract as a field table, 12 ranked pitfalls.
-  - **Six package READMEs** (spec, geocoder-core, upload-core, download-core,
+  - **Six package READMEs** (spec, geocoder-core, upload-core, extract-core,
     maplibre, openlayers) — API reference read off the actual exports, sizes,
     runnable minimal examples, error tables, gotchas from this repo's own fix
     history.
@@ -348,7 +348,7 @@ every documented snippet now runs against real published data, not fixtures.
      `acceptCeiling()` or `cancel()`. **The most dangerous one for an
      automated caller.**
   2. **Attribution key casing is inconsistent:** a geocoder `Area` carries
-     the manifest's `snake_case` (`share_alike`), download-core's derived
+     the manifest's `snake_case` (`share_alike`), extract-core's derived
      attribution uses `shareAlike`. Checking only `shareAlike` **silently
      reports no share-alike obligation on ODbL data.** Wants one
      normalization in `@cngeo/spec`.
@@ -498,7 +498,7 @@ exist.
    whole prominence component to a measured no-op on the index that
    populates it most widely. Drift #5.
 4. **Format load state is observable.** `onFormatState(handler) =>
-   unsubscribe` on the download-core registry, fired on registration and on
+   unsubscribe` on the extract-core registry, fired on registration and on
    every lazy `load()` transition. Replaces portolan-browser's polling
    (it was bumping a reactivity counter to re-read `formats()`).
 
@@ -531,7 +531,7 @@ exist.
    instead of *silently* loading the default — drift #3's real hazard was
    the silence, not the missing feature.
 
-**Performance (download-core)**
+**Performance (extract-core)**
 
 10. **Parallel row-group reads: 11x, measured end to end.**
     `maxConcurrentRequests` was documented with a default of 12 and read by
@@ -643,7 +643,7 @@ exist.
   instruction; geometry is still read internally whenever row-level
   filtering needs it (`columns.js`'s `geometryNeededForFilter`) — is
   documented there and in the design doc's §3.4 amendment below. Tests:
-  `packages/download-core/test/infer-table.test.js`,
+  `packages/extract-core/test/infer-table.test.js`,
   `columns.test.js`, `drop-geometry.test.js`.
 - **`limit: 0`** now returns zero rows instead of one. Called it a bug fix.
 - The **measurement discrepancy I thought I had found is not real** —
@@ -682,7 +682,7 @@ lock the data layer before widget APIs in E3/E5 are finalized.
 cng-map-widgets/
   PLAN.md
   experiments/        # e0-data-recon/ e1-search-index/ e2-geometry/ ...
-  packages/           # geocoder-core/ download-core/ upload-core/
+  packages/           # geocoder-core/ extract-core/ upload-core/
                       # maplibre/ openlayers/
   tools/              # index-builder/ mirror-builder/
   examples/           # firms-explorer/ s2-footprints/
@@ -702,7 +702,7 @@ marked for Chris to override):
    hyparquet; we follow. hyparquet(+writer) is the core engine; DuckDB-WASM
    is an opt-in heavy plugin and a benchmark baseline only. GeoParquet
    output = hyparquet-writer + hand-built geo metadata (scoped into E5).
-3. **Download bounds:** `download-core` takes `Area` **plus** first-class
+3. **Download bounds:** `extract-core` takes `Area` **plus** first-class
    filters (time window, column predicates, column projection), gives a
    pre-download row/byte estimate from parquet metadata, and streams via
    File System Access API; refusal path above a configurable ceiling.

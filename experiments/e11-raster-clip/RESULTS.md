@@ -290,7 +290,7 @@ them would mean promoting uint16 to float32 and quadrupling the download.
 ### 5.4 Size estimate before the download — and it is *exact*
 
 `estimateRasterClip()` reads headers only (one or two range reads per file) and
-returns the same `Bounded`/ceiling/warning vocabulary as download-core's
+returns the same `Bounded`/ceiling/warning vocabulary as extract-core's
 `Estimate`, so one UI renders either. The raster numbers invert the vector
 case's uncertainty:
 
@@ -338,11 +338,11 @@ applies, and the design-doc contract already covers this case.
 
 ```
 packages/raster-core/              (new)
-  src/cdn.js            pinned CDN URLs + host-injection seam (mirrors download-core/src/cdn.js)
+  src/cdn.js            pinned CDN URLs + host-injection seam (mirrors extract-core/src/cdn.js)
   src/crs.js            lon/lat -> 4326 / 3857 / WGS84 UTM, densified bbox projection
   src/source.js         openRaster(): levels, tiles, dtype, nodata, CRS, compression; ZSTD decoder registration; counting client
   src/plan.js           STAC band model, window math, overview choice, exact estimate, ceiling
-  src/download.js       downloadRaster(): download-core's handle/state machine over sinks
+  src/download.js       downloadRaster(): extract-core's handle/state machine over sinks
   src/geotiff-writer.js the writer geotiff.js does not have
   src/index.js          public API + rasterClipPlugin ({name, approxBytes, load})
   test/*.test.js        26 offline tests
@@ -364,7 +364,7 @@ would cost — the reason this is worth having as a first-class pipeline rather
 than a gdal3.js plugin.
 
 **How it fits the existing architecture.** Raster is deliberately *not* a
-download-core `FormatPlugin`: a `FormatPlugin` consumes `FeatureBatch`es (rows
+extract-core `FormatPlugin`: a `FormatPlugin` consumes `FeatureBatch`es (rows
 + WKB) from a parquet engine, and a clip has no rows. It is a second pipeline
 that reuses the *contracts* — `Bounded`, the ceiling/refusal gate, the `Sink`
 interface (`memorySink`/`blobSink`/`fileSystemSink` verbatim), the handle state
@@ -410,7 +410,7 @@ picker", with the collection's own STAC metadata as the descriptor, and the
    perhaps another 150 lines in the writer.
 5. **Parallel tile reads.** geotiff.js coalesces blocks but reads bands
    sequentially; 12 requests at ~0.5 s each is most of the 5 s wall clock.
-   `maxConcurrentRequests` (download-core's default is 12) wants an equivalent
+   `maxConcurrentRequests` (extract-core's default is 12) wants an equivalent
    here, via `Pool`/`maxRanges` or our own client.
 6. **Upstream geotiff.js reports** (§2/§3): ZSTD decoder, `fetch` option on
    `fromUrl`, overview `getResolution`, and the writer's 8-bit truncation +

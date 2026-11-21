@@ -1,6 +1,6 @@
 // Writes a small multi-type batch (Point + MultiPolygon layers, mixed
 // attribute types) through `createGpkgFormat`, then validates the bytes
-// the same way download-core's geoparquet-write.test.js validates its
+// the same way extract-core's geoparquet-write.test.js validates its
 // output: with `ogrinfo -al -so` and, where duckdb is installed, DuckDB's
 // spatial `ST_Read`. This is the empirical bar O5 set for the sql.js path
 // (design doc O5 / this package's README).

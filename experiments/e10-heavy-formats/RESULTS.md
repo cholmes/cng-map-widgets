@@ -140,7 +140,7 @@ this plugin writes cleanly (feature count, geometry type, CRS, attribute
 types all correct); DuckDB's `ST_Read` agrees on both attributes and
 geometry. A real, live download (FTW field boundaries, Liechtenstein, 100
 rows, bbox + confidence-filtered) round-trips end to end through
-`@cngeo/download-core`'s real `download()` pipeline and validates both
+`@cngeo/extract-core`'s real `download()` pipeline and validates both
 ways — see `packages/format-gpkg/test/gpkg-integration.test.js`.
 
 Implemented: `gpkg_contents`, `gpkg_spatial_ref_sys` (the three required
@@ -161,11 +161,11 @@ back to a full table scan for a spatial `WHERE` on the file, immaterial at
 the row counts a bbox-pruned browser download produces.
 
 **Non-streaming, memory ceiling stated honestly** (same category as
-download-core's own `geoparquet` plugin): peak memory is roughly three
+extract-core's own `geoparquet` plugin): peak memory is roughly three
 copies of the data — buffered JS row arrays, sql.js's in-memory SQLite
 database (comparable to the final file size), and the exported
 `Uint8Array` copy. See `packages/format-gpkg/README.md` for the full
-statement download-core's `blobBytes` ceiling check is what actually
+statement extract-core's `blobBytes` ceiling check is what actually
 protects a page from this at scale.
 
 ---
@@ -249,7 +249,7 @@ dropped from this report.
 
 Chris's mid-task addition: a heavy format should load "on the fly...
 just when people select that format," with its weight shown *before*
-that fetch happens. Implemented in `packages/download-core/src/
+that fetch happens. Implemented in `packages/extract-core/src/
 registry.js`: `registerLazyFormat(descriptor)` takes `{ id, label,
 extension, mediaType, approxBytes, capabilities, estimateBytes, load: ()
 => Promise<FormatPlugin> }`; `formats()` lists it (with `approxBytes` and
@@ -258,7 +258,7 @@ one place that calls it, exactly once per id (concurrent callers share
 one in-flight promise), with failures mapped to a new `FORMAT_LOAD_FAILED`
 error code (`@cngeo/spec`). `download()` now resolves the format lazily
 inside its internal `run()`, emitting a `'loading-format'` progress event
-first — see `packages/download-core/test/registry-lazy.test.js` and the
+first — see `packages/extract-core/test/registry-lazy.test.js` and the
 new tests appended to `download-handle.test.js` for coverage (load
 exactly once, concurrent-resolve sharing, failure → `FORMAT_LOAD_FAILED`,
 caching). Every package in this round (`format-gpkg`, `format-flatgeobuf`)
@@ -280,7 +280,7 @@ same-file commit race rather than risking it).
 - **No real browser smoke test** for any CDN-URL dynamic-import path in
   this round (sql.js, flatgeobuf, terrio) — every functional validation
   here ran in Node against the npm-installed equivalent package (the same
-  test-injection pattern `download-core/src/cdn.js` already established
+  test-injection pattern `extract-core/src/cdn.js` already established
   for hyparquet-writer), which is strong but not conclusive evidence for
   the actual `import('https://cdn.jsdelivr.net/...')` path a zero-build
   page would take.

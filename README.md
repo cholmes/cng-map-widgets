@@ -103,7 +103,7 @@ const geocoder = new Geocoder({
 
 geocoder.on('select', ({ result, area }) => {
   console.log(result.name, area.bbox, area.vertexCount.display);
-  // `area` is now ready to hand to @cngeo/download-core.
+  // `area` is now ready to hand to @cngeo/extract-core.
 });
 
 // The control owns the combobox, the outline layer, fitBounds and the
@@ -152,7 +152,7 @@ build:
     "@cngeo/spec":            "https://cholmes.github.io/cng-map-widgets/packages/spec/src/index.js",
     "@cngeo/geocoder-core":   "https://cholmes.github.io/cng-map-widgets/packages/geocoder-core/src/index.js",
     "@cngeo/upload-core":     "https://cholmes.github.io/cng-map-widgets/packages/upload-core/src/index.js",
-    "@cngeo/download-core":   "https://cholmes.github.io/cng-map-widgets/packages/download-core/src/index.js",
+    "@cngeo/extract-core":   "https://cholmes.github.io/cng-map-widgets/packages/extract-core/src/index.js",
     "@cngeo/raster-core":     "https://cholmes.github.io/cng-map-widgets/packages/raster-core/src/index.js",
     "@cngeo/maplibre":        "https://cholmes.github.io/cng-map-widgets/packages/maplibre/src/index.js",
     "@cngeo/openlayers":      "https://cholmes.github.io/cng-map-widgets/packages/openlayers/src/index.js"
@@ -194,7 +194,7 @@ import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import * as writer from 'hyparquet-writer';
 import { setHyparquetModules as setGeocoderModules } from '@cngeo/geocoder-core';
-import { setHyparquetModules as setDownloadModules } from '@cngeo/download-core';
+import { setHyparquetModules as setDownloadModules } from '@cngeo/extract-core';
 
 setGeocoderModules({ hyparquet, compressors });
 setDownloadModules({ hyparquet, compressors, writer });   // `writer` only for GeoParquet output
@@ -226,7 +226,7 @@ Pinned versions: `hyparquet@1.33.0`, `hyparquet-compressors@1.1.3`,
     │          └──────────►  A r e a  ◄────────────────────┘           │
     │                           │        ← the only coupling           │
     │                           ▼                                      │
-    │               @cngeo/download-core    ◄── DatasetDescriptor        │
+    │               @cngeo/extract-core    ◄── DatasetDescriptor        │
     │               resolve / prune /          + FilterSpec            │
     │               estimate / download        (plain JSON, also the   │
     │                           │               QGIS-shared artifact)  │
@@ -274,7 +274,7 @@ Three ideas carry the design:
 | [`@cngeo/spec`](packages/spec/README.md) | The `Area` contract, the `CngError` taxonomy, and pure helpers: bbox + antimeridian split, Visvalingam simplify (sync + chunked async), WKB → GeoJSON, name normalization. **No I/O, no dependencies.** | 6.2 KiB |
 | [`@cngeo/geocoder-core`](packages/geocoder-core/README.md) | Manifest + index load (full or HTTP-range), prefix search, ranking with result diversity, geometry resolution → `Area`. No DOM. | 11.0 KiB |
 | [`@cngeo/upload-core`](packages/upload-core/README.md) | GeoJSON file/drop/paste → the same `Area`, with every repair reported. | 4.3 KiB |
-| [`@cngeo/download-core`](packages/download-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 19.8 KiB |
+| [`@cngeo/extract-core`](packages/extract-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 19.8 KiB |
 | [`@cngeo/maplibre`](packages/maplibre/README.md) | MapLibre adapter: search combobox control, `Area` outline layer, viewport provider, antimeridian-aware fitBounds. | 4.3 KiB |
 | [`@cngeo/openlayers`](packages/openlayers/README.md) | The same five things in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. | 5.1 KiB |
 
@@ -431,7 +431,7 @@ Verified working, against live published data, as of 2026-11-12:
   `prominent_index`.
 - **`@cngeo/upload-core`** — GeoJSON read, the full repair pipeline,
   multi-feature collect, every refusal path.
-- **`@cngeo/download-core`** — single-file, hive-partitioned and
+- **`@cngeo/extract-core`** — single-file, hive-partitioned and
   STAC-GeoParquet sources resolved from collection JSON; the pruning cascade
   (27 FIRMS files → 1 on a time filter); estimates; the ceiling refusal and
   `acceptCeiling()`; GeoJSON and GeoParquet output with a GeoParquet 1.1

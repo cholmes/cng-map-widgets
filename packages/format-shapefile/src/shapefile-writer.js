@@ -1,7 +1,7 @@
-// @cngeo/format-shapefile -- the `shapefile` FormatPlugin (download-core's
+// @cngeo/format-shapefile -- the `shapefile` FormatPlugin (extract-core's
 // registry contract, design doc §3.4/§2.3). Zero dependencies: pure
 // JS (no wasm) writing of .shp/.shx/.dbf/.prj/.cpg, bundled into one
-// `.shp.zip` (download-core's Sink is one file per download; see
+// `.shp.zip` (extract-core's Sink is one file per download; see
 // zip.js's module doc). README.md has the measured ~0KB weight -- this is
 // the "near-free" end of the format spectrum the heavy GeoPackage/GDAL
 // paths sit at the other end of.
@@ -16,8 +16,8 @@
 // Shapefile's real limits are surfaced as warnings (not silent mangling),
 // per the design doc's error taxonomy, collected during the write and
 // attached to this plugin's `close()` result (`{ rows, bytes, warnings
-// }`) -- download-core's `download()` re-emits each one through the
-// existing `'warning'` event (see download-core/src/download.js).
+// }`) -- extract-core's `download()` re-emits each one through the
+// existing `'warning'` event (see extract-core/src/download.js).
 // Mismatched incompatible geometry families (e.g. Point rows mixed with
 // Polygon rows -- Shapefile allows exactly one shape type per file) is a
 // hard refusal (`FORMAT_CAPABILITY`), not a warning: there's no way to

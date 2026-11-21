@@ -94,7 +94,7 @@ const control = new GeocoderControl({ geocoder, placeholder: 'Search for a place
 map.on('load', () => map.addControl(control, 'top-left'));
 
 control.on('select', ({ result, area }) => {
-  // `area` is ready for @cngeo/download-core. The outline is already drawn
+  // `area` is ready for @cngeo/extract-core. The outline is already drawn
   // and the camera already moved.
 });
 ```
@@ -382,7 +382,7 @@ map instance, which is better verified for real.
 python3 serve.py 8000 &
 node examples/quickstart/verify.mjs 8000       # control renders, loads on focus, selects, draws, attributes
 node examples/geocoder-demo/verify-live.mjs 8000   # ADM0/1/2, progressive upgrade, 0 console errors
-node examples/download-demo/verify.mjs 8000    # the control feeding @cngeo/download-core
+node examples/download-demo/verify.mjs 8000    # the control feeding @cngeo/extract-core
 ```
 
 Those assert on `map.getSource('cng-area-display')._data`,

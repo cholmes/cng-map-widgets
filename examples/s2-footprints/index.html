@@ -45,7 +45,7 @@
     "@cngeo/spec": "../../packages/spec/src/index.js",
     "@cngeo/geocoder-core": "../../packages/geocoder-core/src/index.js",
     "@cngeo/maplibre": "../../packages/maplibre/src/index.js",
-    "@cngeo/download-core": "../../packages/download-core/src/index.js"
+    "@cngeo/extract-core": "../../packages/extract-core/src/index.js"
   }
 }
 </script>
@@ -59,7 +59,7 @@
     "Type in the country and go" — Sentinel-2 Collection-1 L2A scene
     footprints, republished as STAC-GeoParquet by tge-labs/s2-stac-geoparquet:
     30.4M item rows. The ceiling/refusal stress test for
-    <code>@cngeo/download-core</code>.
+    <code>@cngeo/extract-core</code>.
   </p>
   <div id="status" style="font-size:12px;color:#555;">Loading dataset descriptor…</div>
 
@@ -114,7 +114,7 @@ import {
   estimate,
   download,
   memorySink,
-} from '@cngeo/download-core';
+} from '@cngeo/extract-core';
 
 const statusEl = document.getElementById('status');
 const setStatus = (text) => { statusEl.textContent = text; };

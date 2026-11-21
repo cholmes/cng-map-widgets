@@ -128,7 +128,7 @@ const geocoder = new Geocoder({
 
 geocoder.on('select', ({ result, area }) =&gt; {
   console.log(result.name, area.bbox, area.vertexCount.display);
-  <span class="c">// `area` is now ready to hand to @cngeo/download-core.</span>
+  <span class="c">// `area` is now ready to hand to @cngeo/extract-core.</span>
 });
 
 <span class="c">// The control owns the combobox, the outline layer, fitBounds and the</span>
@@ -189,7 +189,7 @@ python3 serve.py          <span class="c"># then open http://localhost:8000/exam
   <tr><td><code>@cngeo/spec</code></td><td>The shared contracts — <code>Area</code>, the error taxonomy, the geometry helpers.</td></tr>
   <tr><td><code>@cngeo/geocoder-core</code></td><td>Place-name search over a published cloud-native gazetteer. Emits an <code>Area</code>.</td></tr>
   <tr><td><code>@cngeo/upload-core</code></td><td>The same <code>Area</code>, from a dropped GeoJSON file, with repairs reported.</td></tr>
-  <tr><td><code>@cngeo/download-core</code></td><td>Filters a GeoParquet table, STAC collection or hive catalog to an <code>Area</code> and writes a file.</td></tr>
+  <tr><td><code>@cngeo/extract-core</code></td><td>Filters a GeoParquet table, STAC collection or hive catalog to an <code>Area</code> and writes a file.</td></tr>
   <tr><td><code>@cngeo/raster-core</code></td><td>Clips a COG to an <code>Area</code>, with band selection and a size estimate.</td></tr>
   <tr><td><code>@cngeo/maplibre</code>, <code>@cngeo/openlayers</code></td><td>Map adapters: search control, area layer, viewport provider, antimeridian-aware fit.</td></tr>
   <tr><td><code>@cngeo/format-*</code></td><td>Optional output formats — GeoPackage, Shapefile, FlatGeobuf.</td></tr>

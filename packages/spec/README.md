@@ -7,7 +7,7 @@ called from this package, and nothing here knows what a map is.
 Three things live here:
 
 1. **The `Area`** — the object a geocoder selection, a GeoJSON upload or a map
-   draw tool all produce, and the only thing `@cngeo/download-core` consumes.
+   draw tool all produce, and the only thing `@cngeo/extract-core` consumes.
    This is the seam that makes the widgets composable.
 2. **The error taxonomy** — one `CngError` class with a stable string `code`.
 3. **Pure functions** — bbox math with real antimeridian handling, Visvalingam
@@ -15,7 +15,7 @@ Three things live here:
    normalization the gazetteer index builders use.
 
 `@cngeo/spec` is a separate package for one reason: a page that loads
-`geocoder-core` and `download-core` from a CDN must get **one** `Area`
+`geocoder-core` and `extract-core` from a CDN must get **one** `Area`
 implementation, not two. See [Why one copy matters](#why-one-copy-matters).
 
 - **Status:** experimental, pre-npm. See the [root README](../../README.md).
@@ -100,7 +100,7 @@ through a map style on every selection, and a 200,000-vertex ring makes every
 point-in-polygon test expensive. Collapsing them into one field forces a choice
 between a slow map and a dishonest download. `filterGeometry: null` means "no
 usable polygon" — filtering falls back to `bboxes` alone, and
-`@cngeo/download-core` emits a `degraded-to-bbox` warning on every estimate.
+`@cngeo/extract-core` emits a `degraded-to-bbox` warning on every estimate.
 
 **`bbox` is for people, `bboxes` is for arithmetic.** `bbox` is signed and may
 wrap (`west > east`) so it round-trips and reads correctly in a UI.
@@ -309,7 +309,7 @@ wkbToGeoJson(polygonBytes);   // { type: 'Polygon', coordinates: [...] }
 wkbToGeoJson(pointBytes);     // throws: 'unsupported geometry type 1'
 ```
 
-If you need Point/MultiPoint, `@cngeo/download-core` exports
+If you need Point/MultiPoint, `@cngeo/extract-core` exports
 `decodeWkbGeometry` — a decorator over this one. Folding that back in here is a
 known follow-up.
 
@@ -349,7 +349,7 @@ new CngError('x', 'INDEX_FETCH_FAILED').retryable;  // true
 ```
 
 The full code table, with what a UI should say for each, is in
-[`@cngeo/download-core`'s README](../download-core/README.md#error-codes) —
+[`@cngeo/extract-core`'s README](../extract-core/README.md#error-codes) —
 it is the package that can throw most of them.
 
 ### Misc
@@ -393,7 +393,7 @@ degradation, or use `simplifyToVertexCeilingAsync`.
 
 **`filterGeometry: null` is a real state, not an error.** It means the filter
 geometry could not be produced within `areaDeltaMaxRatio`. Consumers must handle
-it: `@cngeo/download-core` falls back to `bboxes` and warns. If you write your
+it: `@cngeo/extract-core` falls back to `bboxes` and warns. If you write your
 own consumer and dereference `area.filterGeometry.coordinates`, you will crash
 on exactly the big countries your users search for first.
 
@@ -402,7 +402,7 @@ on exactly the big countries your users search for first.
 
 **`wkbToGeoJson` only knows polygons.** By design — the gazetteer boundary
 files publish nothing else. A point dataset needs
-`@cngeo/download-core`'s `decodeWkbGeometry`.
+`@cngeo/extract-core`'s `decodeWkbGeometry`.
 
 **`validateArea` is a shape check, not a schema.** It will accept an `Area`
 with a nonsensical `provenance`. The JSON Schemas the design doc promises
@@ -411,7 +411,7 @@ with a nonsensical `provenance`. The JSON Schemas the design doc promises
 **Attribution keys are not normalized here.** `buildArea` copies
 `attribution` through verbatim, so an entry that came from an index manifest
 keeps its `snake_case` (`share_alike`) while one built by
-`@cngeo/download-core`'s collection resolver uses `camelCase` (`shareAlike`).
+`@cngeo/extract-core`'s collection resolver uses `camelCase` (`shareAlike`).
 Read both until that is unified. See the
 [root README's known issues](../../README.md#known-issues).
 

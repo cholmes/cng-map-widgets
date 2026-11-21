@@ -1255,7 +1255,7 @@ export class Geocoder {
     // (rather than leaving it permanently bbox-degraded): 'display' is the
     // default resolution, so leaving every largeish selection's
     // filterGeometry bbox-only forever would be a correctness regression
-    // for any `download-core` consumer filtering against this Area, not
+    // for any `extract-core` consumer filtering against this Area, not
     // just a performance one. The same gap exists for 'full' resolution
     // (its input can be just as large), so it gets the identical fix. Mirrors
     // `_runUpgrade`'s cancellation/generation handling but skips

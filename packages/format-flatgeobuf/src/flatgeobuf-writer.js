@@ -1,4 +1,4 @@
-// @cngeo/format-flatgeobuf -- the `flatgeobuf` FormatPlugin (download-core's
+// @cngeo/format-flatgeobuf -- the `flatgeobuf` FormatPlugin (extract-core's
 // registry contract, design doc §3.4/§2.3/§4.5: originally budgeted
 // "~25KB (est.)"; measured at ~10KB min+gz for the `geojson` submodule
 // this plugin actually loads -- see README.md).

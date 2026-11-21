@@ -1,7 +1,7 @@
 # @cngeo/upload-core
 
 Drag, drop or pick a GeoJSON file; get back the **same `Area` object**
-`@cngeo/geocoder-core` emits and `@cngeo/download-core` consumes. That
+`@cngeo/geocoder-core` emits and `@cngeo/extract-core` consumes. That
 interchangeability is the entire purpose of this package — "search for an area"
 and "bring your own area" are two front doors to one pipeline.
 
@@ -264,7 +264,7 @@ else here is exactly the design doc's taxonomy.
 
 **Coordinate precision is *not* truncated on upload.** Design doc §1.3 is
 explicit that precision trimming happens on serialization only — it is a format
-writer's job (`@cngeo/download-core`'s `geojson` plugin takes `precision`).
+writer's job (`@cngeo/extract-core`'s `geojson` plugin takes `precision`).
 
 ## Multiple features: `collect`, not `dissolve`
 
@@ -288,7 +288,7 @@ downloaded feature lying in the overlap matches more than one part of the
 MultiPolygon.** Under `spatial.mode: 'intersects'` that is harmless — a row
 either matches or does not. Under `'clip'` it would produce overlapping output
 fragments, which is why this package raises `overlapping-features` and
-`@cngeo/download-core` refuses `clip` on such an Area. That is the entire cost
+`@cngeo/extract-core` refuses `clip` on such an Area. That is the entire cost
 of not shipping a polygon clipper in core, and `unionMode: 'dissolve'` plus
 your own `dissolver` is the opt-out.
 

@@ -1,7 +1,7 @@
 {
   "name": "@cngeo/format-flatgeobuf",
   "version": "0.2.0",
-  "description": "FlatGeobuf output for @cngeo/download-core, wrapping the official flatgeobuf package's GeoJSON serializer. Measured ~10KB (min+gz) for the geojson submodule this plugin actually loads -- lighter than the design doc's original ~25KB estimate.",
+  "description": "FlatGeobuf output for @cngeo/extract-core, wrapping the official flatgeobuf package's GeoJSON serializer. Measured ~10KB (min+gz) for the geojson submodule this plugin actually loads -- lighter than the design doc's original ~25KB estimate.",
   "keywords": [
     "flatgeobuf",
     "fgb",

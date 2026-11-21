@@ -1,6 +1,6 @@
 // @cngeo/format-flatgeobuf -- public entry point.
 //
-//   import { registerLazyFormat } from '@cngeo/download-core';
+//   import { registerLazyFormat } from '@cngeo/extract-core';
 //   import { flatGeobufFormatDescriptor } from '@cngeo/format-flatgeobuf';
 //   registerLazyFormat(flatGeobufFormatDescriptor);
 //   // ~10KB (min+gz) fetches only on first download() for format: 'flatgeobuf'.

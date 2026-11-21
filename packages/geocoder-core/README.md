@@ -15,7 +15,7 @@ const area = await geocoder.select(results[0]);          // -> an Area
 ```
 
 The `Area` it returns is the same object `@cngeo/upload-core` produces and
-`@cngeo/download-core` consumes. That is the whole point.
+`@cngeo/extract-core` consumes. That is the whole point.
 
 - **Status:** experimental, pre-npm. See the [root README](../../README.md).
 - **Normative design:** [`docs/design/widgets-architecture.md`](../../docs/design/widgets-architecture.md) §3.2 (API), §6 (index file interface).

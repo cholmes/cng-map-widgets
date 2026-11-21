@@ -1,6 +1,6 @@
 // @cngeo/raster-core -- opening a remote COG and describing it.
 //
-// A `RasterSource` is the raster analog of download-core's `DatasetTable`:
+// A `RasterSource` is the raster analog of extract-core's `DatasetTable`:
 // everything a planner needs to size a clip without reading a pixel. All of
 // it comes from the TIFF header + IFDs, which is one or two range reads.
 

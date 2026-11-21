@@ -43,7 +43,7 @@
     "@cngeo/spec": "../../packages/spec/src/index.js",
     "@cngeo/geocoder-core": "../../packages/geocoder-core/src/index.js",
     "@cngeo/maplibre": "../../packages/maplibre/src/index.js",
-    "@cngeo/download-core": "../../packages/download-core/src/index.js",
+    "@cngeo/extract-core": "../../packages/extract-core/src/index.js",
     "@cngeo/raster-core": "../../packages/raster-core/src/index.js"
   }
 }
@@ -95,7 +95,7 @@
 <script type="module">
 import { Geocoder } from '@cngeo/geocoder-core';
 import { GeocoderControl } from '@cngeo/maplibre';
-import { memorySink, fileSystemSink } from '@cngeo/download-core';
+import { memorySink, fileSystemSink } from '@cngeo/extract-core';
 import {
   openRaster,
   describeRasterDataset,

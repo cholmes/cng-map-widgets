@@ -45,7 +45,7 @@ a Blob fallback; zero-build CDN-consumable ESM.**
                                  │
                                  ▼
                       ┌─────────────────────┐
-                      │ @cngeo/download-core │  ◄── DatasetDescriptor + FilterSpec
+                      │ @cngeo/extract-core │  ◄── DatasetDescriptor + FilterSpec
                       │ estimate / download │      (declarative JSON — also the
                       └──────────┬──────────┘       QGIS-shared artifact)
                                  │
@@ -150,7 +150,7 @@ export interface Area {
   readonly displayGeometry?: AreaGeometry;
 
   /** What to filter with. `null` means "no usable polygon" — filtering falls
-   *  back to `bboxes` alone, and download-core emits a
+   *  back to `bboxes` alone, and extract-core emits a
    *  `spatial.degradedToBbox` warning in every estimate. */
   readonly filterGeometry: AreaGeometry | null;
 
@@ -230,7 +230,7 @@ export interface AreaAttribution {
   readonly license: string;
   readonly url?: string;
   /** True when the license imposes share-alike on derived output (ODbL).
-   *  download-core stamps this into GeoParquet/GeoPackage output metadata.
+   *  extract-core stamps this into GeoParquet/GeoPackage output metadata.
    *
    *  **Normalization note, added by the geocoder-core follow-up "attribution
    *  normalization" task.** Every manifest shipped so far declares this field
@@ -388,10 +388,10 @@ The honest consequence of `collect`, which the docs state plainly: **if the
 input features overlap, a feature of the downloaded dataset lying in the
 overlap matches more than one part of the MultiPolygon.** Under
 `spatial.mode = 'intersects'` this is harmless — a row either matches or does
-not, and download-core deduplicates by row identity within a file. Under
+not, and extract-core deduplicates by row identity within a file. Under
 `spatial.mode = 'clip'` it produces overlapping output fragments. So:
 `upload-core` detects overlapping input bboxes and sets
-`warnings: ['overlapping-features']`; `download-core` refuses `clip` on an
+`warnings: ['overlapping-features']`; `extract-core` refuses `clip` on an
 Area with `combine: 'collect'` and overlapping parts unless
 `allowOverlappingClip: true`. That is the whole cost of not shipping a boolean
 union in core, and it is a cost we can state in one sentence.
@@ -416,7 +416,7 @@ Rules, in order of precedence:
    `crossesAntimeridian: false` — a too-wide bbox over-fetches, which is a
    performance bug; a wrongly-split bbox under-fetches, which is a correctness
    bug. We take the performance bug.
-5. **Pruning is per-box and unioned.** `download-core` runs partition and
+5. **Pruning is per-box and unioned.** `extract-core` runs partition and
    row-group pruning once per entry in `bboxes` and unions the selected sets.
    Point-in-polygon runs against the unsplit `filterGeometry`, which is correct
    because the geometry's own coordinates never wrapped.
@@ -604,7 +604,7 @@ export interface ParquetSetSource {
   readonly kind: 'parquet-set';
   readonly urls: readonly string[];
   /** Per-file bbox/row-count/time-extent, when the catalog published it.
-   *  Lets download-core prune whole files with zero HTTP requests. */
+   *  Lets extract-core prune whole files with zero HTTP requests. */
   readonly parts?: readonly DatasetPart[];
 }
 
@@ -698,7 +698,7 @@ export interface DatasetTable {
   /** `table:primary_geometry`, else the GeoParquet `primary_column`. */
   readonly geometryColumn: string;
   readonly geometryEncoding: 'WKB' | 'WKT' | 'geoarrow.point' | 'geoarrow.multipolygon' | string;
-  /** EPSG:4326 / OGC:CRS84 is the only value download-core filters against.
+  /** EPSG:4326 / OGC:CRS84 is the only value extract-core filters against.
    *  Anything else → `DATASET_CRS_UNSUPPORTED` (see open item O6). */
   readonly crs: string;
   /** GeoParquet 1.1 `covering.bbox`, or an explicit struct/column set. The
@@ -878,7 +878,7 @@ Format options, normative per format:
 
 ### 2.4 Resolution: collection JSON → descriptor
 
-A `portolan-collection` source is resolved by `@cngeo/download-core`'s
+A `portolan-collection` source is resolved by `@cngeo/extract-core`'s
 `resolveDataset(descriptor)`. The mapping is fixed and documented so the Python
 side can implement the same derivation:
 
@@ -918,7 +918,7 @@ hyparquet engine, so:
 
 - `whereSql` is a **separate field** from `where`. A consumer never has to parse
   SQL to find out whether it can honour a filter.
-- `requires` lists `'sql'` whenever `whereSql` is present. `download-core`'s
+- `requires` lists `'sql'` whenever `whereSql` is present. `extract-core`'s
   default (hyparquet) engine refuses with `FILTER_REQUIRES_ENGINE` and names the
   capability; registering `@cngeo/engine-duckdb` makes it work.
 - Both may be present; they are ANDed. A UI can therefore offer structured
@@ -1140,7 +1140,7 @@ Two things this example pins down:
   the `assets` column (half the bytes of an S2 part) is excluded by default
   unless explicitly included, because a footprint download almost never wants
   it. Documented as `stac` descriptor sugar, not magic.
-- `share_alike: true` on the attribution means `download-core` stamps the
+- `share_alike: true` on the attribution means `extract-core` stamps the
   license into the GeoJSON `properties`-level metadata (a top-level
   `"license"`/`"attribution"` member on the FeatureCollection, which is
   non-standard but harmless and preserved by most tools) and the host UI must
@@ -1179,13 +1179,13 @@ validates with `jsonschema` (already an indirect QGIS dependency).
 
 npm scope **`@cngeo`** (cloud-native geospatial). Short matters here: these
 specifiers appear verbatim in CDN import URLs in every example, and
-`@cloud-native-map-widgets/download-core` makes a 90-character import line.
+`@cloud-native-map-widgets/extract-core` makes a 90-character import line.
 
 *Amended 2026-11-17 (was `@cngeo`):* [O1](#7-open-items) is resolved. `@cngeo`
 is both short and expands to a term with currency in this community, where
 `cng` expanded to nothing on sight. Deliberately **not** matched to the repo
-name `cng-map-widgets`: `@cng-map-widgets/download-core` is 31 characters, and
-"map-widgets" is wrong for `spec`, `download-core` and the `format-*`
+name `cng-map-widgets`: `@cng-map-widgets/extract-core` is 31 characters, and
+"map-widgets" is wrong for `spec`, `extract-core` and the `format-*`
 packages, which are not map widgets.
 
 | package | contents | depends on |
@@ -1193,7 +1193,7 @@ packages, which are not map widgets.
 | `@cngeo/spec` | TypeScript types + JSON Schemas for `Area`, `DatasetDescriptor`, `FilterSpec`, `OutputRequest`, `DownloadRequest`; pure helpers: bbox math, antimeridian split/detect, Visvalingam simplify, normalize/validate `Area`, `requirementsOf(filter)`, `toAreaDocument`/`fromAreaDocument`. **No I/O, no dependencies.** | — |
 | `@cngeo/geocoder-core` | index load (full + range), normalization, prefix search, ranking, geometry resolution → `Area`. Framework-agnostic, no DOM. | `@cngeo/spec`, `hyparquet`, `hyparquet-compressors` |
 | `@cngeo/upload-core` | file/drop handling, GeoJSON parse, validate/repair, combine, → `Area`. GeoJSON only (E4). | `@cngeo/spec` |
-| `@cngeo/download-core` | dataset resolution, pruning cascade, estimate, streaming download, sinks, format registry, `geojson` + `geoparquet` writers. | `@cngeo/spec`, `hyparquet`, `hyparquet-compressors`, `hyparquet-writer` |
+| `@cngeo/extract-core` | dataset resolution, pruning cascade, estimate, streaming download, sinks, format registry, `geojson` + `geoparquet` writers. | `@cngeo/spec`, `hyparquet`, `hyparquet-compressors`, `hyparquet-writer` |
 | `@cngeo/maplibre` | `GeocoderControl`, `AreaLayer`, `DrawTool` (thin), viewport provider. | `@cngeo/spec`; **peer**: `maplibre-gl` |
 | `@cngeo/openlayers` | the same three, OpenLayers flavour. | `@cngeo/spec`; **peer**: `ol` |
 | `@cngeo/format-gpkg` | GeoPackage writer plugin (sql.js path, ~339 KB min+gz — **shipped and measured, E10**). Opt-in, lazy-loadable. | `@cngeo/spec` |
@@ -1206,11 +1206,11 @@ packages, which are not map widgets.
 
 Why `@cngeo/spec` exists as its own package rather than living in
 `geocoder-core`: all five runtime packages need the `Area` contract, and a page
-that loads `geocoder-core` and `download-core` from a CDN must get **one**
+that loads `geocoder-core` and `extract-core` from a CDN must get **one**
 `Area` implementation, not two. A shared, separately-versioned, zero-dependency
 spec package is the only way to guarantee that across independent CDN imports.
 
-Why `@cngeo/stac` is separate from `download-core`: design call #8 wants
+Why `@cngeo/stac` is separate from `extract-core`: design call #8 wants
 portolan glue thin, and E7's notes want a stac-browser extraction path. The
 STAC→descriptor derivation is the *entire* portolan-specific surface. Isolating
 it means the future stac-browser widget is "same packages, different host
@@ -2868,7 +2868,7 @@ export interface GeometryReader {
 }
 ```
 
-### 3.4 `@cngeo/download-core`
+### 3.4 `@cngeo/extract-core`
 
 ```ts
 export interface DownloadCoreOptions {
@@ -3188,8 +3188,8 @@ becomes a **slot**, and the handle exposes it as a getter:
 `acceptCeiling(): void` → `acceptCeiling(): Promise<DownloadResult>` is
 source-compatible: a caller ignoring the return value is unaffected.
 
-Implemented: `packages/download-core/src/download.js`. Tests:
-`packages/download-core/test/download-handle.test.js` ("a blocked handle's
+Implemented: `packages/extract-core/src/download.js`. Tests:
+`packages/extract-core/test/download-handle.test.js` ("a blocked handle's
 result REJECTS with CeilingExceededError rather than waiting forever", plus
 the synchronous-handler, never-blocked and cancel-while-blocked cases).
 
@@ -3218,11 +3218,11 @@ registration order; one that throws is swallowed, so a broken subscriber
 cannot fail the registration or `load()` that triggered it, nor starve the
 other subscribers.
 
-Implemented: `packages/download-core/src/registry.js`, exported from
+Implemented: `packages/extract-core/src/registry.js`, exported from
 `index.js`. Tests: the `onFormatState` cases in
-`packages/download-core/test/registry-lazy.test.js`.
+`packages/extract-core/test/registry-lazy.test.js`.
 
-### Amendment, 2026-11-13 — reason: the three download-core performance items
+### Amendment, 2026-11-13 — reason: the three extract-core performance items
 (parallel reads, predicate pushdown, honest output sizes)
 
 Three measured changes, with the measurements, including the parts that
@@ -3401,14 +3401,14 @@ into `est.outputBytes` and from there into both the `outputBytes` check in
 `estimate()` still has no format and still says so (see
 `Estimate.outputBytes` above).
 
-Implemented: `packages/download-core/src/{engine-hyparquet,prune,estimate,
+Implemented: `packages/extract-core/src/{engine-hyparquet,prune,estimate,
 download}.js` and `src/formats/{geojson,geoparquet}.js`, plus
 `@cngeo/format-extras`, `@cngeo/format-gpkg`, `@cngeo/format-shapefile`,
 `@cngeo/format-flatgeobuf`. Tests:
-`packages/download-core/test/{engine-concurrency,prune-where,
+`packages/extract-core/test/{engine-concurrency,prune-where,
 estimate-geometry-bytes}.test.js`.
 
-### Amendment, 2026-11-13 — reason: two download-core API lies closed
+### Amendment, 2026-11-13 — reason: two extract-core API lies closed
 (root README's known-issues table)
 
 Two entries in the known-issues table described behaviour that
@@ -3441,9 +3441,9 @@ exactly matching how `predicate.js`'s dotted-path addressing
 `BboxCovering.column` already treat it. No change to any declared-`table`
 path; this only changes what an *inferred* table looks like.
 
-Implemented: `packages/download-core/src/estimate.js`
+Implemented: `packages/extract-core/src/estimate.js`
 (`topLevelSchemaColumns`, `inferTableFromSchema`). Tests:
-`packages/download-core/test/infer-table.test.js`, against the real
+`packages/extract-core/test/infer-table.test.js`, against the real
 struct-`bbox` fixtures `test/fixtures/{geo-metadata,bare}.parquet` (shared
 with `geoparquet-decode.test.js`) plus synthetic schemas for a
 non-`bbox`-named struct and a two-level-nested one.
@@ -3497,9 +3497,9 @@ given has no geometry column, so a dropped-geometry request's
 `outputBytes` estimate — and therefore its ceiling check — reflects what
 actually gets written, not what would have been written with geometry.
 
-Implemented: `packages/download-core/src/{columns,engine-hyparquet,
+Implemented: `packages/extract-core/src/{columns,engine-hyparquet,
 estimate}.js` and `src/formats/{geojson,geoparquet}.js`. Tests:
-`packages/download-core/test/{columns,drop-geometry}.test.js`, including
+`packages/extract-core/test/{columns,drop-geometry}.test.js`, including
 an end-to-end case that drops geometry *and* runs an `intersects` filter
 against a real fixture, asserting both that filtering is still correct
 (only the row that actually intersects comes back) and that the output
@@ -3574,16 +3574,16 @@ at module-load time. The format is still fully "registered" the moment
 `registerLazyFormat` runs — its id, label, and weight are known and
 listable immediately — only the *load* is deferred.
 
-Implemented: `packages/download-core/src/registry.js`,
-`packages/download-core/src/download.js`; new `FORMAT_LOAD_FAILED` code in
+Implemented: `packages/extract-core/src/registry.js`,
+`packages/extract-core/src/download.js`; new `FORMAT_LOAD_FAILED` code in
 `packages/spec/src/errors.js`. Every new format plugin from E10
 (`@cngeo/format-gpkg`, `@cngeo/format-flatgeobuf`) exports a ready-made
 `*FormatDescriptor` using this shape; the zero-dependency ones
 (`@cngeo/format-shapefile`, `@cngeo/format-extras`) export one too, whose
 `load()` resolves immediately — the registry treats "lazy but free" and
 "lazy and heavy" the same way. Tests:
-`packages/download-core/test/registry-lazy.test.js` and the lazy-format
-cases appended to `packages/download-core/test/download-handle.test.js`.
+`packages/extract-core/test/registry-lazy.test.js` and the lazy-format
+cases appended to `packages/extract-core/test/download-handle.test.js`.
 
 Engine plugin seam (so DuckDB stays strictly opt-in):
 
@@ -3703,13 +3703,13 @@ the only difference is an alias map.
 
 ```json
 {
-  "name": "@cngeo/download-core",
+  "name": "@cngeo/extract-core",
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".":        { "types": "./dist/index.d.ts", "default": "./dist/download-core.js" },
-    "./cdn":    { "types": "./dist/index.d.ts", "default": "./dist/download-core.cdn.js" },
-    "./bundle": { "types": "./dist/index.d.ts", "default": "./dist/download-core.bundle.js" }
+    ".":        { "types": "./dist/index.d.ts", "default": "./dist/extract-core.js" },
+    "./cdn":    { "types": "./dist/index.d.ts", "default": "./dist/extract-core.cdn.js" },
+    "./bundle": { "types": "./dist/index.d.ts", "default": "./dist/extract-core.bundle.js" }
   },
   "dependencies": {
     "@cngeo/spec": "0.1.0",
@@ -3725,7 +3725,7 @@ the only difference is an alias map.
 In `dist/<name>.cdn.js`, a dependency import becomes an exact, pinned URL:
 
 ```js
-// inside dist/download-core.cdn.js
+// inside dist/extract-core.cdn.js
 import { parquetMetadataAsync, parquetReadObjects } from 'https://cdn.jsdelivr.net/npm/hyparquet@1.26.0/src/hyparquet.js';
 import { compressors } from 'https://cdn.jsdelivr.net/npm/hyparquet-compressors@1.1.1/src/index.js';
 import { normalizeArea, splitAntimeridian } from 'https://cdn.jsdelivr.net/npm/@cngeo/spec@0.1.0/dist/spec.cdn.js';
@@ -3734,7 +3734,7 @@ import { normalizeArea, splitAntimeridian } from 'https://cdn.jsdelivr.net/npm/@
 **Why externalize rather than inline:**
 
 1. **One module instance.** A page that uses both `geocoder-core` and
-   `download-core` — the whole point of this project — would otherwise load two
+   `extract-core` — the whole point of this project — would otherwise load two
    copies of hyparquet: ~70 KB of duplicate transfer, two parse costs, two sets
    of module state. With the identical pinned URL, the browser's module map
    gives both packages the same instance, one fetch, one parse.
@@ -3797,7 +3797,7 @@ who wants to self-host:
   "imports": {
     "@cngeo/spec":            "https://cdn.jsdelivr.net/npm/@cngeo/spec@0.1.0/dist/spec.js",
     "@cngeo/geocoder-core":   "https://cdn.jsdelivr.net/npm/@cngeo/geocoder-core@0.1.0/dist/geocoder-core.js",
-    "@cngeo/download-core":   "https://cdn.jsdelivr.net/npm/@cngeo/download-core@0.1.0/dist/download-core.js",
+    "@cngeo/extract-core":   "https://cdn.jsdelivr.net/npm/@cngeo/extract-core@0.1.0/dist/extract-core.js",
     "@cngeo/maplibre":        "https://cdn.jsdelivr.net/npm/@cngeo/maplibre@0.1.0/dist/maplibre.js",
     "hyparquet":             "https://cdn.jsdelivr.net/npm/hyparquet@1.26.0/src/hyparquet.js",
     "hyparquet-compressors": "https://cdn.jsdelivr.net/npm/hyparquet-compressors@1.1.1/src/index.js",
@@ -3807,7 +3807,7 @@ who wants to self-host:
 </script>
 <script type="module">
   import { Geocoder } from '@cngeo/geocoder-core';
-  import { estimate, download, autoSink } from '@cngeo/download-core';
+  import { estimate, download, autoSink } from '@cngeo/extract-core';
 </script>
 ```
 
@@ -3864,7 +3864,7 @@ is what crosses the wire.** Our packages are budgets to hold, not measurements
 | `@cngeo/spec` | — | **≤ 10 KB** | budget | bbox math, antimeridian, Visvalingam, validators. Types erase to nothing |
 | `@cngeo/geocoder-core` | — | **≤ 15 KB** | budget | + spec + hyparquet(+compressors) |
 | `@cngeo/upload-core` | — | **≤ 10 KB** | budget | GeoJSON only |
-| `@cngeo/download-core` | — | **≤ 30 KB** | budget | pruning, estimate, sinks, geojson + geoparquet writers |
+| `@cngeo/extract-core` | — | **≤ 30 KB** | budget | pruning, estimate, sinks, geojson + geoparquet writers |
 | `@cngeo/maplibre` | — | **≤ 8 KB** | budget | `maplibre-gl` is a peer, not counted |
 | `@cngeo/openlayers` | — | **≤ 9 KB** | budget | `ol` is a peer, not counted |
 | `@cngeo/stac` | — | **≤ 6 KB** | budget | pure JSON traversal |
@@ -4575,13 +4575,13 @@ implementation.
 
 | # | item | blocked on | **default I'd pick** |
 |---|---|---|---|
-| **O1** ✅ | npm scope. `@cngeo` is short (matters in CDN URLs) but cryptic; availability unverified. | an `npm view` check and Chris's preference | **RESOLVED 2026-11-17: `@cngeo`.** Registry checked — zero published packages under `@cngeo` *or* `@cngeo`, so the choice was free. `@cngeo` is equally short and actually expands ("cloud-native geospatial"). Package *names* (`geocoder-core`, `download-core`, …) were settled either way. |
+| **O1** ✅ | npm scope. `@cngeo` is short (matters in CDN URLs) but cryptic; availability unverified. | an `npm view` check and Chris's preference | **RESOLVED 2026-11-17: `@cngeo`.** Registry checked — zero published packages under `@cngeo` *or* `@cngeo`, so the choice was free. `@cngeo` is equally short and actually expands ("cloud-native geospatial"). Package *names* (`geocoder-core`, `extract-core`, …) were settled either way. |
 | **O2** | `filterVertexCeiling = 10,000`. | E5 measuring per-row point-in-polygon cost at 1k/10k/50k vertices against a real FTW/FIRMS download | **10,000.** Raise it if E5 shows the cost is negligible; the mechanism (auto-simplify + reported `areaDeltaRatio`) does not change either way. |
 | **O3** | ~~`loadStrategy: 'auto'` threshold, 5 MB.~~ **Resolved by E1.** | — | **5 MB, confirmed.** E1: the 2.50 MB index full-loads in 203 ms (8 ms fetch + 196 ms decode, localhost) and answers warm keystrokes in 0.0–0.1 ms; the range path adds round trips for no benefit at this size. Extrapolated, a 300K-row index is ~16 MB and would full-load in ~1.2 s, already past the cold budget — so 5 MB sits correctly between the two. **Residual unknown:** E1's cold number is localhost; the 1 s budget is "on broadband", so the real cold-focus fetch of 2.5 MB over the public path is still unmeasured. Default stands; re-check in E6 against source.coop. |
 | **O4** | ~~Whether `searchSync` is worth its API surface.~~ **Resolved by E1.** | — | **Ship it.** E1 measured warm full-load search at **0.0 ms p50, 0.1 ms p95** — a binary search over an in-memory array. At that cost the promise is not an optimization detail, it *is* the per-keystroke cost, and an `await` per keystroke also forces the caller's render into a later microtask. Keep the `state`-guarded throw. |
 | **O5** | ~~GeoPackage: sql.js vs gdal3.js.~~ **Resolved by E10.** | — | **sql.js, shipped as `@cngeo/format-gpkg`.** Measured 339 KB min+gz (lighter than the ~480 KB estimate), validated with `ogrinfo -al -so` and DuckDB's `ST_Read` — a live FTW-Liechtenstein download round-trips end to end. gdal3.js measured 9.07 MB gzip (heavier than the estimate's ~2–8 MB upper bound), confirming sql.js as the right default; stays `@cngeo/format-gdal` future work. **New candidate found and rejected on weight, not function:** `terrio-js` (opengeos/terrio), a pure-Rust GDAL-adjacent I/O library with wasm bindings — it genuinely works (writes correct, `ogrinfo`/DuckDB-validated GeoPackage *and* Shapefile) but its smallest module (`terrio-js/core`) measures 6.1 MB gzip, 18x the sql.js path; not shipped. Shapefile also shipped (`@cngeo/format-shapefile`, zero deps, ~5 KB), FlatGeobuf shipped (`@cngeo/format-flatgeobuf`, ~10 KB, lighter than its own ~25 KB estimate), and CSV + Esri JSON shipped (`@cngeo/format-extras`, zero deps). See `experiments/e10-heavy-formats/RESULTS.md` for every measurement and the terrio verdict in full. |
 | **O6** | Non-4326 datasets. Design call #4 makes `Area` 4326-only, but a dataset in 3857 or a UTM zone is common. | whether E6/E7 hit one in practice | **Refuse with `DATASET_CRS_UNSUPPORTED`**, naming the CRS and the `ogr2ogr` command that fixes it. Reprojecting *features* needs proj in core; reprojecting the *area* to the dataset's CRS needs proj too and silently changes what "intersects" means near the edges. Revisit as `@cngeo/reproject` (a thin `proj4` wrapper — `portolan-browser` already depends on `proj4`). |
-| **O7** | Exact clip implementation. `intersects` needs only point-in-polygon; `clip` needs real polygon intersection. | E5 choosing between a ~15 KB `polygon-clipping` dependency in `download-core` vs. requiring `@cngeo/engine-duckdb` | **Ship `clip` as a small opt-in plugin** (`@cngeo/clip`, registering a clipper), so core stays at its 30 KB budget and `clip` does not imply a 3–9 MB DuckDB. Already the shape of §1.4's `dissolver` and §3.4's registration seam. |
+| **O7** | Exact clip implementation. `intersects` needs only point-in-polygon; `clip` needs real polygon intersection. | E5 choosing between a ~15 KB `polygon-clipping` dependency in `extract-core` vs. requiring `@cngeo/engine-duckdb` | **Ship `clip` as a small opt-in plugin** (`@cngeo/clip`, registering a clipper), so core stays at its 30 KB budget and `clip` does not imply a 3–9 MB DuckDB. Already the shape of §1.4's `dissolver` and §3.4's registration seam. |
 | **O8** | Default `ceiling` numbers (5M rows / 2 GiB output / 500 files). | E5/E6 observing what a plausible FIRMS-month or S2-year request actually produces | **As tabled.** They are deliberately generous: the ceiling's job is to stop the accident, not to second-guess the user, and `acceptCeiling()` is one call away. |
 | **O9** | Partition enumeration where no `collection-mirror` exists and `item` links number in the hundreds (fieldmaps' 518 per-country collections is the live example). | E7 hitting it | **`stac-items` with a bounded concurrency of 8 and a hard cap of 200 item fetches**, above which the estimate reports `files.total` as unknown and pruning falls back to glob-expansion by declared `PartitionKey.values`. Also: advocate for `collection-mirror` as a Portolan best practice — it is the right fix, and it belongs upstream. |
 | **O10** | Multilingual rows in the default index (`name_lang`, `alt_of`). | E8, and design call #11's licensing question (Chris flagged it) | **Columns reserved in the schema now, unpopulated in the default CC-BY index.** Reserving them costs nothing; adding columns later forces an index-version bump and a geocoder release. The ODbL-enriched index is a separate artifact at a separate URL with `share_alike: true` attribution that the adapter is required to surface. |

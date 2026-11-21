@@ -49,7 +49,7 @@
   Zero-build ESM, no bundler (design doc §4.3's "published import map"
   pattern, pointed at this repo's own packages/ instead of a CDN since
   nothing has been published yet). hyparquet/hyparquet-writer themselves
-  are pulled from pinned, exact CDN URLs by @cngeo/download-core's
+  are pulled from pinned, exact CDN URLs by @cngeo/extract-core's
   src/cdn.js internally, not by this map.
 -->
 <script type="importmap">
@@ -58,7 +58,7 @@
     "@cngeo/spec": "../../packages/spec/src/index.js",
     "@cngeo/geocoder-core": "../../packages/geocoder-core/src/index.js",
     "@cngeo/maplibre": "../../packages/maplibre/src/index.js",
-    "@cngeo/download-core": "../../packages/download-core/src/index.js",
+    "@cngeo/extract-core": "../../packages/extract-core/src/index.js",
     "@cngeo/format-gpkg": "../../packages/format-gpkg/src/index.js",
     "@cngeo/format-shapefile": "../../packages/format-shapefile/src/index.js",
     "@cngeo/format-flatgeobuf": "../../packages/format-flatgeobuf/src/index.js",
@@ -113,14 +113,14 @@ import {
   CeilingExceededError,
   registerLazyFormat,
   formats as listFormats,
-} from '@cngeo/download-core';
+} from '@cngeo/extract-core';
 
 // Heavy/lazy output formats (design doc §3.4 amendment,
 // experiments/e10-heavy-formats/RESULTS.md §8: "the lazy-loading registry
 // amendment"). `registerLazyFormat` only lists the id/label/weight -- none
 // of these fetch anything over the network until a `download()` for that
 // format id actually runs. GeoJSON and GeoParquet need no registration
-// here: they're @cngeo/download-core's own eager built-ins (registered as a
+// here: they're @cngeo/extract-core's own eager built-ins (registered as a
 // side effect of importing that package).
 //
 // `format-gpkg` is the heavy one (sql.js, ~340KB min+gz) and
@@ -445,7 +445,7 @@ document.getElementById('estimateBtn').addEventListener('click', async () => {
 
 // --- Format picker ---------------------------------------------------------
 //
-// Built from download-core's own `formats()` listing (eager + lazy,
+// Built from extract-core's own `formats()` listing (eager + lazy,
 // uniformly) rather than hardcoded markup, so a lazy format's weight and
 // load state are always read from the one place that tracks them
 // (registry.js's `lazyLoadState`/`resolvedLazyFormats`) instead of being

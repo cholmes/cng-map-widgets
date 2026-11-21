@@ -1,10 +1,10 @@
 // @cngeo/format-gpkg -- public entry point.
 //
-// Two ways to use this package, matching download-core's registry seam
+// Two ways to use this package, matching extract-core's registry seam
 // (design doc §3.4, amended for lazy loading):
 //
 //   // Lazy (recommended for a page that only sometimes needs GeoPackage):
-//   import { registerLazyFormat } from '@cngeo/download-core';
+//   import { registerLazyFormat } from '@cngeo/extract-core';
 //   import { gpkgFormatDescriptor } from '@cngeo/format-gpkg';
 //   registerLazyFormat(gpkgFormatDescriptor);
 //   // sql.js's ~340KB (min+gz) wasm fetches only once a `download()` for
@@ -12,7 +12,7 @@
 //   // and not when it's registered.
 //
 //   // Eager (already have sql.js loaded, or want it loaded up front):
-//   import { registerFormat } from '@cngeo/download-core';
+//   import { registerFormat } from '@cngeo/extract-core';
 //   import { createGpkgFormat } from '@cngeo/format-gpkg';
 //   import initSqlJs from 'sql.js'; // or your own bundler-resolved import
 //   registerFormat(createGpkgFormat(await initSqlJs()));
@@ -27,7 +27,7 @@ import { createGpkgFormat, estimateGpkgBytes } from './gpkg-writer.js';
 import { loadSqlJs, APPROX_BYTES } from './cdn.js';
 
 /**
- * A ready-made `LazyFormatDescriptor` (download-core's
+ * A ready-made `LazyFormatDescriptor` (extract-core's
  * `registerLazyFormat` shape) for the `gpkg` format id. `load()` resolves
  * to a `FormatPlugin` built from sql.js once it has finished loading from
  * the pinned CDN URL in `cdn.js` -- or from `setSqlJsModule`'s injection,

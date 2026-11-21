@@ -2,7 +2,7 @@
 // (Chris's scope note). Both zero-dependency, zero-wasm; register either
 // eagerly.
 //
-//   import { registerFormat } from '@cngeo/download-core';
+//   import { registerFormat } from '@cngeo/extract-core';
 //   import { createCsvFormat, createEsriJsonFormat } from '@cngeo/format-extras';
 //   registerFormat(createCsvFormat());
 //   registerFormat(createEsriJsonFormat());

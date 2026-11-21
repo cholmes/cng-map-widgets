@@ -1,11 +1,11 @@
-// @cngeo/format-gpkg -- the `gpkg` FormatPlugin (download-core's registry
+// @cngeo/format-gpkg -- the `gpkg` FormatPlugin (extract-core's registry
 // contract, design doc §3.4/§2.3). Hand-writes the GeoPackage "vector
 // features" profile's required tables with sql.js (a SQLite-to-wasm
 // build), rather than driving a full GDAL build -- the O5 decision this
 // package resolves. See README.md for the measured weight and what a
 // consumer gives up versus the gdal3.js path.
 //
-// NOT streaming (`streaming: false`, same reason as download-core's own
+// NOT streaming (`streaming: false`, same reason as extract-core's own
 // `geoparquet` plugin): every row is buffered in plain JS arrays during
 // `writeBatch`, and the whole SQLite database is built and serialized in
 // `close()`. Two reasons this can't be incremental: (1) `gpkg_contents`'
@@ -44,7 +44,7 @@ const SQLITE_TYPE_MAP = {
   int16: 'SMALLINT',
   int32: 'MEDIUMINT',
   int64: 'INTEGER', // GeoPackage's "INTEGER" affinity is 64-bit, per the spec's data type list
-  uint8: 'SMALLINT', // widened by one step, same reasoning as download-core's geoparquet.js TYPE_MAP: hold the full unsigned range in the next signed affinity up
+  uint8: 'SMALLINT', // widened by one step, same reasoning as extract-core's geoparquet.js TYPE_MAP: hold the full unsigned range in the next signed affinity up
   uint16: 'MEDIUMINT',
   uint32: 'INTEGER',
   uint64: 'INTEGER', // best-effort: a uint64 > 2^63-1 would still overflow; no real dataset here carries one

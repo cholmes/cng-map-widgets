@@ -2,11 +2,11 @@
 //
 // Zero dependencies, zero wasm: register it eagerly, no CDN fetch needed.
 //
-//   import { registerFormat } from '@cngeo/download-core';
+//   import { registerFormat } from '@cngeo/extract-core';
 //   import { createShapefileFormat } from '@cngeo/format-shapefile';
 //   registerFormat(createShapefileFormat());
 //
-// A tiny `shapefileFormatDescriptor` (download-core's lazy-registration
+// A tiny `shapefileFormatDescriptor` (extract-core's lazy-registration
 // shape) is also exported for a host page that wants every non-built-in
 // format listed uniformly through `registerLazyFormat` -- its `load()`
 // resolves immediately (there is nothing to fetch), so this costs nothing

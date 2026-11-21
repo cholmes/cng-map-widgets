@@ -6,7 +6,7 @@ download.
 
 ```js
 import { describeRasterDataset, estimateRasterClip, downloadRaster } from '@cngeo/raster-core';
-import { autoSink } from '@cngeo/download-core';
+import { autoSink } from '@cngeo/extract-core';
 
 const item = await (await fetch(stacItemUrl)).json();      // a STAC Item
 const dataset = describeRasterDataset(item);               // bands from eo:bands / raster:bands
@@ -74,11 +74,11 @@ opened (`src/cdn.js`), never as a bare specifier:
   public `addDecoder` seam)
 
 `setGeoTiffModules({ geotiff })` hands in a host's own copy instead — the same
-host-injection seam `@cngeo/download-core`'s `setHyparquetModules` provides, and
+host-injection seam `@cngeo/extract-core`'s `setHyparquetModules` provides, and
 what makes `node --test` possible.
 
 `rasterClipPlugin` exports the `{ name, approxBytes, load }` descriptor shape
-that download-core's `registerLazyFormat` amendment established, so a format
+that extract-core's `registerLazyFormat` amendment established, so a format
 picker can show "GeoTIFF clip (+~28 KB)" before anything is fetched.
 
 ## Errors

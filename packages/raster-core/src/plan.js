@@ -1,7 +1,7 @@
 // @cngeo/raster-core -- band resolution, window math, overview choice, and
 // the pre-download estimate.
 //
-// The estimate contract is deliberately download-core's: `Bounded`
+// The estimate contract is deliberately extract-core's: `Bounded`
 // (min/max/estimate/exact), a `prune` trace, `warnings`, and a `ceiling`
 // block with `exceeded` + `breaches`, so one UI can render either. The
 // raster numbers that matter are different, though:

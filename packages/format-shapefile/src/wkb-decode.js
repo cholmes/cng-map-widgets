@@ -1,9 +1,9 @@
 // @cngeo/format-shapefile -- minimal WKB -> GeoJSON decoder, 2D, the same
 // six types `@cngeo/format-gpkg/src/wkb.js` encodes. Duplicated rather than
 // shared: these are independent plugin packages (design doc §3.4 plugin
-// seam), each with no dependency on the other or on download-core's
+// seam), each with no dependency on the other or on extract-core's
 // internals, matching the project's existing precedent
-// (download-core/src/wkb-geometry.js is its own local decorator rather
+// (extract-core/src/wkb-geometry.js is its own local decorator rather
 // than importing another plugin's copy).
 
 const TYPE_NAME = { 1: 'Point', 2: 'LineString', 3: 'Polygon', 4: 'MultiPoint', 5: 'MultiLineString', 6: 'MultiPolygon' };

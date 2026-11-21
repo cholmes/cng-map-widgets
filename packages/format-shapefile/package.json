@@ -1,7 +1,7 @@
 {
   "name": "@cngeo/format-shapefile",
   "version": "0.2.0",
-  "description": "Shapefile output for @cngeo/download-core: a zero-dependency, zero-wasm .shp/.shx/.dbf/.prj/.cpg writer bundled into one .shp.zip, with Shapefile's real limits (10-char field names, one shape type per file, ~2GiB size) surfaced as warnings instead of silent mangling.",
+  "description": "Shapefile output for @cngeo/extract-core: a zero-dependency, zero-wasm .shp/.shx/.dbf/.prj/.cpg writer bundled into one .shp.zip, with Shapefile's real limits (10-char field names, one shape type per file, ~2GiB size) surfaced as warnings instead of silent mangling.",
   "keywords": [
     "shapefile",
     "shp",

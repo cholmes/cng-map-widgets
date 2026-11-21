@@ -26,7 +26,7 @@
 // design doc's taxonomy. "Coordinate precision truncation" from the task
 // description is intentionally NOT implemented here: design doc §1.3 is
 // explicit that precision trimming happens "on serialization only" (i.e.
-// in a format writer, @cngeo/download-core's job), not on upload.
+// in a format writer, @cngeo/extract-core's job), not on upload.
 
 /** @typedef {import('@cngeo/spec').AreaGeometry} AreaGeometry */
 

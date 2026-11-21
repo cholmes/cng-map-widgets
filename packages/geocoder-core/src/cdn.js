@@ -36,7 +36,7 @@ export const CDN = {
 // So a host that already has hyparquet may hand its own modules in, once,
 // before the first `load()`/`select()`. The CDN path stays the default and
 // is never bypassed unless a host calls this. The same seam exists in
-// `@cngeo/download-core`; a host with both packages calls both.
+// `@cngeo/extract-core`; a host with both packages calls both.
 /** @type {{ hyparquet: any, compressors: any } | null} */
 let injected = null;
 

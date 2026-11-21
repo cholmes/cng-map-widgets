@@ -1,7 +1,7 @@
 {
   "name": "@cngeo/format-extras",
   "version": "0.2.0",
-  "description": "The 'nearly free' download-core output formats: CSV (attributes + WKT geometry) and Esri JSON (FeatureSet), both zero-dependency, zero-wasm writers.",
+  "description": "The 'nearly free' extract-core output formats: CSV (attributes + WKT geometry) and Esri JSON (FeatureSet), both zero-dependency, zero-wasm writers.",
   "keywords": [
     "csv",
     "esri-json",

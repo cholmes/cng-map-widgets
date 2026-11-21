@@ -88,7 +88,7 @@ geocoder.on('load', (info) => {
   status.textContent = `Index ready: ${info.rows.toLocaleString()} places, levels ${info.levels.join('/')}, ${info.strategy}-load in ${info.loadMs.toFixed(0)} ms. Try "contra costa".`;
 });
 geocoder.on('select', ({ result, area }) => {
-  status.textContent = `${result.name} (${result.country}, ADM${result.level}) — bbox [${area.bbox.map((n) => n.toFixed(2)).join(', ')}], ${area.vertexCount.display} vertices. area.filterGeometry is ready for @cngeo/download-core.`;
+  status.textContent = `${result.name} (${result.country}, ADM${result.level}) — bbox [${area.bbox.map((n) => n.toFixed(2)).join(', ')}], ${area.vertexCount.display} vertices. area.filterGeometry is ready for @cngeo/extract-core.`;
 });
 geocoder.on('error', (err) => { status.textContent = `${err.code}: ${err.message}`; });
 
