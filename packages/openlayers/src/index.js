@@ -7,7 +7,7 @@
 // prefix entry (`"ol/": "https://cdn.jsdelivr.net/npm/ol@<exact>/"`), per
 // design doc §4.2's "pinned, exact CDN URL, never a floating specifier".
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 
 export { GeocoderControl } from './geocoder-control.js';
 export { addAreaLayer } from './area-layer.js';

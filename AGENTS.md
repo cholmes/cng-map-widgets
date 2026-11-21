@@ -60,7 +60,7 @@ OV  https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.
 Do **not** add `hyparquet` to that map. The packages `import()` it themselves
 from pinned absolute CDN URLs (`src/cdn.js` in each). Nothing is on npm yet;
 when it is, each line becomes
-`https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.2.0/src/index.js` and no module
+`https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.3.0/src/index.js` and no module
 code changes.
 
 **Without a clone**, swap the relative paths for the published site — the
@@ -73,7 +73,7 @@ https://cholmes.github.io/cng-map-widgets/packages/<name>/src/index.js
 or, pinned to a tag,
 
 ```
-https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.2.0/packages/<name>/src/index.js
+https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.3.0/packages/<name>/src/index.js
 ```
 
 Either way, **map every package you need transitively**, not just the ones
@@ -495,6 +495,9 @@ ever reached on a plan you already approved.
 `download()`/`estimate()` compute them with `effectiveCeiling({ format, sink,
 overrides: options.ceiling })`:
 
+- **Raw passthrough (recipe 3e) is never refused on `rows`** — nothing is
+  decoded, so only `outputBytes`, `readBytes` and `files` can breach there.
+  `est.rows` is still reported when every part declares a row count.
 - `rows: 50,000,000`, `readBytes: 64 GiB`, `files: 10,000`, `blobBytes: 256
   MiB` are flat — the same for every format.
 - `outputBytes` depends on the format's declared `capabilities.memoryFactor`
@@ -505,7 +508,11 @@ overrides: options.ceiling })`:
     sink — the format holds nothing of its own, so the real limit is the
     sink's, not this package's — but capped at `blobBytes` on a `blob` sink
     or when no sink exists yet (`sink: null`, e.g. before a picker has
-    resolved one), the conservative choice.
+    resolved one), the conservative choice. **`blobBytes` is the default
+    for a blob sink, not a cap on one you configured:** a
+    `blobSink({ maxBytes })` states its real limit on `sink.maxBytes`, and
+    that is what both this cap and the buffering clamp below use (an
+    explicit `ceiling.blobBytes` override still wins).
   - **buffering** (`memoryFactor` absent on a `streaming: false` format
     defaults to `3`; `geoparquet` declares `2`, `gpkg` declares `2.9`):
     `outputBytes = memoryBudget / memoryFactor` — `memoryBudget` defaults to
@@ -558,7 +565,10 @@ inherits a share-alike license), `large-download` (`{ bytes, estimatedSeconds
 }`, fires over 1 GiB), `slow-download` (`{ estimatedSeconds }`, fires over
 120 s at an assumed 10 MB/s) — nine codes so far.
 
-Raw-passthrough only (recipe 3e) adds three more: `raw-passthrough-unfiltered`
+The raw path (recipe 3e) raises `share-alike` exactly as the decoded path
+does — it matters most there, since a single file is handed over verbatim
+with no `ATTRIBUTION.txt` beside it — and adds three codes of its own.
+Raw-passthrough only: `raw-passthrough-unfiltered`
 (`{ dropped }` — which of `where` / `columns` / `spatial-row-level` / `limit`
 this path did NOT apply, because nothing is decoded to apply them to —
 `spatial-row-level` fires whenever any `Area` was passed, regardless of

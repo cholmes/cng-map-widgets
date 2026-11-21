@@ -12,7 +12,7 @@
 // resolves immediately (there is nothing to fetch), so this costs nothing
 // beyond the registry bookkeeping.
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 
 export { createShapefileFormat, estimateShapefileBytes } from './shapefile-writer.js';
 export { writeDbf } from './dbf.js';
