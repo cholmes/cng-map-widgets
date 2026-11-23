@@ -130,8 +130,9 @@ export function effectiveCeiling({ format, sink, overrides = {} } = {}) {
       // But `blobSink` genuinely refuses to write above `blobBytes`
       // (`SINK_QUOTA_EXCEEDED` in sinks.js) regardless of what the
       // format's own memory factor would otherwise allow -- without this,
-      // geoparquet (factor 2) passes the gate up to 512 MiB and gpkg
-      // (factor 2.9) up to ~353 MiB while the sink itself dies at 256 MiB,
+      // gpkg (factor 2.9) passes the gate up to ~353 MiB while the sink
+      // itself dies at 256 MiB (geoparquet was the other example, at factor
+      // 2 and 512 MiB, until it began streaming in GitHub issue #4),
       // so a user waits through the whole read-and-encode only to hit a
       // late, cold `SINK_QUOTA_EXCEEDED` with no `suggestedFormats` instead
       // of a clean up-front `CEILING_EXCEEDED`. `memory` stays exempt, same

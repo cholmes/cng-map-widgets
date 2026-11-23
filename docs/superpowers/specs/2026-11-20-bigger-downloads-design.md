@@ -249,7 +249,7 @@ every existing plugin keeps working. Declared values:
 |---|---|---|---|
 | `geojson` | true | 0 | writes through |
 | `parquet-raw` | true | 0 | copies bytes through |
-| `geoparquet` | false | 2 | buffers rows, then the writer's output buffer |
+| `geoparquet` | true | 0 | streams a row group at a time (was `false`/`2`, buffering, until GitHub issue #4) |
 | `gpkg` | false | 3.5 | **measured**, §1 |
 | `shapefile`, `flatgeobuf` | per package | declare, or take the default | builder to measure |
 

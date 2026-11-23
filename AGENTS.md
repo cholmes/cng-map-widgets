@@ -595,12 +595,17 @@ consumer can switch on `w.code` without special-casing any of them.
 Output formats: `geojson` (`memoryFactor: 0` — streams; options `precision`,
 `newlineDelimited`, `featureIdColumn`), `geoparquet` (`memoryFactor: 0` — **streams**: one row group is buffered,
 encoded and handed to the sink at a time, so it is bounded like `geojson`,
-not by `memoryBudget`; nested columns (struct, list, map) are written as
-native Parquet groups from the source footer schema, not JSON strings,
-and a source `bbox` struct becomes the covering instead of four added
-`bbox_*` columns; options `compression` — `'snappy'`
-default, `'none'` ok, `'zstd'` **refused** with `FORMAT_CAPABILITY` at
-`open()`; `rowGroupSize` (50,000), `writeCovering`), and `parquet-raw` (`memoryFactor: 0`, no
+not by `memoryBudget`; a group closes at `rowGroupSize` rows or
+`rowGroupBytes` of geometry, whichever first; nested columns (struct,
+list, map) are written as native Parquet groups from the source footer
+schema, not JSON strings — except a column whose shape differs between the
+selected files, or that `hyparquet-writer` cannot re-encode (a legacy
+two-level list, a top-level `REPEATED` group, a non-string-keyed map),
+which stays JSON text rather than failing; the dataset's **declared**
+`bbox` covering struct becomes the covering instead of four added `bbox_*`
+columns; options `compression` — `'snappy'` default, `'none'` ok, `'zstd'`
+**refused** with `FORMAT_CAPABILITY` at `open()`; `rowGroupSize` (50,000),
+`rowGroupBytes` (64 MiB), `writeCovering`), and `parquet-raw` (`memoryFactor: 0`, no
 decode at all — recipe 3e). Anything else must be registered first;
 `formats()` lists what is available without loading any of it.
 

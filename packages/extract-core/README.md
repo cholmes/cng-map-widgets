@@ -585,7 +585,7 @@ exported for direct use.
 | | id | ext | media type | streaming | options |
 |---|---|---|---|---|---|
 | built in | `geojson` | `.geojson` | `application/geo+json` | **yes** | `precision` (7), `newlineDelimited` (false → RFC 8142 sequences), `featureIdColumn` |
-| built in | `geoparquet` | `.parquet` | `application/vnd.apache.parquet` | yes | `compression` (`'snappy'`), `rowGroupSize` (50,000), `writeCovering` (true) |
+| built in | `geoparquet` | `.parquet` | `application/vnd.apache.parquet` | yes | `compression` (`'snappy'`), `rowGroupSize` (50,000), `rowGroupBytes` (64 MiB), `writeCovering` (true) |
 | built in | `parquet-raw` | `.parquet` (or `.zip`, multi-file) | `application/vnd.apache.parquet` (`application/zip` for the multi-file case) | **yes** | none — see "Raw GeoParquet passthrough" below |
 
 #### `estimateBytes(schema, rows, ctx?)` — the output-size model
@@ -1086,41 +1086,60 @@ This is why the project built an optimized mirror instead.
 
 `streaming: true`, `capabilities.memoryFactor: 0`, `nestedColumns: true`.
 
-**Streaming.** Rows are buffered up to one row group (`rowGroupSize`,
-default 50,000). Each full group is encoded by `hyparquet-writer`'s
-incremental `ParquetWriter` and its bytes are handed to the sink before the
-next group is read; `close()` writes the last group and the footer. Peak
-memory is one row group, so `effectiveCeiling` treats it exactly like
+**Streaming.** Rows are buffered up to one row group. A group is full at
+`rowGroupSize` rows (default 50,000) **or** `rowGroupBytes` of buffered
+geometry (default 64 MiB), whichever comes first; the byte bound is what
+keeps a download of large geometries (full-resolution admin boundaries at
+tens of KB each) from holding gigabytes under the row bound alone. Each
+full group is encoded by `hyparquet-writer`'s incremental `ParquetWriter`
+and its bytes are handed to the sink before the next group is read;
+`close()` writes the last group and the footer. Both options must be
+positive numbers; anything else is refused with `FORMAT_CAPABILITY` at
+`open()`. Peak memory is one row group, so `effectiveCeiling` treats it exactly like
 `geojson`: unbounded on a disk-backed sink, the sink's own limit on a blob
 sink. Before this (through 0.3.0) the writer used the buffer-only
 `parquetWriteBuffer`, held the whole result until `close()`, and was capped
 at `memoryBudget / 2`.
 
 **Nested columns.** `download()` passes the source files' own Parquet
-schema to the writer as `FormatContext.sourceSchema` (the union of the
-selected parts' footers, first declaration of each column wins), and every
-struct, list and map column is written with that schema verbatim. A
+schema to the writer as `FormatContext.sourceSchema` (the columns the
+selected parts' footers **agree** on), and every struct, list and map
+column is written with that schema verbatim. A
 STAC-GeoParquet `links` (`list<struct>`), `bbox` and `stac_extensions`
 therefore read back as native nested types in hyparquet, DuckDB and
 pyarrow. Without a source schema `hyparquet-writer` can only infer, and
 what it infers for an object or array is a JSON string — still the
-fallback when a format is driven without one. Two details:
+fallback when a format is driven without one. The details:
 
 - The column's own element is relaxed to `OPTIONAL` (this writer nulls
   freely); everything beneath it is left as the source declared it.
-- Flat columns still go through the declared `table.columns` type, so a
-  column that is a *string* at the source stays a string even when its
-  content is JSON — the s2 catalog's `assets` is one.
+- **A column falls back to JSON text, rather than failing the download,**
+  in two cases. When the selected files disagree about its shape (one
+  part's `assets` has a field another's lacks): one part's schema would
+  drop the other's fields or throw mid-stream, and JSON holds them all.
+  And when its shape is one `hyparquet-writer` cannot re-encode from the
+  values hyparquet reads back: a legacy two-level list (a `REPEATED` leaf,
+  the parquet-avro and old Spark default), a top-level `REPEATED` group,
+  or a map whose keys are not strings.
+- Flat columns go through the declared `table.columns` type, so a column
+  that is a *string* at the source stays a string even when its content is
+  JSON — the s2 catalog's `assets` is one. A flat column with no declared
+  type takes the source footer's physical type when it is a plain one
+  (string, boolean, float, double, bare INT32/INT64); only then is it
+  inferred from the first row group, and an inferred column is always
+  written nullable.
 
-**Covering.** When the output includes a struct column with `xmin`,
-`ymin`, `xmax`, `ymax` leaves (conventionally `bbox`), the `geo` metadata's
-`covering` points at it (`["bbox", "xmin"]`, …) and no `bbox_*` columns are
-added. Otherwise `writeCovering` (default `true`) adds the four
-`bbox_xmin` … `bbox_ymax` columns as before.
+**Covering.** In order: (1) when the dataset's **declared** covering
+struct (`table.bbox`, passed as `FormatContext.covering`) is in the output
+and written natively, the `geo` metadata's `covering` points at it
+(`["bbox", "xmin"]`, …) and no `bbox_*` columns are added. Only the
+declared one: a struct that merely has `xmin`/`ymin`/`xmax`/`ymax` fields
+is not the geometry's bbox. (2) When the output already has all four
+`bbox_xmin` … `bbox_ymax` columns — a file this writer produced, extracted
+again — they are reused, not duplicated. (3) Otherwise `writeCovering`
+(default `true`) computes the four columns from the written geometry.
 
-The schema is fixed when the first row group is written. A flat column
-with no declared type is inferred from that first group's values, which is
-the same first-values inference the buffered writer did.
+The schema is fixed when the first row group is written.
 
 `node packages/extract-core/test/stac-roundtrip.verify.mjs` checks all of
 this against the live Sentinel-2 catalog.

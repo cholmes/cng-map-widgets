@@ -183,9 +183,9 @@ test('one batch larger than a row group is split across row groups', async () =>
   assert.deepEqual(metadata.row_groups.map((rg) => Number(rg.num_rows)), [4, 4, 1]);
 });
 
-test('a source bbox struct becomes the covering, instead of four added columns', async () => {
+test('the declared covering struct becomes the covering, instead of four added columns', async () => {
   const writer = recordingWriter();
-  const formatWriter = await createGeoParquetFormat().open(ctxFor(writer));
+  const formatWriter = await createGeoParquetFormat().open(ctxFor(writer, { covering: { kind: 'struct', column: 'bbox' } }));
   await formatWriter.writeBatch(batchOf(0, 6));
   await formatWriter.close();
   const { metadata } = await readBack(writer.bytes());
@@ -276,12 +276,178 @@ test('the format declares itself streaming, so the ceiling treats it like geojso
   assert.equal(effectiveCeiling({ format, sink: { kind: 'filesystem' } }).outputBytes, UNBOUNDED_BYTES);
 });
 
-test('unionSourceSchemas: first declaration of each top-level column wins, subtrees stay intact', () => {
-  const a = [{ name: 'schema', num_children: 2 }, str('id'), { name: 'bbox', repetition_type: 'OPTIONAL', num_children: 2 }, dbl('xmin'), dbl('ymin')];
-  const b = [{ name: 'schema', num_children: 3 }, { name: 'id', type: 'INT64', repetition_type: 'OPTIONAL' }, str('extra'), { name: 'tags', repetition_type: 'OPTIONAL', converted_type: 'LIST', num_children: 1 }, { name: 'list', repetition_type: 'REPEATED', num_children: 1 }, str('element')];
+test('unionSourceSchemas: columns the parts agree on are kept whole; a column whose shape differs is left out', () => {
+  const bboxAB = [{ name: 'bbox', repetition_type: 'OPTIONAL', num_children: 2 }, dbl('xmin'), dbl('ymin')];
+  const a = [{ name: 'schema', num_children: 3 }, str('id'), ...bboxAB, { name: 'assets', repetition_type: 'OPTIONAL', num_children: 1 }, str('visual')];
+  const b = [
+    { name: 'schema', num_children: 5 },
+    str('id'),
+    ...bboxAB,
+    // Same column, one more field than part a declares.
+    { name: 'assets', repetition_type: 'OPTIONAL', num_children: 2 },
+    str('visual'),
+    str('B04'),
+    str('extra'),
+    { name: 'tags', repetition_type: 'OPTIONAL', converted_type: 'LIST', num_children: 1 },
+    { name: 'list', repetition_type: 'REPEATED', num_children: 1 },
+    str('element'),
+  ];
   const union = unionSourceSchemas([a, undefined, b]);
-  assert.equal(union[0].num_children, 4);
   assert.deepEqual(union.slice(1).map((e) => e.name), ['id', 'bbox', 'xmin', 'ymin', 'extra', 'tags', 'list', 'element']);
-  assert.equal(union[1].type, 'BYTE_ARRAY'); // a's `id`, not b's
+  assert.equal(union[0].num_children, 4);
+  assert.equal(union.some((e) => e.name === 'assets'), false, 'a column the parts disagree on must not take one part\'s shape');
+
+  // A flat column whose physical type differs is a conflict too.
+  const c = [{ name: 'schema', num_children: 1 }, { name: 'id', type: 'INT64', repetition_type: 'OPTIONAL' }];
+  assert.equal(unionSourceSchemas([a, c]).some((e) => e.name === 'id'), false);
   assert.equal(unionSourceSchemas([undefined, []]), undefined);
+});
+
+// --- second review (PR #5) ------------------------------------------------
+
+test('a struct that merely LOOKS like a covering is not used as one', async () => {
+  // `bbox` here is not the declared covering (no ctx.covering), so the four
+  // computed columns must still be written from the geometry itself.
+  const writer = recordingWriter();
+  const formatWriter = await createGeoParquetFormat().open(ctxFor(writer));
+  await formatWriter.writeBatch(batchOf(0, 6));
+  await formatWriter.close();
+  const { metadata, rows } = await readBack(writer.bytes());
+  const geo = JSON.parse(metadata.key_value_metadata.find((kv) => kv.key === 'geo').value);
+  assert.deepEqual(geo.columns.geometry.covering.bbox.xmin, ['bbox_xmin']);
+  assert.equal(rows[3].bbox_xmin, 3); // the point's own x, not the struct's
+  assert.deepEqual(rows[3].bbox, itemRow(3).bbox); // and the struct still round-trips
+});
+
+test('a row group is flushed on buffered geometry bytes, not only on row count', async () => {
+  const writer = recordingWriter();
+  // Far under the row bound, but each geometry is ~16 KB and the byte bound is 64 KB.
+  const formatWriter = await createGeoParquetFormat().open(ctxFor(writer, { options: { rowGroupSize: 50_000, rowGroupBytes: 64 * 1024 } }));
+  const ring = Array.from({ length: 1000 }, (_, k) => [Math.cos(k / 159), Math.sin(k / 159)]);
+  ring.push(ring[0]);
+  const big = { type: 'Polygon', coordinates: [ring] };
+  // One row per batch: the byte bound is checked between appends.
+  for (let i = 0; i < 20; i++) {
+    const batch = batchOf(i, i + 1);
+    batch.geometry[0] = big;
+    await formatWriter.writeBatch(batch);
+  }
+  assert.ok(writer.chunks.length >= 2, `expected row groups at the sink before close(), saw ${writer.chunks.length}`);
+  await formatWriter.close();
+  const { metadata, rows } = await readBack(writer.bytes());
+  assert.ok(metadata.row_groups.length >= 3, `expected several byte-bounded row groups, got ${metadata.row_groups.length}`);
+  assert.equal(rows.length, 20);
+});
+
+test('a non-numeric rowGroupSize is refused at open(), not turned into an empty file', async () => {
+  for (const bad of [[1000, 100000], Number.NaN, '5000', 0, -3]) {
+    await assert.rejects(
+      createGeoParquetFormat().open(ctxFor(recordingWriter(), { options: { rowGroupSize: bad } })),
+      (err) => err.code === 'FORMAT_CAPABILITY' && /rowGroupSize/.test(err.message),
+      `rowGroupSize ${JSON.stringify(bad)} should be refused`,
+    );
+  }
+  await assert.rejects(
+    createGeoParquetFormat().open(ctxFor(recordingWriter(), { options: { rowGroupBytes: 'big' } })),
+    (err) => err.code === 'FORMAT_CAPABILITY' && /rowGroupBytes/.test(err.message),
+  );
+});
+
+test('nested shapes hyparquet-writer cannot re-encode fall back to JSON instead of failing the download', async () => {
+  const sourceSchema = [
+    { name: 'schema', num_children: 5 },
+    str('id'),
+    // legacy two-level list: a REPEATED leaf directly under the LIST group
+    { name: 'legacy', repetition_type: 'OPTIONAL', converted_type: 'LIST', num_children: 1 },
+    { name: 'array', type: 'INT32', repetition_type: 'REPEATED' },
+    // a top-level REPEATED group
+    { name: 'rep', repetition_type: 'REPEATED', num_children: 1 },
+    str('v'),
+    // a map with integer keys
+    { name: 'imap', repetition_type: 'OPTIONAL', converted_type: 'MAP', num_children: 1 },
+    { name: 'key_value', repetition_type: 'REPEATED', num_children: 2 },
+    { name: 'key', type: 'INT32', repetition_type: 'REQUIRED' },
+    str('value'),
+    { name: 'geometry', type: 'BYTE_ARRAY', repetition_type: 'OPTIONAL' },
+  ];
+  const schema = [{ name: 'id', type: 'string' }, { name: 'legacy', type: 'list' }, { name: 'rep', type: 'list' }, { name: 'imap', type: 'map' }, { name: 'geometry', type: 'geometry' }];
+  const writer = recordingWriter();
+  const formatWriter = await createGeoParquetFormat().open(ctxFor(writer, { schema, sourceSchema }));
+  await formatWriter.writeBatch({
+    rows: 2,
+    columns: { id: ['a', 'b'], legacy: [[1, 2], [3]], rep: [[{ v: 'x' }], []], imap: [{ 1: 'one' }, { 2: 'two' }] },
+    geometry: [{ type: 'Point', coordinates: [0, 0] }, { type: 'Point', coordinates: [1, 1] }],
+  });
+  await formatWriter.close(); // threw for all three shapes before the fallback
+  const { rows } = await readBack(writer.bytes());
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.id), ['a', 'b']);
+  // Written as JSON, so every value is still there.
+  assert.deepEqual(rows[0].legacy, [1, 2]);
+  assert.deepEqual(rows[0].imap, { 1: 'one' });
+});
+
+test('a column with no declared type takes its type from the source footer, and survives nulls after the first group', async () => {
+  const sourceSchema = [
+    { name: 'schema', num_children: 4 },
+    str('id'),
+    str('note'),
+    { name: 'count', type: 'INT32', repetition_type: 'REQUIRED' },
+    { name: 'geometry', type: 'BYTE_ARRAY', repetition_type: 'OPTIONAL' },
+  ];
+  // `table` omitted upstream: every flat column arrives typed 'unknown'.
+  const schema = [{ name: 'id', type: 'unknown' }, { name: 'note', type: 'unknown' }, { name: 'count', type: 'unknown' }, { name: 'geometry', type: 'geometry' }];
+  const writer = recordingWriter();
+  const formatWriter = await createGeoParquetFormat().open(ctxFor(writer, { schema, sourceSchema, options: { rowGroupSize: 2 } }));
+  const point = { type: 'Point', coordinates: [0, 0] };
+  // First row group: `note` is all null, `count` has no null.
+  await formatWriter.writeBatch({ rows: 2, columns: { id: ['a', 'b'], note: [null, null], count: [1, 2] }, geometry: [point, point] });
+  // Second: `note` turns out to be a string, `count` has a null.
+  await formatWriter.writeBatch({ rows: 2, columns: { id: ['c', 'd'], note: ['hello', null], count: [null, 4] }, geometry: [point, point] });
+  await formatWriter.close();
+  const { metadata, rows } = await readBack(writer.bytes());
+  assert.equal(metadata.row_groups.length, 2);
+  assert.equal(rows[2].note, 'hello'); // a string, not raw bytes
+  assert.equal(rows[2].count ?? null, null);
+  assert.equal(rows[3].count, 4);
+  const cols = columnsOf(metadata);
+  assert.equal(cols.get('note').element.converted_type, 'UTF8');
+  assert.equal(cols.get('count').element.repetition_type, 'OPTIONAL');
+});
+
+test('with no source schema an inferred column is still nullable in later row groups', async () => {
+  const schema = [{ name: 'id', type: 'string' }, { name: 'count', type: 'unknown' }, { name: 'geometry', type: 'geometry' }];
+  const writer = recordingWriter();
+  const formatWriter = await createGeoParquetFormat().open(ctxFor(writer, { schema, sourceSchema: undefined, options: { rowGroupSize: 2 } }));
+  const point = { type: 'Point', coordinates: [0, 0] };
+  await formatWriter.writeBatch({ rows: 2, columns: { id: ['a', 'b'], count: [1, 2] }, geometry: [point, point] });
+  await formatWriter.writeBatch({ rows: 2, columns: { id: ['c', 'd'], count: [null, 4] }, geometry: [point, point] });
+  await formatWriter.close(); // threw "expected integer value, got null" when inferred REQUIRED
+  const { rows } = await readBack(writer.bytes());
+  assert.deepEqual(rows.map((r) => r.count ?? null), [1, 2, null, 4]);
+});
+
+test('re-extracting a file that already has bbox_* columns reuses them and does not duplicate the names', async () => {
+  const schema = [
+    { name: 'id', type: 'string' },
+    { name: 'bbox_xmin', type: 'float64' },
+    { name: 'bbox_ymin', type: 'float64' },
+    { name: 'bbox_xmax', type: 'float64' },
+    { name: 'bbox_ymax', type: 'float64' },
+    { name: 'geometry', type: 'geometry' },
+  ];
+  const writer = recordingWriter();
+  const formatWriter = await createGeoParquetFormat().open(ctxFor(writer, { schema, sourceSchema: undefined }));
+  await formatWriter.writeBatch({
+    rows: 2,
+    columns: { id: ['a', 'b'], bbox_xmin: [0, 1], bbox_ymin: [0, 1], bbox_xmax: [0, 1], bbox_ymax: [0, 1] },
+    geometry: [{ type: 'Point', coordinates: [0, 0] }, { type: 'Point', coordinates: [1, 1] }],
+  });
+  await formatWriter.close();
+  const { metadata, rows } = await readBack(writer.bytes());
+  const names = parquetSchema(metadata).children.map((c) => c.element.name);
+  assert.deepEqual(names, ['id', 'bbox_xmin', 'bbox_ymin', 'bbox_xmax', 'bbox_ymax', 'geometry']);
+  const geo = JSON.parse(metadata.key_value_metadata.find((kv) => kv.key === 'geo').value);
+  assert.deepEqual(geo.columns.geometry.covering.bbox.xmax, ['bbox_xmax']);
+  assert.equal(rows[1].bbox_xmin, 1);
 });

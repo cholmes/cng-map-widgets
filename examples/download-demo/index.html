@@ -688,8 +688,11 @@ renderFormatPicker();
 // --- Download ------------------------------------------------------------
 
 let activeHandle = null;
+/** Bumped by every `resetDownloadUi()`; an in-flight `confirmAndDownload` reads it to learn it was superseded. */
+let resetGeneration = 0;
 
 function resetDownloadUi() {
+  resetGeneration += 1;
   document.getElementById('estimateInfo').style.display = 'none';
   document.getElementById('prominentWarnings').style.display = 'none';
   document.getElementById('ceilingBox').style.display = 'none';
@@ -875,14 +878,20 @@ async function confirmAndDownload(formatId) {
   // Captured with `entry`: both awaits below (the preflight estimate, the
   // confirm dialog) leave the dataset select and the map live. The area
   // this flow estimates is the area it downloads, whatever `area` becomes
-  // meanwhile. `stale()` deliberately does NOT watch `area`: a geocoded
-  // area is REPLACED moments after selection when its full-resolution
-  // geometry lands in the background, and treating that as "the user
-  // changed their mind" silently dropped a download clicked in that
-  // window. Only a dataset switch -- which resets this panel -- abandons
-  // the flow.
+  // meanwhile.
+  //
+  // `stale()` is "the panel was reset since this flow started", read off
+  // `resetGeneration`. Every real change of selection -- another dataset,
+  // another place, a drawn or uploaded area -- goes through
+  // `resetDownloadUi()`. Comparing the `area` object itself is wrong in
+  // one direction: a geocoded area is REPLACED moments after selection
+  // when its full-resolution geometry lands in the background, with no
+  // reset, and treating that as a change silently dropped a download
+  // clicked in that window. Watching only the dataset is wrong in the
+  // other: picking area B mid-estimate would download A under B's panel.
   const runArea = area;
-  const stale = () => currentEntry() !== entry;
+  const generation = resetGeneration;
+  const stale = () => resetGeneration !== generation;
   const filter = buildFilter(entry);
   const infoEl = document.getElementById('estimateInfo');
   const confirmBox = document.getElementById('confirmBox');

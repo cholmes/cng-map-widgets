@@ -3,10 +3,13 @@
 // writing with `hyparquet-writer` (see cdn.js's loader).
 //
 // STREAMING (`streaming: true`, GitHub issue #4). Rows are buffered only up
-// to one row group (`options.rowGroupSize`, default 50,000); each full
-// group is encoded by `hyparquet-writer`'s incremental `ParquetWriter` and
-// its bytes handed to the sink before the next group is read. Peak memory
-// is one row group, not the file. Until 0.3.0 this used the buffer-only
+// to one row group; each full group is encoded by `hyparquet-writer`'s
+// incremental `ParquetWriter` and its bytes handed to the sink before the
+// next group is read. A group is full at `options.rowGroupSize` rows
+// (default 50,000) OR `options.rowGroupBytes` of buffered geometry (default
+// 64 MiB), whichever comes first -- the byte bound is what makes "peak
+// memory is one row group" true for large geometries, where 50,000 rows can
+// be gigabytes. Peak memory is one row group, not the file. Until 0.3.0 this used the buffer-only
 // `parquetWriteBuffer`, held every row until `close()`, and so was capped
 // by the buffering ceiling while the same download as GeoJSON streamed.
 //
@@ -124,7 +127,11 @@ export function createGeoParquetFormat() {
         );
       }
       const codec = compressionOption === 'none' ? 'UNCOMPRESSED' : 'SNAPPY';
-      const rowGroupSize = Math.max(1, Math.trunc(ctx.options.rowGroupSize ?? 50_000));
+      // Validated, not coerced: `Math.trunc` of an array or a non-numeric
+      // string is NaN, and NaN in the slicing arithmetic below appends no
+      // rows at all -- an empty file reported as a success.
+      const rowGroupSize = positiveIntegerOption(ctx.options.rowGroupSize, 'rowGroupSize', 50_000);
+      const rowGroupBytes = positiveIntegerOption(ctx.options.rowGroupBytes, 'rowGroupBytes', DEFAULT_ROW_GROUP_BYTES);
       const writeCovering = ctx.options.writeCovering ?? true;
 
       // `filter.columns.dropGeometry` (design doc §2.2): `ctx.schema` is
@@ -137,11 +144,29 @@ export function createGeoParquetFormat() {
 
       // Native subtrees for the nested columns, from the source footer.
       const nested = nestedSubtrees(ctx.sourceSchema);
-      // A source `bbox` struct that is being written through natively IS a
-      // covering (GeoParquet 1.1): point at it instead of adding four more
-      // columns that say the same thing.
-      const coveringStruct = !dropGeometry && writeCovering ? coveringStructColumn(ctx.schema, nested) : null;
-      const addCoveringColumns = !dropGeometry && writeCovering && !coveringStruct;
+      // Flat columns' source elements, for typing a column `table.columns`
+      // declares no usable type for (see `flatTypeFor`).
+      const sourceFlat = flatSourceElements(ctx.sourceSchema);
+      const outputNames = new Set(ctx.schema.map((c) => c.name));
+
+      // The covering. Three cases, in order:
+      //  1. The dataset's DECLARED covering struct (`ctx.covering`, from
+      //     `table.bbox`) is in the output and is being written natively:
+      //     it IS a GeoParquet 1.1 covering, so point at it. Only the
+      //     declared one -- a struct that merely has xmin/ymin/xmax/ymax
+      //     leaves (a projected extent, say) is not the geometry's bbox,
+      //     and a covering that points at it makes readers prune wrongly.
+      //  2. The output already carries all four `bbox_*` columns (a file
+      //     this writer produced, extracted again): reuse them rather than
+      //     writing four more columns with the same names.
+      //  3. Otherwise compute the four columns from the written geometry.
+      //     Skipped when only SOME of those names are taken: adding the
+      //     rest would duplicate a column name.
+      const wantCovering = !dropGeometry && writeCovering;
+      const coveringStruct = wantCovering ? declaredCoveringStruct(ctx.covering, outputNames, nested) : null;
+      const takenCoveringNames = COVERING_COLUMNS.filter((n) => outputNames.has(n));
+      const reuseCoveringColumns = wantCovering && !coveringStruct && takenCoveringNames.length === COVERING_COLUMNS.length;
+      const addCoveringColumns = wantCovering && !coveringStruct && takenCoveringNames.length === 0;
 
       // --- the sink bridge -------------------------------------------
       // `ByteWriter` keeps `offset` (total bytes written, what every
@@ -171,11 +196,21 @@ export function createGeoParquetFormat() {
       let geometryData = [];
       let bboxCols = { xmin: [], ymin: [], xmax: [], ymax: [] };
       let pending = 0; // rows buffered, not yet written as a row group
+      let pendingBytes = 0; // geometry bytes buffered with them
       const geometryTypes = new Set();
       let overall = null;
       let rows = 0;
 
       const declaredType = (name) => ctx.schema.find((c) => c.name === name)?.type;
+      /**
+       * The hyparquet-writer type for a flat column: the declared
+       * `table.columns` type when `TYPE_MAP` knows it, else the source
+       * footer's own physical type when that is one of the plain ones.
+       * `undefined` -- "infer from the first row group" -- is the last
+       * resort, because an inference is fixed for the whole file: a column
+       * that is all null in the first group would be typed as raw bytes.
+       */
+      const flatTypeFor = (name) => TYPE_MAP[declaredType(name)] ?? plainSourceType(sourceFlat.get(name));
 
       /** The buffered rows as hyparquet-writer `ColumnSource`s, in schema order. */
       function columnSources() {
@@ -184,7 +219,7 @@ export function createGeoParquetFormat() {
         for (const name of colNames) {
           // A nested column carries no `type`: its schema is the source
           // subtree, spliced in by `buildSchema` below.
-          sources.push(nested.has(name) ? { name, data: columnData[name] } : { name, data: columnData[name], type: TYPE_MAP[declaredType(name)], nullable: true });
+          sources.push(nested.has(name) ? { name, data: columnData[name] } : { name, data: columnData[name], type: flatTypeFor(name), nullable: true });
         }
         if (!dropGeometry) {
           sources.push({ name: ctx.geometryColumn, data: geometryData, type: 'BYTE_ARRAY', nullable: true });
@@ -207,7 +242,11 @@ export function createGeoParquetFormat() {
        */
       function buildSchema(sources) {
         const flat = schemaFromColumnData({ columnData: sources.filter((s) => !nested.has(s.name)) });
-        const flatByName = new Map(flat.slice(1).map((el) => [el.name, el]));
+        // An inferred element is REQUIRED whenever its sample held no null,
+        // and the schema is fixed for the file: a null in a later row group
+        // would then throw mid-stream, after earlier groups had reached the
+        // sink. Every column this writer emits is nullable.
+        const flatByName = new Map(flat.slice(1).map((el) => [el.name, { ...el, repetition_type: 'OPTIONAL' }]));
         const schema = [{ name: 'root', num_children: sources.length }];
         for (const s of sources) {
           if (nested.has(s.name)) schema.push(...nested.get(s.name));
@@ -229,6 +268,7 @@ export function createGeoParquetFormat() {
         geometryData = [];
         bboxCols = { xmin: [], ymin: [], xmax: [], ymax: [] };
         pending = 0;
+        pendingBytes = 0;
       }
 
       return {
@@ -239,15 +279,17 @@ export function createGeoParquetFormat() {
           }
           // A batch can be larger than a row group (one decoded source row
           // group, say), so it is fed in slices that each top the buffer up
-          // to exactly `rowGroupSize`.
+          // to exactly `rowGroupSize` -- and no more than `BYTE_CHECK_ROWS`
+          // at a time, so the byte bound is checked often enough to mean
+          // something when single geometries are large.
           let from = 0;
           while (from < batch.rows) {
-            const to = Math.min(batch.rows, from + (rowGroupSize - pending));
-            appendRows(batch, from, to);
+            const to = Math.min(batch.rows, from + Math.min(rowGroupSize - pending, BYTE_CHECK_ROWS));
+            pendingBytes += appendRows(batch, from, to);
             pending += to - from;
             rows += to - from;
             from = to;
-            if (pending >= rowGroupSize) await writeRowGroup();
+            if (pending >= rowGroupSize || pendingBytes >= rowGroupBytes) await writeRowGroup();
           }
         },
         async close() {
@@ -264,7 +306,7 @@ export function createGeoParquetFormat() {
           if (!dropGeometry) {
             const covering = coveringStruct
               ? { bbox: { xmin: [coveringStruct, 'xmin'], ymin: [coveringStruct, 'ymin'], xmax: [coveringStruct, 'xmax'], ymax: [coveringStruct, 'ymax'] } }
-              : addCoveringColumns
+              : addCoveringColumns || reuseCoveringColumns
                 ? { bbox: { xmin: ['bbox_xmin'], ymin: ['bbox_ymin'], xmax: ['bbox_xmax'], ymax: ['bbox_ymax'] } }
                 : null;
             const geoMeta = {
@@ -290,8 +332,9 @@ export function createGeoParquetFormat() {
         async abort() {},
       };
 
-      /** Append rows `[from, to)` of `batch` to the row-group buffer. */
+      /** Append rows `[from, to)` of `batch` to the row-group buffer. Returns the geometry bytes added. */
       function appendRows(batch, from, to) {
+        let geometryBytes = 0;
         for (const name of colNames) {
           // hyparquet-writer's INT64 physical type demands a real BigInt,
           // not a Number -- it throws "parquet expected bigint value"
@@ -302,7 +345,7 @@ export function createGeoParquetFormat() {
           // type was never INT64 to begin with. Found writing
           // s2-stac-geoparquet's `_hilbert` (uint32) column during this
           // package's E6 stress test.
-          const needsBigInt = !nested.has(name) && TYPE_MAP[declaredType(name)] === 'INT64';
+          const needsBigInt = !nested.has(name) && flatTypeFor(name) === 'INT64';
           const source = batch.columns[name];
           const target = columnData[name];
           for (let i = from; i < to; i++) {
@@ -311,7 +354,7 @@ export function createGeoParquetFormat() {
             target.push(v ?? null);
           }
         }
-        if (dropGeometry) return;
+        if (dropGeometry) return geometryBytes;
         for (let i = from; i < to; i++) {
           const wkb = batch.geometry[i];
           if (wkb) {
@@ -329,7 +372,9 @@ export function createGeoParquetFormat() {
             // value, got object", found running this package's E6 stress
             // test against the real FIRMS catalog.
             const geom = decodeWkbGeometry(wkb);
-            geometryData.push(geojsonToWkb(geom));
+            const encoded = geojsonToWkb(geom);
+            geometryBytes += encoded.byteLength;
+            geometryData.push(encoded);
             geometryTypes.add(geom.type);
             const box = bboxOfAnyGeometry(geom);
             if (addCoveringColumns) {
@@ -349,9 +394,69 @@ export function createGeoParquetFormat() {
             }
           }
         }
+        return geometryBytes;
       }
     },
   };
+}
+
+/** The four flat covering columns this writer adds when nothing else serves. */
+const COVERING_COLUMNS = ['bbox_xmin', 'bbox_ymin', 'bbox_xmax', 'bbox_ymax'];
+
+/** Default `rowGroupBytes`: flush a row group once this much geometry is buffered. */
+const DEFAULT_ROW_GROUP_BYTES = 64 * 1024 ** 2;
+
+/** Rows appended between checks of the byte bound. */
+const BYTE_CHECK_ROWS = 1024;
+
+/**
+ * A positive-integer format option, or its default when absent. Anything
+ * else is refused by name: a silently coerced NaN here wrote an empty file.
+ */
+function positiveIntegerOption(value, name, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) {
+    throw new CngError(`geoparquet option "${name}" must be a positive number, got ${JSON.stringify(value) ?? String(value)}.`, 'FORMAT_CAPABILITY', {
+      context: { option: name, value: Array.isArray(value) ? 'array' : typeof value },
+    });
+  }
+  return Math.trunc(value);
+}
+
+/**
+ * The flat (childless) top-level columns of a hyparquet footer schema, by name.
+ * @param {import('hyparquet').SchemaElement[]|undefined} sourceSchema
+ * @returns {Map<string, import('hyparquet').SchemaElement>}
+ */
+function flatSourceElements(sourceSchema) {
+  /** @type {Map<string, import('hyparquet').SchemaElement>} */
+  const out = new Map();
+  if (!Array.isArray(sourceSchema)) return out;
+  let i = 1;
+  while (i < sourceSchema.length) {
+    const start = i;
+    i = subtreeEnd(sourceSchema, i);
+    if (!sourceSchema[start].num_children) out.set(sourceSchema[start].name, sourceSchema[start]);
+  }
+  return out;
+}
+
+/**
+ * A hyparquet-writer type for a flat source element, but only for the plain
+ * cases whose decoded values are exactly what that type accepts back: a
+ * UTF-8 string, a boolean, a float/double, or a bare INT32/INT64 with no
+ * logical or converted type on top. Anything annotated (a decimal, a date,
+ * an unsigned or narrow integer, a UUID) is left to inference -- guessing
+ * its round-trip from the physical type alone would write wrong values.
+ * @param {import('hyparquet').SchemaElement|undefined} el
+ * @returns {string|undefined}
+ */
+function plainSourceType(el) {
+  if (!el) return undefined;
+  if (el.type === 'BYTE_ARRAY' && (el.converted_type === 'UTF8' || el.logical_type?.type === 'STRING')) return 'STRING';
+  if (el.converted_type || el.logical_type) return undefined;
+  if (el.type === 'BOOLEAN' || el.type === 'DOUBLE' || el.type === 'FLOAT' || el.type === 'INT32' || el.type === 'INT64') return el.type;
+  return undefined;
 }
 
 /**
@@ -378,11 +483,44 @@ function nestedSubtrees(sourceSchema) {
     const el = sourceSchema[start];
     if (el.num_children) {
       const subtree = sourceSchema.slice(start, i).map((e) => ({ ...e }));
+      // Only shapes hyparquet-writer can re-encode. Anything else stays
+      // out of the map and takes the old path -- written as JSON text --
+      // rather than failing the whole download.
+      if (!isWritableSubtree(subtree)) continue;
       subtree[0].repetition_type = 'OPTIONAL';
       out.set(el.name, subtree);
     }
   }
   return out;
+}
+
+/**
+ * Whether hyparquet-writer can write this nested column as declared, given
+ * the values hyparquet's reader hands back for it. Three shapes it cannot,
+ * each measured to throw:
+ *  - a top-level REPEATED group (relabelling it OPTIONAL changes its
+ *    meaning: the reader returns an array, the writer then expects a struct)
+ *  - a REPEATED leaf -- the legacy two-level list (`optional group l (LIST)
+ *    { repeated int32 array }`, the parquet-avro, Hive and old Spark default)
+ *  - a MAP whose key is not a string: hyparquet decodes a map as an object,
+ *    so its keys come back as strings whatever they were
+ * @param {import('hyparquet').SchemaElement[]} subtree
+ * @returns {boolean}
+ */
+function isWritableSubtree(subtree) {
+  if (subtree[0].repetition_type === 'REPEATED') return false;
+  for (let i = 0; i < subtree.length; i++) {
+    const el = subtree[i];
+    if (!el.num_children && el.repetition_type === 'REPEATED') return false;
+    const isMap = el.converted_type === 'MAP' || el.converted_type === 'MAP_KEY_VALUE' || el.logical_type?.type === 'MAP';
+    if (isMap && el.num_children === 1) {
+      // map group -> key_value (repeated) -> key, value
+      const key = subtree[i + 2];
+      const stringKey = key && key.type === 'BYTE_ARRAY' && (key.converted_type === 'UTF8' || key.logical_type?.type === 'STRING');
+      if (!stringKey) return false;
+    }
+  }
+  return true;
 }
 
 /** Index one past the subtree rooted at `i` in a flat, depth-first schema. */
@@ -393,28 +531,27 @@ function subtreeEnd(schema, i) {
 }
 
 /**
- * The name of an output column that is a natively-written struct with
- * exactly the four covering fields as numeric leaves -- a GeoParquet 1.1
- * bbox covering already, needing only to be pointed at. Looks at `bbox`
- * first (the conventional name), then any other qualifying struct.
- * @param {readonly { name: string }[]} schema
+ * The dataset's declared covering struct, when it is in the output and is
+ * being written as a native struct with the four covering leaves. `null`
+ * otherwise -- including for any OTHER struct that happens to have
+ * xmin/ymin/xmax/ymax fields, which is not the geometry's bbox.
+ * @param {{ kind?: string, column?: string }|undefined} covering `plan.covering` (`table.bbox`)
+ * @param {Set<string>} outputNames
  * @param {Map<string, import('hyparquet').SchemaElement[]>} nested
  * @returns {string|null}
  */
-function coveringStructColumn(schema, nested) {
-  const names = schema.map((c) => c.name).filter((n) => nested.has(n));
-  names.sort((a, b) => Number(b === 'bbox') - Number(a === 'bbox'));
-  for (const name of names) {
-    const [group, ...children] = nested.get(name);
-    if (group.num_children !== children.length) continue; // deeper than one level
-    const fields = new Map(children.map((c) => [c.name, c]));
-    const isCovering = ['xmin', 'ymin', 'xmax', 'ymax'].every((f) => {
-      const c = fields.get(f);
-      return c && (c.type === 'DOUBLE' || c.type === 'FLOAT') && c.repetition_type !== 'REPEATED';
-    });
-    if (isCovering) return name;
-  }
-  return null;
+function declaredCoveringStruct(covering, outputNames, nested) {
+  if (covering?.kind !== 'struct' || !covering.column) return null;
+  const name = covering.column;
+  if (!outputNames.has(name) || !nested.has(name)) return null;
+  const [group, ...children] = nested.get(name);
+  if (group.num_children !== children.length) return null; // deeper than one level
+  const fields = new Map(children.map((c) => [c.name, c]));
+  const ok = ['xmin', 'ymin', 'xmax', 'ymax'].every((f) => {
+    const c = fields.get(f);
+    return c && (c.type === 'DOUBLE' || c.type === 'FLOAT') && c.repetition_type !== 'REPEATED';
+  });
+  return ok ? name : null;
 }
 
 function unionBox(a, b) {

@@ -404,6 +404,9 @@ export function download(dataset, area, filter, output, options = {}) {
         // struct a struct instead of inferring a JSON string. A format
         // that ignores it is unaffected.
         sourceSchema: unionSourceSchemas((plan.perPart ?? []).map((p) => p.handle?.metadata?.schema)),
+        // The dataset's declared bbox covering (`table.bbox`), so a format
+        // can tell THE covering struct from any struct shaped like one.
+        covering: plan.covering,
       });
 
       let runResult;
@@ -610,10 +613,16 @@ function newResultDeferred() {
 }
 
 /**
- * One flat hyparquet `SchemaElement[]` covering every top-level column any
- * of the given footer schemas declares -- the first part to declare a
- * column decides its shape. Parts of one dataset normally agree; this only
- * matters when a later part carries a column an earlier one lacks.
+ * One flat hyparquet `SchemaElement[]` covering every top-level column the
+ * given footer schemas AGREE on. A column is kept only when every part that
+ * declares it declares the same shape (names, physical and annotated types,
+ * repetition, nesting). A column whose shape differs between parts is left
+ * out entirely: a format then has no source schema for it and falls back to
+ * inference (for `geoparquet`, a nested column written as JSON text), which
+ * holds every part's values. Picking one part's shape instead silently
+ * dropped the fields only another part had, or threw mid-stream on a type
+ * the first part did not declare.
+ *
  * Returns `undefined` when no schema is available at all, which a format
  * reads as "infer".
  * @param {(import('hyparquet').SchemaElement[]|undefined)[]} schemas
@@ -622,17 +631,41 @@ function newResultDeferred() {
 export function unionSourceSchemas(schemas) {
   /** @type {Map<string, import('hyparquet').SchemaElement[]>} */
   const columns = new Map();
+  /** @type {Set<string>} */
+  const conflicted = new Set();
   for (const schema of schemas) {
     if (!Array.isArray(schema)) continue;
     let i = 1; // [0] is the root
     while (i < schema.length) {
       const start = i;
       i = subtreeEnd(schema, i);
-      if (!columns.has(schema[start].name)) columns.set(schema[start].name, schema.slice(start, i));
+      const name = schema[start].name;
+      const subtree = schema.slice(start, i);
+      const seen = columns.get(name);
+      if (!seen) columns.set(name, subtree);
+      else if (!sameShape(seen, subtree)) conflicted.add(name);
     }
   }
+  for (const name of conflicted) columns.delete(name);
   if (columns.size === 0) return undefined;
   return [{ name: 'root', num_children: columns.size }, ...[...columns.values()].flat()];
+}
+
+/** Whether two flat subtrees declare the same column shape. */
+function sameShape(a, b) {
+  if (a.length !== b.length) return false;
+  return a.every((x, i) => {
+    const y = b[i];
+    return (
+      x.name === y.name &&
+      x.type === y.type &&
+      x.type_length === y.type_length &&
+      x.repetition_type === y.repetition_type &&
+      (x.num_children ?? 0) === (y.num_children ?? 0) &&
+      x.converted_type === y.converted_type &&
+      x.logical_type?.type === y.logical_type?.type
+    );
+  });
 }
 
 /** Index one past the subtree rooted at `i` in a flat, depth-first schema. */
