@@ -873,10 +873,16 @@ function startDownload(formatId, filter, filesSelected, entry = currentEntry(), 
 async function confirmAndDownload(formatId) {
   const entry = currentEntry();
   // Captured with `entry`: both awaits below (the preflight estimate, the
-  // confirm dialog) leave the dataset select and the map live, so either
-  // can change underneath this flow. `stale()` is how it notices.
+  // confirm dialog) leave the dataset select and the map live. The area
+  // this flow estimates is the area it downloads, whatever `area` becomes
+  // meanwhile. `stale()` deliberately does NOT watch `area`: a geocoded
+  // area is REPLACED moments after selection when its full-resolution
+  // geometry lands in the background, and treating that as "the user
+  // changed their mind" silently dropped a download clicked in that
+  // window. Only a dataset switch -- which resets this panel -- abandons
+  // the flow.
   const runArea = area;
-  const stale = () => currentEntry() !== entry || area !== runArea;
+  const stale = () => currentEntry() !== entry;
   const filter = buildFilter(entry);
   const infoEl = document.getElementById('estimateInfo');
   const confirmBox = document.getElementById('confirmBox');

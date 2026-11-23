@@ -1,13 +1,23 @@
 // @cngeo/extract-core -- the `geoparquet` format plugin (design doc §2.3,
-// §3.4). Hand-builds GeoParquet 1.1 `geo` file metadata + an optional bbox
-// covering, writing with `hyparquet-writer` (see cdn.js's loader).
+// §3.4). Hand-builds GeoParquet 1.1 `geo` file metadata + a bbox covering,
+// writing with `hyparquet-writer` (see cdn.js's loader).
 //
-// NOT streaming (`streaming: false`): `hyparquet-writer`'s buffer-oriented
-// API (`parquetWriteBuffer`) wants the whole column-oriented dataset up
-// front, so this plugin accumulates every batch in memory and writes one
-// parquet file on `close()`. The estimate/ceiling path checks
-// `ceiling.blobBytes` for non-streaming formats for exactly this reason
-// (design doc §3.4 FormatPlugin.streaming doc comment).
+// STREAMING (`streaming: true`, GitHub issue #4). Rows are buffered only up
+// to one row group (`options.rowGroupSize`, default 50,000); each full
+// group is encoded by `hyparquet-writer`'s incremental `ParquetWriter` and
+// its bytes handed to the sink before the next group is read. Peak memory
+// is one row group, not the file. Until 0.3.0 this used the buffer-only
+// `parquetWriteBuffer`, held every row until `close()`, and so was capped
+// by the buffering ceiling while the same download as GeoJSON streamed.
+//
+// NESTED COLUMNS stay nested. `ctx.sourceSchema` (the hyparquet
+// `SchemaElement[]` the engine already read from the source footers) is
+// used verbatim for every struct/list/map column, so a STAC-GeoParquet
+// `assets`/`links`/`bbox`/`stac_extensions` round-trips as native Parquet
+// groups. Without it `hyparquet-writer` can only infer, and its inference
+// for an object or array is a JSON string -- the output read back, but as
+// VARCHAR, which is not STAC-GeoParquet any more. Inference remains the
+// fallback when no source schema is supplied.
 
 import { CngError } from '@cngeo/spec';
 import { loadHyparquetWriter } from '../cdn.js';
@@ -90,180 +100,321 @@ export function createGeoParquetFormat() {
     id: 'geoparquet',
     extension: 'parquet',
     mediaType: 'application/vnd.apache.parquet',
-    streaming: false,
-    // memoryFactor: 2 -- `streaming: false` above: every batch is
-    // accumulated in JS arrays until `close()`, then `hyparquet-writer`
-    // builds the whole encoded buffer. Declared rather than left to the
-    // buffering default of 3, since this format holds the source rows
-    // plus one encoded copy, not a third working copy on top.
-    capabilities: { nestedColumns: false, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'], memoryFactor: 2 },
+    streaming: true,
+    // memoryFactor: 0 -- at most one row group of rows plus its encoded
+    // bytes is ever held (see module doc); nothing scales with the output.
+    capabilities: { nestedColumns: true, mixedGeometryTypes: true, crs: ['OGC:CRS84', 'EPSG:4326'], memoryFactor: 0 },
     estimateBytes: estimateGeoParquetBytes,
     async open(ctx) {
-      // Loaded once, up front: `writeBatch` needs `geojsonToWkb` on every
-      // row with geometry, not just at `close()` (which already awaited
-      // `loadHyparquetWriter()` for `parquetWriteBuffer`).
-      const { geojsonToWkb } = await loadHyparquetWriter();
+      const { geojsonToWkb, ParquetWriter, ByteWriter, schemaFromColumnData } = await loadHyparquetWriter();
+
+      // Refused here, before a byte is written, rather than at `close()`
+      // once the whole read has been paid for. DEVIATION (documented): the
+      // design doc defaults to zstd, but hyparquet-writer only *compresses*
+      // with SNAPPY out of the box and the pinned hyparquet-compressors
+      // package is decompress-only, so there is no pure-JS zstd compressor
+      // among this project's dependencies. `none` is honored; `zstd` is
+      // refused rather than silently falling back.
+      const compressionOption = ctx.options.compression ?? 'snappy';
+      if (compressionOption === 'zstd') {
+        throw new CngError(
+          'geoparquet zstd compression is unavailable: hyparquet-writer has no pure-JS zstd compressor among this package\'s dependencies (only a decompressor, for reading). Use { compression: "snappy" } (default) or "none".',
+          'FORMAT_CAPABILITY',
+          { context: { requested: 'zstd' } },
+        );
+      }
+      const codec = compressionOption === 'none' ? 'UNCOMPRESSED' : 'SNAPPY';
+      const rowGroupSize = Math.max(1, Math.trunc(ctx.options.rowGroupSize ?? 50_000));
+      const writeCovering = ctx.options.writeCovering ?? true;
 
       // `filter.columns.dropGeometry` (design doc §2.2): `ctx.schema` is
       // built from `plan.outputColumns` (`download.js`'s `schemaFor`), which
       // `resolveOutputColumns` already excludes the geometry column from
       // when `dropGeometry` is set -- so its absence here is the one
-      // signal this writer needs, with no separate flag threaded through
-      // `FormatContext`. `batch.geometry[i]` arrives all-`null` in that
-      // case regardless (`engine-hyparquet.js`'s `buildBatch`), but a
-      // GeoParquet file can do better than GeoJSON's "the member is `null`"
-      // compromise: omit the physical column, and the `geo` GeoParquet
-      // metadata that describes it, entirely, so the output is an honest
-      // plain Parquet file with no trace of geometry at all.
+      // signal this writer needs. The output is then an honest plain
+      // Parquet file: no geometry column, no covering, no `geo` metadata.
       const dropGeometry = !ctx.schema.some((c) => c.name === ctx.geometryColumn);
 
+      // Native subtrees for the nested columns, from the source footer.
+      const nested = nestedSubtrees(ctx.sourceSchema);
+      // A source `bbox` struct that is being written through natively IS a
+      // covering (GeoParquet 1.1): point at it instead of adding four more
+      // columns that say the same thing.
+      const coveringStruct = !dropGeometry && writeCovering ? coveringStructColumn(ctx.schema, nested) : null;
+      const addCoveringColumns = !dropGeometry && writeCovering && !coveringStruct;
+
+      // --- the sink bridge -------------------------------------------
+      // `ByteWriter` keeps `offset` (total bytes written, what every
+      // parquet offset is computed from) apart from `index` (position in
+      // its buffer) precisely so the buffer can be drained mid-file. Each
+      // drain copies the bytes out, because the buffer is reused.
+      const byteWriter = new ByteWriter();
+      const drain = async () => {
+        if (byteWriter.index === 0) return;
+        const chunk = new Uint8Array(byteWriter.buffer, 0, byteWriter.index).slice();
+        byteWriter.index = 0;
+        await ctx.writer.write(chunk);
+      };
+      byteWriter.flush = drain; // ParquetWriter calls this after each row group, and awaits it
+      byteWriter.finish = drain; // ...and this after the footer
+      byteWriter.getBuffer = byteWriter.getBytes = () => {
+        throw new Error('geoparquet: the streaming writer holds no whole-file buffer');
+      };
+
+      /** @type {InstanceType<typeof ParquetWriter>|null} created with the first row group, once the schema is known */
+      let parquet = null;
+      /** @type {string[]|null} property column order, fixed by the first batch */
+      let colNames = null;
       /** @type {Record<string, unknown[]>} */
-      const columnData = {};
-      /** @type {Uint8Array[]} */
-      const geometryData = [];
-      const bboxCols = { xmin: [], ymin: [], xmax: [], ymax: [] };
+      let columnData = {};
+      /** @type {(Uint8Array|null)[]} */
+      let geometryData = [];
+      let bboxCols = { xmin: [], ymin: [], xmax: [], ymax: [] };
+      let pending = 0; // rows buffered, not yet written as a row group
       const geometryTypes = new Set();
       let overall = null;
       let rows = 0;
 
+      const declaredType = (name) => ctx.schema.find((c) => c.name === name)?.type;
+
+      /** The buffered rows as hyparquet-writer `ColumnSource`s, in schema order. */
+      function columnSources() {
+        /** @type {{ name: string, data: unknown[], type?: string, nullable?: boolean }[]} */
+        const sources = [];
+        for (const name of colNames) {
+          // A nested column carries no `type`: its schema is the source
+          // subtree, spliced in by `buildSchema` below.
+          sources.push(nested.has(name) ? { name, data: columnData[name] } : { name, data: columnData[name], type: TYPE_MAP[declaredType(name)], nullable: true });
+        }
+        if (!dropGeometry) {
+          sources.push({ name: ctx.geometryColumn, data: geometryData, type: 'BYTE_ARRAY', nullable: true });
+          if (addCoveringColumns) {
+            sources.push({ name: 'bbox_xmin', data: bboxCols.xmin, type: 'DOUBLE', nullable: true });
+            sources.push({ name: 'bbox_ymin', data: bboxCols.ymin, type: 'DOUBLE', nullable: true });
+            sources.push({ name: 'bbox_xmax', data: bboxCols.xmax, type: 'DOUBLE', nullable: true });
+            sources.push({ name: 'bbox_ymax', data: bboxCols.ymax, type: 'DOUBLE', nullable: true });
+          }
+        }
+        return sources;
+      }
+
+      /**
+       * The file schema, fixed when the first row group is written. Flat
+       * columns go through hyparquet-writer's own `schemaFromColumnData`
+       * (declared type when `TYPE_MAP` knows it, else inferred from this
+       * first group -- the same first-values inference the buffered writer
+       * did). Nested columns get their source subtree.
+       */
+      function buildSchema(sources) {
+        const flat = schemaFromColumnData({ columnData: sources.filter((s) => !nested.has(s.name)) });
+        const flatByName = new Map(flat.slice(1).map((el) => [el.name, el]));
+        const schema = [{ name: 'root', num_children: sources.length }];
+        for (const s of sources) {
+          if (nested.has(s.name)) schema.push(...nested.get(s.name));
+          else schema.push(flatByName.get(s.name));
+        }
+        return schema;
+      }
+
+      /** Write everything buffered as one row group, and hand its bytes to the sink. */
+      async function writeRowGroup() {
+        if (pending === 0) return;
+        const sources = columnSources();
+        if (!parquet) {
+          parquet = new ParquetWriter({ writer: byteWriter, schema: buildSchema(sources), codec, createdBy: '@cngeo/extract-core' });
+        }
+        // `pending` is the group size, so this is exactly one row group.
+        await parquet.write({ columnData: sources, rowGroupSize: pending });
+        columnData = Object.fromEntries(colNames.map((n) => [n, []]));
+        geometryData = [];
+        bboxCols = { xmin: [], ymin: [], xmax: [], ymax: [] };
+        pending = 0;
+      }
+
       return {
         async writeBatch(batch) {
-          const colNames = Object.keys(batch.columns);
-          for (const name of colNames) {
-            if (!columnData[name]) columnData[name] = [];
-            // hyparquet-writer's INT64 physical type demands a real BigInt,
-            // not a Number -- it throws "parquet expected bigint value"
-            // otherwise. A genuine `int64` column already arrives as
-            // BigInt from hyparquet's own reader; `uint32`/`uint64` (widened
-            // to INT64 above specifically to avoid signed-overflow on
-            // write) arrive as plain Numbers, since their *source* physical
-            // type was never INT64 to begin with. Found writing
-            // s2-stac-geoparquet's `_hilbert` (uint32) column during this
-            // package's E6 stress test.
-            const declared = ctx.schema.find((c) => c.name === name)?.type;
-            const needsBigInt = TYPE_MAP[declared] === 'INT64';
-            for (let i = 0; i < batch.rows; i++) {
-              let v = batch.columns[name][i]; // hyparquet-writer's TIMESTAMP type accepts a Date directly
-              if (needsBigInt && typeof v === 'number') v = BigInt(v);
-              columnData[name].push(v ?? null);
+          if (!colNames) {
+            colNames = Object.keys(batch.columns);
+            for (const name of colNames) columnData[name] = [];
+          }
+          // A batch can be larger than a row group (one decoded source row
+          // group, say), so it is fed in slices that each top the buffer up
+          // to exactly `rowGroupSize`.
+          let from = 0;
+          while (from < batch.rows) {
+            const to = Math.min(batch.rows, from + (rowGroupSize - pending));
+            appendRows(batch, from, to);
+            pending += to - from;
+            rows += to - from;
+            from = to;
+            if (pending >= rowGroupSize) await writeRowGroup();
+          }
+        },
+        async close() {
+          if (!colNames) colNames = ctx.schema.map((c) => c.name).filter((n) => n !== ctx.geometryColumn);
+          await writeRowGroup();
+          if (!parquet) {
+            // No rows at all: still a valid, readable file with the right
+            // columns. There is no data to infer from, so an undeclared
+            // flat column falls back to STRING.
+            for (const name of colNames) columnData[name] ??= [];
+            const sources = columnSources().map((s) => (nested.has(s.name) || s.type ? s : { ...s, type: 'STRING' }));
+            parquet = new ParquetWriter({ writer: byteWriter, schema: buildSchema(sources), codec, createdBy: '@cngeo/extract-core' });
+          }
+          if (!dropGeometry) {
+            const covering = coveringStruct
+              ? { bbox: { xmin: [coveringStruct, 'xmin'], ymin: [coveringStruct, 'ymin'], xmax: [coveringStruct, 'xmax'], ymax: [coveringStruct, 'ymax'] } }
+              : addCoveringColumns
+                ? { bbox: { xmin: ['bbox_xmin'], ymin: ['bbox_ymin'], xmax: ['bbox_xmax'], ymax: ['bbox_ymax'] } }
+                : null;
+            const geoMeta = {
+              version: '1.1.0',
+              primary_column: ctx.geometryColumn,
+              columns: {
+                [ctx.geometryColumn]: {
+                  encoding: 'WKB',
+                  geometry_types: [...geometryTypes],
+                  ...(overall ? { bbox: overall } : {}),
+                  ...(covering ? { covering } : {}),
+                },
+              },
+            };
+            // Only known once every row has been seen, and only read by
+            // `finish()` when it writes the footer -- which is what lets
+            // the row groups go out first.
+            parquet.kvMetadata = [{ key: 'geo', value: JSON.stringify(geoMeta) }];
+          }
+          await parquet.finish();
+          return { rows, bytes: byteWriter.offset };
+        },
+        async abort() {},
+      };
+
+      /** Append rows `[from, to)` of `batch` to the row-group buffer. */
+      function appendRows(batch, from, to) {
+        for (const name of colNames) {
+          // hyparquet-writer's INT64 physical type demands a real BigInt,
+          // not a Number -- it throws "parquet expected bigint value"
+          // otherwise. A genuine `int64` column already arrives as
+          // BigInt from hyparquet's own reader; `uint32`/`uint64` (widened
+          // to INT64 above specifically to avoid signed-overflow on
+          // write) arrive as plain Numbers, since their *source* physical
+          // type was never INT64 to begin with. Found writing
+          // s2-stac-geoparquet's `_hilbert` (uint32) column during this
+          // package's E6 stress test.
+          const needsBigInt = !nested.has(name) && TYPE_MAP[declaredType(name)] === 'INT64';
+          const source = batch.columns[name];
+          const target = columnData[name];
+          for (let i = from; i < to; i++) {
+            let v = source[i]; // hyparquet-writer's TIMESTAMP type accepts a Date directly
+            if (needsBigInt && typeof v === 'number') v = BigInt(v);
+            target.push(v ?? null);
+          }
+        }
+        if (dropGeometry) return;
+        for (let i = from; i < to; i++) {
+          const wkb = batch.geometry[i];
+          if (wkb) {
+            // `batch.geometry[i]` is raw WKB bytes for a GeoParquet-1.x
+            // source (CGAZ, FTW: a plain BYTE_ARRAY column + `geo`
+            // kv-metadata), but is already a *decoded* GeoJSON object for
+            // a GeoParquet-2.0 source with the native Parquet GEOMETRY
+            // logical type (FIRMS, s2-stac-geoparquet -- see
+            // `../wkb-geometry.js`'s module doc). `decodeWkbGeometry`
+            // normalizes either input to a GeoJSON geometry; this format
+            // writes its own geometry column as raw WKB bytes, so
+            // round-trip through `geojsonToWkb` to get real bytes out
+            // either way -- writing a decoded object straight into a byte
+            // column crashed hyparquet-writer with "expected Uint8Array
+            // value, got object", found running this package's E6 stress
+            // test against the real FIRMS catalog.
+            const geom = decodeWkbGeometry(wkb);
+            geometryData.push(geojsonToWkb(geom));
+            geometryTypes.add(geom.type);
+            const box = bboxOfAnyGeometry(geom);
+            if (addCoveringColumns) {
+              bboxCols.xmin.push(box[0]);
+              bboxCols.ymin.push(box[1]);
+              bboxCols.xmax.push(box[2]);
+              bboxCols.ymax.push(box[3]);
             }
-          }
-          if (dropGeometry) {
-            rows += batch.rows;
-            return;
-          }
-          for (let i = 0; i < batch.rows; i++) {
-            const wkb = batch.geometry[i];
-            if (wkb) {
-              // `batch.geometry[i]` is raw WKB bytes for a GeoParquet-1.x
-              // source (CGAZ, FTW: a plain BYTE_ARRAY column + `geo`
-              // kv-metadata), but is already a *decoded* GeoJSON object for
-              // a GeoParquet-2.0 source with the native Parquet GEOMETRY
-              // logical type (FIRMS, s2-stac-geoparquet -- see
-              // `../wkb-geometry.js`'s module doc). `decodeWkbGeometry`
-              // normalizes either input to a GeoJSON geometry; this format
-              // writes its own geometry column as raw WKB bytes
-              // (`TYPE_MAP`-independent BYTE_ARRAY, below), so round-trip
-              // through `geojsonToWkb` to get real bytes out either way --
-              // writing a decoded object straight into a byte column
-              // crashed hyparquet-writer with "expected Uint8Array value,
-              // got object", found running this package's E6 stress test
-              // against the real FIRMS catalog.
-              const geom = decodeWkbGeometry(wkb);
-              geometryData.push(geojsonToWkb(geom));
-              geometryTypes.add(geom.type);
-              const [xmin, ymin, xmax, ymax] = bboxOfAnyGeometry(geom);
-              bboxCols.xmin.push(xmin);
-              bboxCols.ymin.push(ymin);
-              bboxCols.xmax.push(xmax);
-              bboxCols.ymax.push(ymax);
-              overall = overall ? unionBox(overall, [xmin, ymin, xmax, ymax]) : [xmin, ymin, xmax, ymax];
-            } else {
-              geometryData.push(null);
+            overall = overall ? unionBox(overall, box) : [box[0], box[1], box[2], box[3]];
+          } else {
+            geometryData.push(null);
+            if (addCoveringColumns) {
               bboxCols.xmin.push(null);
               bboxCols.ymin.push(null);
               bboxCols.xmax.push(null);
               bboxCols.ymax.push(null);
             }
           }
-          rows += batch.rows;
-        },
-        async close() {
-          const { parquetWriteBuffer } = await loadHyparquetWriter();
-          const writeCovering = ctx.options.writeCovering ?? true;
-
-          /** @type {{ name: string, data: unknown[], type?: string, nullable?: boolean }[]} */
-          const columnSources = [];
-          for (const [name, data] of Object.entries(columnData)) {
-            const declared = ctx.schema.find((c) => c.name === name)?.type;
-            columnSources.push({ name, data, type: TYPE_MAP[declared], nullable: true });
-          }
-          // `filter.columns.dropGeometry`: write a plain Parquet file --
-          // no geometry column, no covering columns, no `geo` GeoParquet
-          // metadata at all -- rather than a geometry column that exists
-          // but is entirely `null` plus a `geo` key-value entry describing
-          // a covering with nothing in it. That half-measure was
-          // considered and rejected: it still names a `primary_column`
-          // that carries no data, which is a worse lie than the one this
-          // fix closes.
-          if (!dropGeometry) {
-            columnSources.push({ name: ctx.geometryColumn, data: geometryData, type: 'BYTE_ARRAY', nullable: true });
-            if (writeCovering) {
-              columnSources.push({ name: 'bbox_xmin', data: bboxCols.xmin, type: 'DOUBLE', nullable: true });
-              columnSources.push({ name: 'bbox_ymin', data: bboxCols.ymin, type: 'DOUBLE', nullable: true });
-              columnSources.push({ name: 'bbox_xmax', data: bboxCols.xmax, type: 'DOUBLE', nullable: true });
-              columnSources.push({ name: 'bbox_ymax', data: bboxCols.ymax, type: 'DOUBLE', nullable: true });
-            }
-          }
-
-          const geoMeta = {
-            version: '1.1.0',
-            primary_column: ctx.geometryColumn,
-            columns: {
-              [ctx.geometryColumn]: {
-                encoding: 'WKB',
-                geometry_types: [...geometryTypes],
-                ...(overall ? { bbox: overall } : {}),
-                ...(writeCovering
-                  ? { covering: { bbox: { xmin: ['bbox_xmin'], ymin: ['bbox_ymin'], xmax: ['bbox_xmax'], ymax: ['bbox_ymax'] } } }
-                  : {}),
-              },
-            },
-          };
-          // DEVIATION (documented, see module doc comment): the design doc
-          // defaults to zstd, but hyparquet-writer only *compresses* with
-          // SNAPPY out of the box (its bundled src/snappy.js); the pinned
-          // hyparquet-compressors package is decompress-only (reading), so
-          // there is no pure-JS zstd *compressor* among this project's
-          // dependencies. Default here is SNAPPY; `none` is honored;
-          // `zstd` is refused with a clear, honest error rather than
-          // silently falling back.
-          const compressionOption = ctx.options.compression ?? 'snappy';
-          if (compressionOption === 'zstd') {
-            throw new CngError(
-              'geoparquet zstd compression is unavailable: hyparquet-writer has no pure-JS zstd compressor among this package\'s dependencies (only a decompressor, for reading). Use { compression: "snappy" } (default) or "none".',
-              'FORMAT_CAPABILITY',
-              { context: { requested: 'zstd' } },
-            );
-          }
-          const codec = compressionOption === 'none' ? 'UNCOMPRESSED' : 'SNAPPY';
-          const rowGroupSize = ctx.options.rowGroupSize ?? 50_000;
-
-          const buffer = parquetWriteBuffer({
-            columnData: columnSources,
-            codec,
-            rowGroupSize,
-            kvMetadata: dropGeometry ? [] : [{ key: 'geo', value: JSON.stringify(geoMeta) }],
-            createdBy: '@cngeo/extract-core',
-          });
-          const bytes = new Uint8Array(buffer);
-          await ctx.writer.write(bytes);
-          return { rows, bytes: bytes.byteLength };
-        },
-        async abort() {},
-      };
+        }
+      }
     },
   };
+}
+
+/**
+ * The nested top-level columns of a hyparquet footer schema, each as its
+ * own flat subtree (the element and all its descendants, in schema order).
+ * A flat column is not included: those keep going through `TYPE_MAP`.
+ *
+ * The column's own element is made OPTIONAL -- this writer nulls freely
+ * (a column missing from one source part, a row with no value) and the
+ * source may have declared it REQUIRED. Descendants are left exactly as
+ * the source declared them, since changing those would change what the
+ * file says its lists and maps are.
+ * @param {import('hyparquet').SchemaElement[]|undefined} sourceSchema
+ * @returns {Map<string, import('hyparquet').SchemaElement[]>}
+ */
+function nestedSubtrees(sourceSchema) {
+  /** @type {Map<string, import('hyparquet').SchemaElement[]>} */
+  const out = new Map();
+  if (!Array.isArray(sourceSchema) || sourceSchema.length === 0) return out;
+  let i = 1; // [0] is the root
+  while (i < sourceSchema.length) {
+    const start = i;
+    i = subtreeEnd(sourceSchema, i);
+    const el = sourceSchema[start];
+    if (el.num_children) {
+      const subtree = sourceSchema.slice(start, i).map((e) => ({ ...e }));
+      subtree[0].repetition_type = 'OPTIONAL';
+      out.set(el.name, subtree);
+    }
+  }
+  return out;
+}
+
+/** Index one past the subtree rooted at `i` in a flat, depth-first schema. */
+function subtreeEnd(schema, i) {
+  let next = i + 1;
+  for (let c = 0; c < (schema[i].num_children ?? 0); c++) next = subtreeEnd(schema, next);
+  return next;
+}
+
+/**
+ * The name of an output column that is a natively-written struct with
+ * exactly the four covering fields as numeric leaves -- a GeoParquet 1.1
+ * bbox covering already, needing only to be pointed at. Looks at `bbox`
+ * first (the conventional name), then any other qualifying struct.
+ * @param {readonly { name: string }[]} schema
+ * @param {Map<string, import('hyparquet').SchemaElement[]>} nested
+ * @returns {string|null}
+ */
+function coveringStructColumn(schema, nested) {
+  const names = schema.map((c) => c.name).filter((n) => nested.has(n));
+  names.sort((a, b) => Number(b === 'bbox') - Number(a === 'bbox'));
+  for (const name of names) {
+    const [group, ...children] = nested.get(name);
+    if (group.num_children !== children.length) continue; // deeper than one level
+    const fields = new Map(children.map((c) => [c.name, c]));
+    const isCovering = ['xmin', 'ymin', 'xmax', 'ymax'].every((f) => {
+      const c = fields.get(f);
+      return c && (c.type === 'DOUBLE' || c.type === 'FLOAT') && c.repetition_type !== 'REPEATED';
+    });
+    if (isCovering) return name;
+  }
+  return null;
 }
 
 function unionBox(a, b) {

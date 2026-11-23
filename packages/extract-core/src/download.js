@@ -399,6 +399,11 @@ export function download(dataset, area, filter, output, options = {}) {
         options: output.options ?? {},
         attribution: plan.resolved.attribution ?? [],
         signal: controller.signal,
+        // Additive (GitHub issue #4): the source files' own Parquet schema,
+        // so a format that can write nested types (`geoparquet`) keeps a
+        // struct a struct instead of inferring a JSON string. A format
+        // that ignores it is unaffected.
+        sourceSchema: unionSourceSchemas((plan.perPart ?? []).map((p) => p.handle?.metadata?.schema)),
       });
 
       let runResult;
@@ -602,6 +607,39 @@ function newResultDeferred() {
   });
   promise.catch(() => {});
   return { promise, resolve, reject };
+}
+
+/**
+ * One flat hyparquet `SchemaElement[]` covering every top-level column any
+ * of the given footer schemas declares -- the first part to declare a
+ * column decides its shape. Parts of one dataset normally agree; this only
+ * matters when a later part carries a column an earlier one lacks.
+ * Returns `undefined` when no schema is available at all, which a format
+ * reads as "infer".
+ * @param {(import('hyparquet').SchemaElement[]|undefined)[]} schemas
+ * @returns {import('hyparquet').SchemaElement[]|undefined}
+ */
+export function unionSourceSchemas(schemas) {
+  /** @type {Map<string, import('hyparquet').SchemaElement[]>} */
+  const columns = new Map();
+  for (const schema of schemas) {
+    if (!Array.isArray(schema)) continue;
+    let i = 1; // [0] is the root
+    while (i < schema.length) {
+      const start = i;
+      i = subtreeEnd(schema, i);
+      if (!columns.has(schema[start].name)) columns.set(schema[start].name, schema.slice(start, i));
+    }
+  }
+  if (columns.size === 0) return undefined;
+  return [{ name: 'root', num_children: columns.size }, ...[...columns.values()].flat()];
+}
+
+/** Index one past the subtree rooted at `i` in a flat, depth-first schema. */
+function subtreeEnd(schema, i) {
+  let next = i + 1;
+  for (let c = 0; c < (schema[i].num_children ?? 0); c++) next = subtreeEnd(schema, next);
+  return next;
 }
 
 function sinkResultOf(sink) {

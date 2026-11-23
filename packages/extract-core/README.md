@@ -461,13 +461,13 @@ values now that `outputBytes` carries its own weight):
 read without needing the format's `load()` to have run, defaulting to `0` for
 a `streaming` format and `3` otherwise:
 
-- **`memoryFactor === 0`** (streaming — `geojson`, `parquet-raw`): the format
+- **`memoryFactor === 0`** (streaming — `geojson`, `geoparquet`, `parquet-raw`): the format
   holds nothing of its own, so `outputBytes` is the 1 TiB sentinel
   `UNBOUNDED_BYTES` on a disk-backed (`filesystem`) sink or a `memory` sink,
   and `blobBytes` on a `blob` sink or `sink: null` (not yet created — the
   conservative choice when the real sink isn't known).
-- **`memoryFactor > 0`** (buffering — `geoparquet` declares `2`, `@cngeo/format-gpkg`'s
-  `gpkg` declares `2.9`): `outputBytes = Math.floor(memoryBudget / memoryFactor)`,
+- **`memoryFactor > 0`** (buffering — `@cngeo/format-gpkg`'s `gpkg` declares
+  `2.9`; `geoparquet` declared `2` until it began streaming): `outputBytes = Math.floor(memoryBudget / memoryFactor)`,
   where `memoryBudget` defaults to **1 GiB** (`MEMORY_BUDGET_DEFAULT`) —
   because the cost (row arrays, a wasm heap, an export copy) is spent
   inside the writer itself, not wherever the bytes land, this derivation
@@ -476,8 +476,8 @@ a `streaming` format and `3` otherwise:
   clamps that number to `blobBytes`** (`Math.min(derived, blobBytes)`):
   `blobSink` genuinely refuses to write above 256 MiB regardless of what a
   format's memory factor would otherwise allow (`SINK_QUOTA_EXCEEDED` in
-  `sinks.js`), so `geoparquet` (512 MiB derived) and `gpkg` (~353 MiB
-  derived) would otherwise pass the gate only to die at the sink's own
+  `sinks.js`), so `gpkg` (~353 MiB derived) would otherwise pass the gate
+  only to die at the sink's own
   write-time limit, with no `suggestedFormats` on that late failure. A
   `filesystem` sink is not clamped — it has no 256 MiB limit to predict.
 
@@ -585,7 +585,7 @@ exported for direct use.
 | | id | ext | media type | streaming | options |
 |---|---|---|---|---|---|
 | built in | `geojson` | `.geojson` | `application/geo+json` | **yes** | `precision` (7), `newlineDelimited` (false → RFC 8142 sequences), `featureIdColumn` |
-| built in | `geoparquet` | `.parquet` | `application/vnd.apache.parquet` | **no** | `compression` (`'snappy'`), `rowGroupSize` (50,000), `writeCovering` (true) |
+| built in | `geoparquet` | `.parquet` | `application/vnd.apache.parquet` | yes | `compression` (`'snappy'`), `rowGroupSize` (50,000), `writeCovering` (true) |
 | built in | `parquet-raw` | `.parquet` (or `.zip`, multi-file) | `application/vnd.apache.parquet` (`application/zip` for the multi-file case) | **yes** | none — see "Raw GeoParquet passthrough" below |
 
 #### `estimateBytes(schema, rows, ctx?)` — the output-size model
@@ -1082,25 +1082,48 @@ mirror is the canonical example: 97 MB in one row group, so every download
 reads the whole bbox + geometry columns regardless of how small the area is.
 This is why the project built an optimized mirror instead.
 
-### `geoparquet` output buffers everything in memory
+### `geoparquet` output streams, and keeps nested columns nested
 
-`streaming: false`, `capabilities.memoryFactor: 2`. `hyparquet-writer`'s
-`parquetWriteBuffer` wants the whole column-oriented dataset up front, so the
-whole result is held before a byte is written. `effectiveCeiling` sets its
-`outputBytes` to `memoryBudget / 2` (≈ 512 MiB at the 1 GiB default budget)
-on a `filesystem` sink — a buffering format's memory cost is spent inside
-the writer, not wherever the bytes land, so this derivation itself does not
-vary by sink kind. **But a `blob` sink (or `sink: null`) additionally
-clamps that number down to `blobBytes`** (256 MiB): `blobSink` genuinely
-refuses to write above that at write time regardless of what the format's
-memory factor would otherwise allow, so without the clamp a download would
-pass this gate only to die at the sink's own limit later, with no
-`suggestedFormats` on that late failure. A `memory` sink is exempt from
-both the budget-vs-`memoryFactor` derivation's sink-dependence (there is
-none to exempt) and the `blobBytes` clamp — it does not exempt the
-buffering format's own `memoryBudget / memoryFactor` cost itself, which
-still applies there in full, the same as every other sink. Use `geojson`
-with `newlineDelimited: true` for anything genuinely large.
+`streaming: true`, `capabilities.memoryFactor: 0`, `nestedColumns: true`.
+
+**Streaming.** Rows are buffered up to one row group (`rowGroupSize`,
+default 50,000). Each full group is encoded by `hyparquet-writer`'s
+incremental `ParquetWriter` and its bytes are handed to the sink before the
+next group is read; `close()` writes the last group and the footer. Peak
+memory is one row group, so `effectiveCeiling` treats it exactly like
+`geojson`: unbounded on a disk-backed sink, the sink's own limit on a blob
+sink. Before this (through 0.3.0) the writer used the buffer-only
+`parquetWriteBuffer`, held the whole result until `close()`, and was capped
+at `memoryBudget / 2`.
+
+**Nested columns.** `download()` passes the source files' own Parquet
+schema to the writer as `FormatContext.sourceSchema` (the union of the
+selected parts' footers, first declaration of each column wins), and every
+struct, list and map column is written with that schema verbatim. A
+STAC-GeoParquet `links` (`list<struct>`), `bbox` and `stac_extensions`
+therefore read back as native nested types in hyparquet, DuckDB and
+pyarrow. Without a source schema `hyparquet-writer` can only infer, and
+what it infers for an object or array is a JSON string — still the
+fallback when a format is driven without one. Two details:
+
+- The column's own element is relaxed to `OPTIONAL` (this writer nulls
+  freely); everything beneath it is left as the source declared it.
+- Flat columns still go through the declared `table.columns` type, so a
+  column that is a *string* at the source stays a string even when its
+  content is JSON — the s2 catalog's `assets` is one.
+
+**Covering.** When the output includes a struct column with `xmin`,
+`ymin`, `xmax`, `ymax` leaves (conventionally `bbox`), the `geo` metadata's
+`covering` points at it (`["bbox", "xmin"]`, …) and no `bbox_*` columns are
+added. Otherwise `writeCovering` (default `true`) adds the four
+`bbox_xmin` … `bbox_ymax` columns as before.
+
+The schema is fixed when the first row group is written. A flat column
+with no declared type is inferred from that first group's values, which is
+the same first-values inference the buffered writer did.
+
+`node packages/extract-core/test/stac-roundtrip.verify.mjs` checks all of
+this against the live Sentinel-2 catalog.
 
 ### Parallel reads are ordered, and the win depends on the query
 

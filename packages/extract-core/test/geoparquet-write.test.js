@@ -24,6 +24,17 @@ function hasDuckdb() {
   }
 }
 
+/** The streaming writer delivers a chunk per row group plus the footer; the file is all of them. */
+function concat(chunks) {
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.byteLength;
+  }
+  return out;
+}
+
 const SCHEMA = [
   { name: 'id', type: 'string' },
   { name: 'geometry', type: 'geometry' },
@@ -54,15 +65,16 @@ test('geoparquet format: writes a batch whose geometry is an already-decoded Geo
   // Must not throw "expected Uint8Array value, got object".
   await assert.doesNotReject(() => formatWriter.writeBatch(batch));
 
-  let written;
-  const capture = { write: (buf) => { written = buf; }, close: () => {} };
+  const chunks = [];
+  const capture = { write: (buf) => { chunks.push(buf); }, close: () => {} };
   const ctx2 = { ...ctx, writer: capture };
   const formatWriter2 = await format.open(ctx2);
   await formatWriter2.writeBatch(batch);
   const { rows, bytes } = await formatWriter2.close();
   assert.equal(rows, 2);
   assert.ok(bytes > 0);
-  assert.ok(written instanceof Uint8Array);
+  const written = concat(chunks);
+  assert.equal(written.byteLength, bytes);
 
   if (hasDuckdb()) {
     const tmpPath = `/tmp/cng-geoparquet-write-test-${process.pid}.parquet`;
@@ -102,9 +114,9 @@ test('geoparquet format: writes a uint32 column whose values exceed the signed I
     { name: '_hilbert', type: 'uint32' },
     { name: 'geometry', type: 'geometry' },
   ];
-  let written;
+  const chunks = [];
   const ctx = {
-    writer: { write: (buf) => { written = buf; }, close: () => {} },
+    writer: { write: (buf) => { chunks.push(buf); }, close: () => {} },
     schema,
     geometryColumn: 'geometry',
     crs: 'OGC:CRS84',
@@ -123,7 +135,8 @@ test('geoparquet format: writes a uint32 column whose values exceed the signed I
   await assert.doesNotReject(() => formatWriter.writeBatch(batch));
   const { rows } = await formatWriter.close();
   assert.equal(rows, 2);
-  assert.ok(written instanceof Uint8Array);
+  const written = concat(chunks);
+  assert.ok(written.byteLength > 0);
 
   if (hasDuckdb()) {
     const tmpPath = `/tmp/cng-geoparquet-write-uint32-test-${process.pid}.parquet`;
