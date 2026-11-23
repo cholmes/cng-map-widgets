@@ -161,7 +161,7 @@ el('source').addEventListener('change', () => {
 syncUrlBox();
 
 // --- map + geocoder ------------------------------------------------------
-const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/collection.json';
 const indexUrl = new URLSearchParams(location.search).get('index') === 'local'
   ? '../geocoder-demo/data/index.json'
   : LIVE_INDEX_URL;

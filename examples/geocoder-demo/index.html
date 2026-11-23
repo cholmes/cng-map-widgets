@@ -64,15 +64,15 @@ const map = new maplibregl.Map({
 // ./data/index.json (ADM0+ADM2 only, no ADM1) for offline work or when
 // iterating on build-data.sql/build-manifest.mjs -- see this directory's
 // README/build-manifest.mjs for how to regenerate it.
-const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/collection.json';
 const LOCAL_INDEX_URL = './data/index.json';
 // ?index=local -> the offline provisional build; ?index=<anything with a
 // slash> -> that manifest URL verbatim (e.g. a locally served experimental
 // catalog, like the not-yet-published cn-geocoder-overture staging tree);
 // no param -> the live published geoboundaries-catalog.
-const OVERTURE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.json';
+const OVERTURE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/collection.json';
 // Who's On First: the live published catalog (9,478,779 names, levels 0-5).
-const WOF_INDEX_URL = 'https://data.source.coop/portolan-mirrors/whosonfirst-catalog/names/index.json';
+const WOF_INDEX_URL = 'https://data.source.coop/portolan-mirrors/whosonfirst-catalog/names/collection.json';
 const indexParam = new URLSearchParams(location.search).get('index');
 const indexUrl = indexParam === 'local' ? LOCAL_INDEX_URL
   : indexParam === 'overture' ? OVERTURE_INDEX_URL
