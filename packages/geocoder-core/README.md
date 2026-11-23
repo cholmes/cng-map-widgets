@@ -48,7 +48,7 @@ has hyparquet, hand yours in instead — see
 [Node and bundlers](#node-and-bundlers).
 
 **Coming:** `npm i @cngeo/geocoder-core`, plus a CDN form
-(`https://cdn.jsdelivr.net/npm/@cngeo/geocoder-core@0.3.0/src/index.js`).
+(`https://cdn.jsdelivr.net/npm/@cngeo/geocoder-core@0.3.1/src/index.js`).
 
 ## Size
 

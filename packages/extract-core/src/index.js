@@ -6,7 +6,7 @@
 // directly; dependencies on hyparquet/hyparquet-writer are loaded lazily
 // from pinned CDN URLs (see src/cdn.js), never bundled in.
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 
 export { resolveDataset, descriptorFromCollection, collectionDownloadSupport } from './dataset-resolve.js';
 export { CDN, loadHyparquet, loadHyparquetWriter, setHyparquetModules, clearHyparquetModules } from './cdn.js';

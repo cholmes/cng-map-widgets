@@ -11,7 +11,7 @@
 // reproject, resample, mask to a polygon, or apply scale/offset. Each of
 // those refusals is explicit rather than silent.
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 
 export { CDN, APPROX_BYTES, loadGeoTiff, loadZstdDec, setGeoTiffModules, clearGeoTiffModules } from './cdn.js';
 export { openRaster, ensureZstdDecoder, tileBytes, DTYPE_BYTES } from './source.js';

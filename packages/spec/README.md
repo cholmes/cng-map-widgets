@@ -44,7 +44,7 @@ import { buildArea, normalizeName } from '@cngeo/spec';
 ```
 
 **Coming:** `npm i @cngeo/spec`, and a CDN form —
-`import { buildArea } from 'https://cdn.jsdelivr.net/npm/@cngeo/spec@0.3.0/src/index.js'`.
+`import { buildArea } from 'https://cdn.jsdelivr.net/npm/@cngeo/spec@0.3.1/src/index.js'`.
 The module code never changes between those; only the specifier does.
 
 ## Size
@@ -356,7 +356,7 @@ it is the package that can throw most of them.
 
 | export | notes |
 |---|---|
-| `VERSION` | `'0.3.0'`. |
+| `VERSION` | `'0.3.1'`. |
 
 ---
 

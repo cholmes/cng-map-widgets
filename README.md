@@ -65,7 +65,7 @@ renders the attribution line, with zero console errors.
 <!-- Plain ESM, no bundler. Nothing is on npm yet, so these point at this
      repo's own packages/. When they publish, this block is the only thing
      that changes: swap each line for
-     https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.3.0/src/index.js -->
+     https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.3.1/src/index.js -->
 <script type="importmap">
 {
   "imports": {
@@ -173,7 +173,7 @@ Those URLs track whatever is on `main`. For anything you care about, pin a
 tag — same files, reproducible:
 
 ```
-https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.3.0/packages/geocoder-core/src/index.js
+https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.3.1/packages/geocoder-core/src/index.js
 ```
 
 ### 3. In Node, or inside a bundler — worse, and worth saying so
