@@ -503,7 +503,7 @@ overrides: options.ceiling })`:
 - `outputBytes` depends on the format's declared `capabilities.memoryFactor`
   (bytes of peak memory held per output byte it writes) and, only for a
   streaming format, the sink:
-  - **streaming** (`memoryFactor: 0` — `geojson`, `parquet-raw`): unbounded
+  - **streaming** (`memoryFactor: 0` — `geojson`, `geoparquet`, `parquet-raw`): unbounded
     (a 1 TiB sentinel, `UNBOUNDED_BYTES`) on a disk-backed sink or a `memory`
     sink — the format holds nothing of its own, so the real limit is the
     sink's, not this package's — but capped at `blobBytes` on a `blob` sink
@@ -514,7 +514,8 @@ overrides: options.ceiling })`:
     that is what both this cap and the buffering clamp below use (an
     explicit `ceiling.blobBytes` override still wins).
   - **buffering** (`memoryFactor` absent on a `streaming: false` format
-    defaults to `3`; `geoparquet` declares `2`, `gpkg` declares `2.9`):
+    defaults to `3`; `gpkg` declares `2.9`. `geoparquet` used to be here at
+    `2` and has streamed since issue #4):
     `outputBytes = memoryBudget / memoryFactor` — `memoryBudget` defaults to
     **1 GiB** — because the cost is spent inside the writer (row arrays, a
     wasm heap, an export copy), not in where the bytes land, this derivation
@@ -523,8 +524,8 @@ overrides: options.ceiling })`:
     additionally clamps the result to `blobBytes`
     (`Math.min(derived, blobBytes)`): `blobSink` genuinely refuses above 256
     MiB at write time regardless of what a format's memory factor would
-    otherwise allow, so `geoparquet` (512 MiB derived) and `gpkg` (~353 MiB
-    derived) would otherwise pass this gate only to die at the sink's own
+    otherwise allow, so `gpkg` (~353 MiB derived) would otherwise pass this
+    gate only to die at the sink's own
     limit later, with no `suggestedFormats` on that late failure. A `memory`
     sink is exempt from BOTH the budget (when `memoryFactor === 0`) AND the
     `blobBytes` clamp (always) — it is not a loophole for a buffering
@@ -592,13 +593,19 @@ are FLAT on the warning object** (`w.bytes`, never `w.context.bytes`), so a
 consumer can switch on `w.code` without special-casing any of them.
 
 Output formats: `geojson` (`memoryFactor: 0` — streams; options `precision`,
-`newlineDelimited`, `featureIdColumn`), `geoparquet` (`memoryFactor: 2` —
-**buffers its whole output in memory**, so its ceiling's `outputBytes` is
-`memoryBudget / 2` (512 MiB) on a `filesystem` sink, but clamped down to the
-flat `blobBytes` (256 MiB) on a `blob` sink or `sink: null` — see "Ceilings
-are derived per format and sink" above; options `compression` — `'snappy'`
-default, `'none'` ok, `'zstd'` **refused** with `FORMAT_CAPABILITY`;
-`rowGroupSize`, `writeCovering`), and `parquet-raw` (`memoryFactor: 0`, no
+`newlineDelimited`, `featureIdColumn`), `geoparquet` (`memoryFactor: 0` — **streams**: one row group is buffered,
+encoded and handed to the sink at a time, so it is bounded like `geojson`,
+not by `memoryBudget`; a group closes at `rowGroupSize` rows or
+`rowGroupBytes` of geometry, whichever first; nested columns (struct,
+list, map) are written as native Parquet groups from the source footer
+schema, not JSON strings — except a column whose shape differs between the
+selected files, or that `hyparquet-writer` cannot re-encode (a legacy
+two-level list, a top-level `REPEATED` group, a non-string-keyed map),
+which stays JSON text rather than failing; the dataset's **declared**
+`bbox` covering struct becomes the covering instead of four added `bbox_*`
+columns; options `compression` — `'snappy'` default, `'none'` ok, `'zstd'`
+**refused** with `FORMAT_CAPABILITY` at `open()`; `rowGroupSize` (50,000),
+`rowGroupBytes` (64 MiB), `writeCovering`), and `parquet-raw` (`memoryFactor: 0`, no
 decode at all — recipe 3e). Anything else must be registered first;
 `formats()` lists what is available without loading any of it.
 

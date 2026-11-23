@@ -697,7 +697,7 @@ async function groupDownload() {
     // getFormat()/resolveFormat() call).
     assert.deepEqual(formats().map((f) => f.id).sort(), ['geojson', 'geoparquet', 'parquet-raw']);
     assert.equal(formats().find((f) => f.id === 'geojson').streaming, true);
-    assert.equal(formats().find((f) => f.id === 'geoparquet').streaming, false);
+    assert.equal(formats().find((f) => f.id === 'geoparquet').streaming, true);
     assert.equal(formats().find((f) => f.id === 'parquet-raw').streaming, true);
     assert.deepEqual(engines().map((e) => e.id), ['hyparquet']);
     assert.deepEqual([...engines()[0].capabilities], ['bbox', 'intersects']);

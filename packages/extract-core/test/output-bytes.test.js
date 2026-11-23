@@ -11,6 +11,7 @@ import { createGeoParquetFormat, estimateGeoParquetBytes } from '../src/formats/
 import { avgColumnBytesPerRow } from '../src/prune.js';
 import { download } from '../src/download.js';
 import { memorySink } from '../src/sinks.js';
+import { UNBOUNDED_BYTES } from '../src/ceiling.js';
 import { openFakeHostedParquet, enginePlanFor } from './helpers/fake-parquet-host.js';
 
 const SCHEMA = [{ name: 'id', type: 'string' }, { name: 'confidence', type: 'float32' }, { name: 'geometry', type: 'geometry' }];
@@ -196,7 +197,7 @@ test('the geometry term reaches Estimate.outputBytes through download()', async 
   assert.deepEqual(est.outputBytes, expected);
 });
 
-test('the improved outputBytes is what the outputBytes ceiling checks, for a streaming or a buffering format', async () => {
+test('the improved outputBytes is what the outputBytes ceiling checks, and geoparquet is no longer bounded by memoryBudget', async () => {
   const hosted = await openFakeHostedParquet({ groups: 4, rowsPerGroup: 25 });
   const { rangeFetch } = await import('./helpers/fake-parquet-host.js');
   const fetchImpl = rangeFetch(hosted.bytes);
@@ -221,23 +222,22 @@ test('the improved outputBytes is what the outputBytes ceiling checks, for a str
   assert.ok(blockedEst.ceiling.breaches.includes('outputBytes'));
   await blocked.cancel('done asserting');
 
-  // Same idea for a non-streaming (buffering) format, but through the
-  // lever that replaced the old hardcoded `!format.streaming &&
-  // outputBytes.max > blobBytes` check download.js used to apply by hand
-  // (task 4, design doc §7.3/§7.8): a buffering format's own ceiling is
-  // `memoryBudget / memoryFactor`, regardless of sink. `geoparquet`
-  // declares `memoryFactor: 2`, so a tiny `memoryBudget` forces a ceiling
-  // far below its real output and must breach on `outputBytes` -- there
-  // is no separate `blobBytes` breach code to check for anymore.
-  const bufferingBlocked = download(dataset, null, filter, { spec: 'cng-output/1.0', format: 'geoparquet' }, {
+  // `geoparquet` used to be the buffering example here (`memoryFactor: 2`,
+  // so a tiny `memoryBudget` forced a breach). Since GitHub issue #4 it
+  // streams row groups to the sink, so `memoryBudget` no longer bounds it
+  // at all: the same request that used to be refused now passes, with the
+  // streaming limit. (The buffering derivation itself is covered by
+  // ceiling.test.js against explicit buffering formats.)
+  const streamed = download(dataset, null, filter, { spec: 'cng-output/1.0', format: 'geoparquet' }, {
     sink: memorySink(),
     fetch: fetchImpl,
-    ceiling: { memoryBudget: 2_000 }, // -> outputBytes ceiling of floor(2_000 / 2) = 1,000
+    ceiling: { memoryBudget: 2_000 },
   });
-  const bufferingEst = await bufferingBlocked.estimate;
-  assert.ok(bufferingEst.ceiling.breaches.includes('outputBytes'));
-  assert.equal(bufferingEst.ceiling.limits.outputBytes, 1_000);
-  await bufferingBlocked.cancel('done asserting');
+  const streamedEst = await streamed.estimate;
+  assert.equal(streamedEst.ceiling.breaches.includes('outputBytes'), false);
+  assert.equal(streamedEst.ceiling.limits.outputBytes, UNBOUNDED_BYTES);
+  const streamedResult = await streamed.result;
+  assert.ok(streamedResult.rows > 0);
 });
 
 test('a dataset whose geometry column has no chunks still estimates (null avgGeometryBytes)', async () => {
