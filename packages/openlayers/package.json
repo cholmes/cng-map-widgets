@@ -1,6 +1,6 @@
 {
   "name": "@cngeo/openlayers",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "OpenLayers adapter for the @cngeo widgets: an accessible search combobox control, an Area outline layer, a viewport provider, antimeridian-aware fit, and the EPSG:4326 <-> view-projection bridge OpenLayers needs that MapLibre's GeoJSON-native sources do not.",
   "keywords": [
     "openlayers",
@@ -30,7 +30,7 @@
     "ol": "^10.0.0"
   },
   "dependencies": {
-    "@cngeo/spec": "0.3.1"
+    "@cngeo/spec": "0.4.0"
   },
   "publishConfig": {
     "access": "public"

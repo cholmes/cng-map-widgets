@@ -7,7 +7,7 @@
 //   registerFormat(createCsvFormat());
 //   registerFormat(createEsriJsonFormat());
 
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 
 export { createCsvFormat, estimateCsvBytes } from './csv.js';
 export { createEsriJsonFormat, estimateEsriJsonBytes } from './esrijson.js';

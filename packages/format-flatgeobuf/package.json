@@ -1,6 +1,6 @@
 {
   "name": "@cngeo/format-flatgeobuf",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "FlatGeobuf output for @cngeo/extract-core, wrapping the official flatgeobuf package's GeoJSON serializer. Measured ~10KB (min+gz) for the geojson submodule this plugin actually loads -- lighter than the design doc's original ~25KB estimate.",
   "keywords": [
     "flatgeobuf",
@@ -25,7 +25,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cngeo/spec": "0.3.1"
+    "@cngeo/spec": "0.4.0"
   },
   "devDependencies": {
     "flatgeobuf": "4.6.1"

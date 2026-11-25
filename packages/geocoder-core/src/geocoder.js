@@ -170,7 +170,7 @@ function projectGeometryRef(raw) {
  * an explicit override is unaffected by this change.
  */
 export const DEFAULT_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 
 /**
  * Resolve the constructor's `indexUrl` option to the one manifest URL this

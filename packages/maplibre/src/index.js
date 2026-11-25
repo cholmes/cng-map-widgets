@@ -1,6 +1,6 @@
 // @cngeo/maplibre -- public entry point.
 
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 
 export { GeocoderControl } from './geocoder-control.js';
 export { addAreaLayer } from './area-layer.js';

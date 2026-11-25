@@ -123,7 +123,7 @@ async function groupSpec() {
   } = await import('@cngeo/spec');
 
   await snippet('spec/README', 'VERSION', async () => {
-    assert.equal(VERSION, '0.3.1');
+    assert.equal(VERSION, '0.4.0');
     return VERSION;
   });
 
@@ -298,7 +298,7 @@ async function groupGeocoder() {
   setHyparquetModules({ hyparquet, compressors });
 
   await snippet('geocoder-core/README', 'VERSION', async () => {
-    assert.equal(VERSION, '0.3.1');
+    assert.equal(VERSION, '0.4.0');
   });
 
   await snippet('geocoder-core/README', 'DEFAULT_INDEX_URL is the published geoBoundaries manifest, and it serves', async () => {
@@ -526,7 +526,7 @@ async function groupUpload() {
   const { areaFromGeoJson, areaFromFile, registerReader, repairFeatures, VERSION } = await import('@cngeo/upload-core');
 
   await snippet('upload-core/README', 'VERSION', async () => {
-    assert.equal(VERSION, '0.3.1');
+    assert.equal(VERSION, '0.4.0');
   });
 
   await snippet('upload-core/README', 'areaFromFile() -> { area, warnings }', async () => {
@@ -692,7 +692,7 @@ async function groupDownload() {
   setHyparquetModules({ hyparquet, compressors, writer: hyparquetWriter });
 
   await snippet('extract-core/README', 'VERSION + the built-in registries', async () => {
-    assert.equal(VERSION, '0.3.1');
+    assert.equal(VERSION, '0.4.0');
     // `parquet-raw` (recipe 3e / the raw-passthrough format) is registered
     // as a side effect of this package's index.js alongside geojson and
     // geoparquet -- listed by `formats()` for a picker, but never resolved

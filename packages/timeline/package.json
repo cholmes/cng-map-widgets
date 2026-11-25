@@ -1,6 +1,6 @@
 {
   "name": "@cngeo/timeline",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "A histogram timeline over time-chunked map data: chunk descriptors of any period, a chunk-set orchestrator, playback, and a canvas timeline component. No map library.",
   "keywords": [
     "timeline",
@@ -26,7 +26,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cngeo/spec": "0.3.1"
+    "@cngeo/spec": "0.4.0"
   },
   "publishConfig": {
     "access": "public"

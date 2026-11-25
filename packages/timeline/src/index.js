@@ -14,7 +14,7 @@
 // Ported and generalised from firms-catalog's apps/firms-explorer
 // (timeline.js, mounted.js, archives.js, and the page glue of deck.html).
 
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 
 export {
   daysFromCivil, civilFromDays, keyIndex, indexKey, compareKeys, unitOfKey, formatKey, keyToISO, isoToKey,
