@@ -31,6 +31,7 @@ const spec = (extra = {}) => ({
 
 let fetched;
 let registered;
+let archive;
 const realFetch = globalThis.fetch;
 
 /** Stub the style fetch. `respond(url)` returns `{ status, body }`; body may be a string. */
@@ -69,11 +70,21 @@ beforeEach(() => {
       constructor(url) {
         this.url = url;
       }
+      async getHeader() {
+        if (archive.headerError) throw archive.headerError;
+        return { tileType: archive.tileType };
+      }
       async getMetadata() {
-        return { vector_layers: [{ id: 'sites' }], tilestats: { layers: [{ layer: 'sites', geometry: 'Point' }] } };
+        return archive.metadata;
       }
     },
   });
+  // What the stubbed archive says about itself; a test overrides fields.
+  archive = {
+    tileType: 1, // MVT
+    headerError: null,
+    metadata: { vector_layers: [{ id: 'sites' }], tilestats: { layers: [{ layer: 'sites', geometry: 'Point' }] } },
+  };
   stubFetch(() => ({ body: style() }));
 });
 
@@ -150,6 +161,69 @@ test('no style at all: a default style, and no note (nothing went wrong)', async
   assert.equal(entry.note, undefined);
   assert.deepEqual(fetched, []);
   assert.deepEqual(map.ours(), ['cng-layer-sites--sites-circle']);
+});
+
+// Found by the Phase 1 review, live: a 404 .pmtiles came back `ready`, with an
+// orphan source and no layers.
+test('an archive that cannot be read is an error, and nothing is left on the map', async () => {
+  archive.headerError = new Error('Bad response code: 404');
+  const map = createFakeMap();
+  const m = manager(map);
+  await assert.rejects(m.add(spec()), (e) => e.code === 'LAYER_LOAD_FAILED' && e.retryable === true && /404/.test(e.message));
+  assert.equal(m.get('sites').status, 'error');
+  assert.deepEqual(map.ours(), []);
+  assert.deepEqual(map.sourceIds(), []);
+  assert.deepEqual(fetched, [], 'the style is not fetched for an archive that is not there');
+});
+
+test('a PMTiles archive of raster tiles is refused as unsupported, not drawn as nothing', async () => {
+  archive.tileType = 2; // PNG
+  archive.metadata = {};
+  const map = createFakeMap();
+  const m = manager(map);
+  await assert.rejects(m.add(spec({ source: { url: PMTILES_URL, layers: [] } })), (e) => e.code === 'LAYER_UNSUPPORTED' && /raster/i.test(e.message));
+  assert.deepEqual(map.ours(), []);
+  assert.deepEqual(map.sourceIds(), []);
+});
+
+test('no layer names in the spec and none in the archive: refused, not an empty "ready" layer', async () => {
+  archive.metadata = {};
+  const map = createFakeMap();
+  const m = manager(map);
+  await assert.rejects(m.add(spec({ source: { url: PMTILES_URL, layers: [] } })), (e) => e.code === 'LAYER_UNSUPPORTED' && /vector layers/i.test(e.message));
+  assert.deepEqual(map.sourceIds(), []);
+});
+
+test('layer names are discovered from the archive when the spec gives none', async () => {
+  const map = createFakeMap();
+  const entry = await manager(map).add(spec({ source: { url: PMTILES_URL, layers: [] } }));
+  assert.equal(entry.status, 'ready');
+  assert.deepEqual(map.ours(), ['cng-layer-sites--sites-circle']);
+});
+
+// "Attribution and share-alike are always displayed." A MapLibre source's
+// `attribution` is what MapLibre's own attribution control shows -- as HTML.
+test("a layer's credit is put on its MapLibre sources, escaped", async () => {
+  const map = createFakeMap();
+  await manager(map).add(
+    spec({ attribution: [{ text: 'OCHA <b>Jamaica</b>', license: 'CC-BY-SA-4.0', url: 'https://example.org/licence', shareAlike: true, share_alike: true }] }),
+  );
+  const html = map.getSource('cng-layer-sites--data').attribution;
+  assert.match(html, /OCHA &lt;b&gt;Jamaica&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /<b>/);
+  assert.match(html, /href="https:\/\/example\.org\/licence"/);
+  assert.match(html, /CC-BY-SA-4\.0/);
+  assert.match(html, /share-alike/i);
+});
+
+test('a geojson layer carries its credit too; a layer with none sets no attribution', async () => {
+  const map = createFakeMap();
+  const m = manager(map);
+  const data = { type: 'FeatureCollection', features: [] };
+  await m.add({ spec: 'cng-layer/1.0', id: 'aoi', kind: 'geojson', source: { data }, attribution: [{ text: 'Me', license: 'CC0-1.0' }] });
+  await m.add({ spec: 'cng-layer/1.0', id: 'plain', kind: 'geojson', source: { data } });
+  assert.match(map.getSource('cng-layer-aoi--data').attribution, /Me/);
+  assert.equal('attribution' in map.getSource('cng-layer-plain--data'), false);
 });
 
 test('setOpacity scales each layer from its own base opacity', async () => {

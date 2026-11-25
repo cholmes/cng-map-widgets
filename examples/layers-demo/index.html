@@ -154,10 +154,10 @@ try {
     const timer = setTimeout(done, 2000);
     map.once('idle', () => { clearTimeout(timer); done(); });
   });
-  const grab = (bbox) => {
+  const grab = (bbox, inset = 0.3) => {
     const a = map.project([bbox[0], bbox[3]]), b = map.project([bbox[2], bbox[1]]);
     const w = b.x - a.x, h = b.y - a.y;
-    const rect = { x: a.x + w * 0.3, y: a.y + h * 0.3, w: w * 0.4, h: h * 0.4 };
+    const rect = { x: a.x + w * inset, y: a.y + h * inset, w: w * (1 - 2 * inset), h: h * (1 - 2 * inset) };
     const canvas = map.getCanvas(), scale = canvas.width / canvas.getBoundingClientRect().width;
     const out = document.createElement('canvas'); out.width = 48; out.height = 48;
     const ctx = out.getContext('2d', { willReadFrequently: true });
@@ -166,29 +166,49 @@ try {
   };
   /** The deck.gl layers currently handed to the overlay. */
   const deckLayers = () => manager.deckLayers().map((l) => ({ id: l.id, opacity: l.props.opacity, visible: l.props.visible, beforeId: l.props.beforeId }));
-  /** Does the map's draw order agree with manager.list()? Independent of LayerManager's own bookkeeping. */
+  /**
+   * Does the map's REAL draw order agree with manager.list()?
+   *
+   * `map.getLayersOrder()` is MapLibre's own answer, and unlike `getStyle()`
+   * it includes custom layers -- which is how interleaved deck.gl draws: one
+   * custom layer per slot, named `deck-maplibre-layer-group-before:<id>`.
+   * Nothing here reads LayerManager's bookkeeping: where each layer SHOULD
+   * be is worked out again from `list()` and compared with where MapLibre
+   * says it IS. (An earlier version took the raster's position from the
+   * manager itself, and so could not see the raster in the wrong place.)
+   */
+  const DECK_GROUP = 'deck-maplibre-layer-group-before:';
   const orderCheck = () => {
-    const styleIds = map.getStyle().layers.map((l) => l.id);
-    const firstLabel = styleIds.find((id) => !id.startsWith('cng-layer-') && map.getLayer(id).type === 'symbol');
+    const order = map.getLayersOrder();
+    const firstLabel = order.find((id) => !id.startsWith('cng-layer-') && !id.startsWith(DECK_GROUP) && map.getLayer(id)?.type === 'symbol');
     const list = manager.list();
-    const deck = deckLayers();
-    // Each entry's position: the index of its lowest style layer, or (for a
-    // deck layer) just below the layer named by its beforeId.
-    let previous = -1;
-    for (const entry of list) {
+    const ownLayers = (entry) => {
       const prefix = `cng-layer-${layerSlug(entry.id)}`;
-      const own = styleIds.map((id, i) => [id, i]).filter(([id]) => id === prefix || id.startsWith(`${prefix}--`));
+      return order.filter((id) => id === prefix || id.startsWith(`${prefix}--`));
+    };
+    let previous = -1;
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      const own = ownLayers(entry);
       let position;
-      if (own.length) position = own[0][1];
+      if (own.length) position = order.indexOf(own[0]);
       else {
-        const layer = deck.find((l) => l.id === prefix);
-        if (!layer) return { ok: false, why: `${entry.id} is neither in the style nor in the overlay` };
-        const before = layer.beforeId === undefined ? styleIds.length : styleIds.indexOf(layer.beforeId);
-        if (before === -1) return { ok: false, why: `${entry.id} has beforeId "${layer.beforeId}", which is not in the style` };
-        position = before - 0.5;
+        // A deck.gl layer belongs just below the lowest style layer of the
+        // nearest style entry above it, or below the labels.
+        let expectedBefore = firstLabel;
+        for (let j = i + 1; j < list.length; j++) {
+          const above = ownLayers(list[j]);
+          if (above.length) { expectedBefore = above[0]; break; }
+        }
+        position = order.indexOf(`${DECK_GROUP}${expectedBefore}`);
+        if (position === -1) {
+          const groups = order.filter((id) => id.startsWith(DECK_GROUP)).join(', ') || 'none';
+          return { ok: false, why: `${entry.id}: no deck.gl layer group sits below "${expectedBefore}" (groups on the map: ${groups})` };
+        }
+        if (position !== order.indexOf(expectedBefore) - 1) return { ok: false, why: `${entry.id}: its deck.gl group is not directly below "${expectedBefore}"` };
       }
       if (position <= previous) return { ok: false, why: `${entry.id} is drawn at ${position}, not above the layer before it (${previous})` };
-      if (position >= styleIds.indexOf(firstLabel)) return { ok: false, why: `${entry.id} is drawn above the labels` };
+      if (position >= order.indexOf(firstLabel)) return { ok: false, why: `${entry.id} is drawn above the labels` };
       previous = position;
     }
     return { ok: true, why: '' };
@@ -201,6 +221,13 @@ try {
     ids: { imagery: IMAGERY.id, parishes: parishes.id, aoi: AOI.id },
     bbox: { imagery: IMAGERY.bbox, aoi: AOI.bbox },
     slug: layerSlug,
+    /**
+     * Pixels where ONE layer is the thing that changes: the middle of the
+     * image for the raster; for the box, a strip inside the box but west of
+     * the image, where only the box (and the basemap) is drawn.
+     */
+    grabFor: (which) => (which === 'aoi' ? grab([-77.048, 18.03, -77.036, 18.08], 0) : grab(IMAGERY.bbox)),
+    addUrl: (url) => addFromUrl(manager, url, deps),
     fillOpacity: (id) => map.getPaintProperty(firstFillOf(id), 'fill-opacity') ?? null,
     /** How many features of a layer's vector tiles are actually on screen. */
     renderedFeatures: (id) => {
@@ -208,12 +235,21 @@ try {
       const layers = map.getStyle().layers.map((l) => l.id).filter((lid) => lid.startsWith(prefix));
       return layers.length ? map.queryRenderedFeatures({ layers }).length : 0;
     },
+    /** Layout visibility of every style layer a LayerSpec made, as the map has it. */
+    visibilityOnMap: (id) => {
+      const prefix = `cng-layer-${layerSlug(id)}--`;
+      return map.getStyle().layers.filter((l) => l.id.startsWith(prefix)).map((l) => map.getLayoutProperty(l.id, 'visibility') ?? 'visible');
+    },
+    /** Everything this library put in MapLibre's real layer order: our style layers and deck.gl's groups. */
+    oursInRealOrder: () => map.getLayersOrder().filter((id) => id.startsWith('cng-layer-') || id.startsWith(DECK_GROUP)),
+    /** The text of every attribution box on the map. */
+    credits: () => [...document.querySelectorAll('.maplibregl-ctrl-attrib')].filter((el) => !el.hidden).map((el) => el.textContent.trim()).join(' || '),
     snapshot() {
       const order = orderCheck();
       return {
-        list: manager.list().map((e) => ({ id: e.id, title: e.title, kind: e.kind, status: e.status, visible: e.visible, opacity: e.opacity, note: e.note ?? null })),
+        list: manager.list().map((e) => ({ id: e.id, title: e.title, kind: e.kind, status: e.status, visible: e.visible, opacity: e.opacity, note: e.note ?? null, error: e.error?.message ?? null })),
         deck: deckLayers(),
-        ours: map.getStyle().layers.map((l) => l.id).filter((id) => id.startsWith('cng-layer-')),
+        ours: map.getLayersOrder().filter((id) => id.startsWith('cng-layer-') || id.startsWith(DECK_GROUP)),
         orderMatches: order.ok,
         orderWhy: order.why,
       };

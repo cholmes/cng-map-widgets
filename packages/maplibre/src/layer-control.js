@@ -53,18 +53,23 @@ export class LayerControl {
   onAdd(map) {
     this._map = map;
     this._removed = false;
+    // Each onAdd is its own generation: an `_init` still waiting for the
+    // panel module when the control is removed AND added again (React's
+    // StrictMode does exactly this) must not build a second panel.
+    const generation = (this._generation = (this._generation ?? 0) + 1);
     const doc = map.getContainer().ownerDocument;
     this._container = doc.createElement('div');
     this._container.className = 'cng-layer-control';
-    this.ready = this._init(map, doc);
-    // A failure to load the panel must not become an unhandled rejection for
-    // a caller who never awaits `ready`; it is reported on the manager.
-    this.ready.catch(() => {});
+    this.ready = this._init(map, doc, generation);
+    // `ready` rejects if the panel cannot be loaded. For a caller who never
+    // awaits it, say so on the console instead of as an unhandled rejection.
+    this.ready.catch((err) => console.error('@cngeo/maplibre: the layer panel could not be loaded.', err));
     return this._container;
   }
 
   onRemove() {
     this._removed = true;
+    this._generation = (this._generation ?? 0) + 1;
     for (const fn of this._cleanup.splice(0)) fn();
     this._inner?.onRemove?.();
     this._inner = null;
@@ -75,17 +80,26 @@ export class LayerControl {
 
   // --- internals -----------------------------------------------------------
 
-  async _init(map, doc) {
+  async _init(map, doc, generation) {
     const { LayerControl: Inner } = await loadLayerControl();
-    if (this._removed) return;
+    if (this._removed || generation !== this._generation) return;
     ensureLayerControlCss(doc);
     injectLayerControlTheme(doc);
 
     const manager = this._manager;
+    // The panel must forget a removed layer BEFORE it reacts to the removal
+    // (see `_forget`), so the adapter's notifications pass through here.
+    const adapter = createControlAdapter(manager);
+    const subscribe = adapter.onLayerChange;
+    adapter.onLayerChange = (callback) =>
+      subscribe((event, id) => {
+        if (event === 'remove') this._forget(id);
+        callback(event, id);
+      });
     this._inner = new Inner({
       collapsed: this._collapsed,
       ...(this._basemapStyleUrl ? { basemapStyleUrl: this._basemapStyleUrl } : {}),
-      customLayerAdapters: [createControlAdapter(manager)],
+      customLayerAdapters: [adapter],
       // Our style layers are shown through the adapter, one row per LayerSpec.
       excludeLayers: ['cng-layer-*'],
       onLayerReorder: (order) => {
@@ -128,6 +142,22 @@ export class LayerControl {
     this._ensureAddButton(root, doc);
     this._syncPanelOrder();
     this._renderNotes(root);
+  }
+
+  /**
+   * A layer was removed through the manager, not through the panel's own menu.
+   * 0.18.3 remembers every layer id it has listed in a private `targetLayers`
+   * and never prunes it; once that list names an id that is gone, the panel
+   * stops auto-detecting, `excludeLayers` stops applying, and every raw
+   * `cng-layer-*` style layer appears as a row of its own. Prune it. Guarded:
+   * a version without the member needs no pruning.
+   */
+  _forget(id) {
+    const targets = this._inner?.targetLayers;
+    if (!Array.isArray(targets)) return;
+    for (let i = targets.length - 1; i >= 0; i--) {
+      if (targets[i] === id) targets.splice(i, 1);
+    }
   }
 
   /**

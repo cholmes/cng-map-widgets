@@ -4,12 +4,13 @@
 
 import { defaultGeojsonLayers } from './style-plan.js';
 import { addPlan, removePlan, setPlanOpacity, setPlanVisible } from './style-layers.js';
+import { creditSources } from '../layer-attribution.js';
 
 /** @param {import('../layer-manager.js').RendererContext} ctx */
 export function geojsonRenderer(ctx) {
   const source = `cng-layer-${ctx.slug}--data`;
   const plan = {
-    sources: { [source]: { type: 'geojson', data: ctx.spec.source.data ?? ctx.spec.source.url } },
+    sources: creditSources({ [source]: { type: 'geojson', data: ctx.spec.source.data ?? ctx.spec.source.url } }, ctx.spec.attribution),
     layers: defaultGeojsonLayers({ slug: ctx.slug, source }),
   };
   return {

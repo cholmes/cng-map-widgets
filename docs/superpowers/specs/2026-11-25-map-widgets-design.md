@@ -154,6 +154,19 @@ Skip: `@geoarrow/deck.gl-layers` (pulls a second deck.gl 9.3), `maplibre-gl-rast
   `portolan-browser/src/components/maps/LayerControl.vue`.
 - Example `examples/layers-demo/` with `verify.mjs`.
 
+**Phase 1 as built, 2026-11-25 — two things moved to later, both on purpose:**
+- *Raster stretch handling* (`renders`, `portolan:render_order`, named above under
+  `layersFromCollection`) was **not** ported. A `cog` layer draws with deck.gl-raster's default pipeline,
+  which covers display-ready 8-bit imagery; a COG that needs a stretch (single-band Float32, 16-bit
+  reflectance) is reported as an error, not drawn wrong. The port belongs with Phase 2's scene renderer,
+  which needs the same machinery. `LayerSpec.style` is reserved for it.
+- *The upstream contributions* to `maplibre-gl-layer-control` (theming, keyboard access) have **not been
+  drafted**. The wrapper does both jobs from outside. Drafting them is outstanding and opening them
+  still needs Chris's go-ahead.
+- Three members of that control are reached privately, all feature-detected: its list order
+  (`state.layerStates` + `buildLayerItems`), its move (`moveLayerUp/Down`), and its `targetLayers`
+  memory, which must be pruned when a layer is removed from code or the panel lists raw style layers.
+
 ## Phase 2 — imagery search
 
 **`@cngeo/extract-core`** (it resolves, prunes and reads already; it only writes files today)

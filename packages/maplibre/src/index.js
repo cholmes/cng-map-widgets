@@ -9,6 +9,7 @@ export { fitAreaBounds } from './fit-bounds.js';
 export { LayerManager, registerLayerRenderer } from './layer-manager.js';
 export { PMTILES_CDN, loadPmtiles, setPmtilesModules, clearPmtilesModules } from './pmtiles-loader.js';
 export { planStyle, defaultVectorStyle, opacityPaint } from './renderers/style-plan.js';
+export { attributionHtml } from './layer-attribution.js';
 export { LayerControl } from './layer-control.js';
 export { createControlAdapter, applyPanelOrder } from './layer-control-adapter.js';
 export { urlAddProvider, specsFromUrl, addFromUrl } from './add-providers.js';

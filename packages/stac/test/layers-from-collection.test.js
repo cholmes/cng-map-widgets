@@ -176,6 +176,74 @@ test('a missing extent leaves bbox and temporal off instead of inventing them', 
   assert.equal(noExtent[0].temporal, undefined);
 });
 
+// A catalog search runs this over thousands of collections. It must not be
+// possible for one odd document to throw.
+test('assets that are only reachable as s3:// give an unsupported layer that says so', () => {
+  for (const assets of [
+    { tiles: { href: 's3://bucket/t.pmtiles', type: 'application/vnd.pmtiles', roles: ['visual'] } },
+    { cog: { href: 's3://bucket/a.tif', type: 'image/tiff; application=geotiff; profile=cloud-optimized', roles: ['data'] } },
+    { items: { href: 's3://bucket/items.parquet', type: 'application/vnd.apache.parquet', roles: ['collection-mirror'] } },
+    { data: { href: 's3://bucket/d.parquet', type: 'application/vnd.apache.parquet', roles: ['data'] } },
+  ]) {
+    const out = layers({ type: 'Collection', id: 'remote', assets }, 'https://example.org/c/collection.json');
+    assert.equal(out.length, 1);
+    assert.equal(out[0].kind, 'unsupported');
+    assert.match(out[0].source.reason, /http/i);
+    assert.match(out[0].source.reason, /s3:\/\/bucket/);
+  }
+});
+
+test('a missing or relative baseUrl is refused up front, naming the field', () => {
+  assert.throws(() => layersFromCollection(fixture('naip')), (e) => e.code === 'LAYER_INVALID' && e.context.field === 'baseUrl');
+  assert.throws(() => layersFromCollection(fixture('naip'), { baseUrl: './collection.json' }), (e) => e.code === 'LAYER_INVALID' && e.context.field === 'baseUrl');
+});
+
+test('malformed members are tolerated: the collection is still described', () => {
+  const base = 'https://example.org/c/collection.json';
+  const cog = { cog: { href: './a.tif', type: 'image/tiff; application=geotiff; profile=cloud-optimized', roles: ['data'] } };
+  for (const odd of [
+    { links: { rel: 'pmtiles' } },
+    { 'pmtiles:layers': 'roads', links: [{ rel: 'pmtiles', href: './t.pmtiles' }] },
+    { 'table:columns': [null, { name: 'x' }] },
+    { item_assets: { visual: null } },
+    { providers: 'Someone' },
+    { extent: { spatial: { bbox: 'everywhere' }, temporal: { interval: [[1, 2]] } } },
+    { assets: { ...cog, broken: null, roleString: { href: './m.json', roles: 'metadata' } } },
+  ]) {
+    const out = layers({ type: 'Collection', id: 'odd', assets: cog, ...odd }, base);
+    assert.ok(out.length >= 1, JSON.stringify(odd));
+  }
+});
+
+test('a role given as a string is not matched by substring', () => {
+  // 'metadata' contains 'data'; it must not be read as the data asset.
+  const out = layers(
+    { type: 'Collection', id: 'roles', assets: { notes: { href: './notes.parquet', type: 'application/vnd.apache.parquet', roles: 'metadata' } } },
+    'https://example.org/c/collection.json',
+  );
+  assert.equal(out[0].kind, 'unsupported');
+});
+
+test('an attribution url or thumbnail that is not http(s) is dropped, not passed on', () => {
+  const out = layers(
+    {
+      type: 'Collection',
+      id: 'hostile',
+      license: 'CC-BY-4.0',
+      providers: [{ name: 'X', roles: ['licensor'], url: 'javascript:alert(1)' }],
+      assets: {
+        cog: { href: './a.tif', type: 'image/tiff; application=geotiff; profile=cloud-optimized', roles: ['data'] },
+        thumbnail: { href: 'javascript:alert(2)', roles: ['thumbnail'] },
+      },
+    },
+    'https://example.org/c/collection.json',
+  );
+  assert.equal(out[0].kind, 'cog');
+  assert.equal(out[0].thumbnail, undefined);
+  assert.equal(out[0].attribution[0].url, undefined);
+  assert.equal(out[0].attribution[0].text, 'X');
+});
+
 test('something that is not a collection is refused', () => {
   assert.throws(() => layersFromCollection(null, { baseUrl: 'https://example.org/c.json' }), (e) => e.code === 'LAYER_INVALID');
   assert.throws(() => layersFromCollection({ type: 'Collection' }, { baseUrl: 'https://example.org/c.json' }), (e) => e.code === 'LAYER_INVALID');

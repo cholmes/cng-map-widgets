@@ -20,6 +20,12 @@ export function createFakeMap(options = {}) {
   const calls = [];
   const log = (name, ...args) => calls.push([name, ...args]);
 
+  // MapLibre refuses to add anything until its style has loaded.
+  let styleLoaded = options.styleLoaded !== false;
+  const requireStyle = () => {
+    if (!styleLoaded) throw new Error('Style is not done loading.');
+  };
+
   const indexOf = (id) => layers.findIndex((l) => l.id === id);
   const insert = (layer, beforeId) => {
     const at = beforeId === undefined || beforeId === null ? -1 : indexOf(beforeId);
@@ -43,6 +49,7 @@ export function createFakeMap(options = {}) {
     getSource: (id) => sources.get(id),
 
     addSource(id, def) {
+      requireStyle();
       if (sources.has(id)) throw new Error(`fake-map: source "${id}" already exists`);
       sources.set(id, def);
       log('addSource', id);
@@ -53,6 +60,7 @@ export function createFakeMap(options = {}) {
       log('removeSource', id);
     },
     addLayer(def, beforeId) {
+      requireStyle();
       if (indexOf(def.id) !== -1) throw new Error(`fake-map: layer "${def.id}" already exists`);
       if (def.source && typeof def.source === 'string' && !sources.has(def.source)) throw new Error(`fake-map: layer "${def.id}" names a missing source "${def.source}"`);
       insert({ paint: {}, layout: {}, ...def, paint: { ...(def.paint ?? {}) }, layout: { ...(def.layout ?? {}) } }, beforeId);
@@ -126,6 +134,11 @@ export function createFakeMap(options = {}) {
     simulateSetStyle() {
       layers = basemap.map((l) => ({ ...l, paint: { ...l.paint }, layout: { ...l.layout } }));
       sources.clear();
+      map.fire('style.load');
+    },
+    /** For a map created with `styleLoaded: false`: the style arrives. */
+    finishLoadingStyle() {
+      styleLoaded = true;
       map.fire('style.load');
     },
   };

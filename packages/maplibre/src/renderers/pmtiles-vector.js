@@ -2,15 +2,54 @@
 // of vector tiles, drawn with the collection's own MapLibre style when it has
 // one, and with a plain default style when it does not.
 //
-// A style that cannot be loaded is NOT a failure of the layer. The data is
-// fine and can still be shown; the layer falls back to the default style and
-// leaves a note saying why. (A missing or malformed style file is the kind of
-// thing a publisher gets wrong without noticing.)
+// Two different things can go wrong, and they are treated differently:
+//
+//   The STYLE cannot be loaded (a 404, an HTML error page, no usable layers).
+//   That is not a failure of the layer: the data is fine and can still be
+//   shown. The layer falls back to a default style and leaves a note. A
+//   missing or malformed style file is the kind of thing a publisher gets
+//   wrong without noticing.
+//
+//   The ARCHIVE cannot be read, or holds nothing this can draw. That IS a
+//   failure, and it is found before anything is put on the map -- by reading
+//   the archive's header, which is the first thing drawing it would need
+//   anyway. Without that check a 404 archive sat in the list as "ready",
+//   with an empty source and no layers.
 
 import { CngError } from '@cngeo/spec';
 import { archiveFor, sharedProtocol } from '../pmtiles-loader.js';
 import { planStyle, defaultVectorStyle } from './style-plan.js';
 import { addPlan, removePlan, setPlanOpacity, setPlanVisible } from './style-layers.js';
+import { creditSources } from '../layer-attribution.js';
+
+/** PMTiles header `tileType`: 1 is MVT (vector); 2-5 are raster image formats. */
+const TILE_TYPE_MVT = 1;
+const TILE_TYPE_NAMES = { 0: 'unknown', 2: 'PNG', 3: 'JPEG', 4: 'WebP', 5: 'AVIF' };
+
+const context = (ctx) => ({ id: ctx.spec.id, kind: ctx.spec.kind, url: ctx.spec.source.url });
+
+/** Read the archive's header, or throw the error a user should see. */
+async function openArchive(ctx) {
+  let archive;
+  let header;
+  try {
+    archive = await archiveFor(ctx.spec.source.url);
+    header = await archive.getHeader();
+  } catch (cause) {
+    throw new CngError(`The PMTiles archive for "${ctx.spec.title}" could not be read: ${cause?.message ?? cause}`, 'LAYER_LOAD_FAILED', {
+      cause,
+      context: context(ctx),
+    });
+  }
+  if (header?.tileType !== undefined && header.tileType !== TILE_TYPE_MVT) {
+    throw new CngError(
+      `"${ctx.spec.title}" is a PMTiles archive of raster tiles (${TILE_TYPE_NAMES[header.tileType] ?? `type ${header.tileType}`}); only vector tiles can be drawn here.`,
+      'LAYER_UNSUPPORTED',
+      { retryable: false, context: { ...context(ctx), tileType: header.tileType } },
+    );
+  }
+  return archive;
+}
 
 async function fetchStylePlan(ctx) {
   const styleUrl = ctx.spec.source.style?.url;
@@ -29,15 +68,23 @@ async function fetchStylePlan(ctx) {
 }
 
 /** Vector layer names and geometry types, from the spec and the archive's own metadata. */
-async function describeVectorLayers(ctx) {
+async function describeVectorLayers(ctx, archive) {
   let metadata = {};
   try {
-    metadata = (await (await archiveFor(ctx.spec.source.url)).getMetadata()) ?? {};
+    metadata = (await archive.getMetadata()) ?? {};
   } catch {
-    /* an archive whose metadata cannot be read still has the names the spec gave */
+    /* the header was readable; without metadata the names must come from the spec */
   }
-  const geometryOf = new Map((metadata.tilestats?.layers ?? []).map((l) => [l.layer, l.geometry]));
-  const names = ctx.spec.source.layers.length ? ctx.spec.source.layers : (metadata.vector_layers ?? []).map((l) => l.id);
+  const geometryOf = new Map((Array.isArray(metadata.tilestats?.layers) ? metadata.tilestats.layers : []).map((l) => [l?.layer, l?.geometry]));
+  const discovered = (Array.isArray(metadata.vector_layers) ? metadata.vector_layers : []).map((l) => l?.id).filter((id) => typeof id === 'string');
+  const names = ctx.spec.source.layers.length ? ctx.spec.source.layers : discovered;
+  if (!names.length) {
+    throw new CngError(
+      `"${ctx.spec.title}" names no vector layers, and its PMTiles archive does not list any; there is nothing to draw.`,
+      'LAYER_UNSUPPORTED',
+      { retryable: false, context: context(ctx) },
+    );
+  }
   return names.map((id) => ({ id, geometry: geometryOf.get(id) }));
 }
 
@@ -52,16 +99,17 @@ export function pmtilesVectorRenderer(ctx) {
         throw new CngError(
           `"${ctx.spec.title}" needs MapLibre's addProtocol to read PMTiles. Pass it: new LayerManager(map, { addProtocol: maplibregl.addProtocol }).`,
           'LAYER_UNSUPPORTED',
-          { retryable: false, context: { id: ctx.spec.id, kind: ctx.spec.kind } },
+          { retryable: false, context: context(ctx) },
         );
+      }
+      if (!plan) {
+        const archive = await openArchive(ctx);
+        const styled = (await fetchStylePlan(ctx)) ?? defaultVectorStyle({ slug: ctx.slug, url: ctx.spec.source.url, vectorLayers: await describeVectorLayers(ctx, archive) });
+        plan = { ...styled, sources: creditSources(styled.sources, ctx.spec.attribution) };
       }
       const protocol = await sharedProtocol();
       // Registering again is harmless: it is the same handler.
       ctx.addProtocol('pmtiles', protocol.tile);
-
-      if (!plan) {
-        plan = (await fetchStylePlan(ctx)) ?? defaultVectorStyle({ slug: ctx.slug, url: ctx.spec.source.url, vectorLayers: await describeVectorLayers(ctx) });
-      }
       addPlan(ctx.map, plan, state);
     },
     remove() {

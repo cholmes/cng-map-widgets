@@ -358,12 +358,13 @@ truth; the map is made to agree with it.
 
 | member | notes |
 |---|---|
-| `add(spec, { visible?, opacity?, index? })` | `Promise<LayerEntry>`. Rejects `LAYER_INVALID` (bad spec, duplicate id) or `LAYER_UNSUPPORTED` (a `table`, an `unsupported` layer, a kind with no renderer). A load failure rejects too, and the layer **stays in the list** with `status: 'error'`. |
+| `add(spec, { visible?, opacity?, index? })` | `Promise<LayerEntry>`. Rejects `LAYER_INVALID` (bad spec; an id already in the stack, or one that becomes the same map id, e.g. `"a b"` and `"a/b"`) or `LAYER_UNSUPPORTED` (a `table`, an `unsupported` layer, a kind with no renderer, a PMTiles archive of raster tiles). A load failure rejects with `LAYER_LOAD_FAILED`, and the layer **stays in the list** with `status: 'error'`. Called before the map's style has loaded, it waits for it. |
 | `remove(id)` | Safe while the layer is still loading. |
 | `setVisible(id, bool)` / `setOpacity(id, 0..1)` | Opacity is clamped, and always scaled from what the layer's style defined. |
 | `move(id, toIndex)` | Index in the bottom-first list. |
 | `list()` / `get(id)` | Copies: `{ id, title, kind, visible, opacity, status, error?, note?, bbox?, attribution, spec }`. |
-| `on('change' \| 'error', fn)` | Returns an unsubscribe. `change`: `{ type, id }`, type one of `add ready remove move visible opacity error`. |
+| `on('change' \| 'error', fn)` | Returns an unsubscribe. `change`: `{ type, id }`, type one of `add ready remove move visible opacity note error`. `error`: `{ id, error }`. |
+| `attribution({ deckOnly? })` | What must be credited for the layers currently shown: each credit with its layer's `id` and `title`. |
 | `settled()` | Resolves when no add or rebuild is in flight. |
 | `deckLayers()` | The deck.gl layer objects currently on the map. |
 | `destroy()` | Takes everything off the map. |
@@ -377,6 +378,24 @@ import); `renderers`, `loadDeck` — per-instance overrides.
 A `note` is something worth telling the user that is not a failure: a
 published style that could not be loaded (the layer is drawn with a default
 style), a tile that failed.
+
+**A layer can become an error after it was ready.** deck.gl reports a file it
+cannot open (a 404) or cannot draw (a single-band Float32 COG has no default
+rendering) some time after the layer was handed over. The entry then turns to
+`status: 'error'` with the reason, `error` and `change` fire, and nothing of
+it stays on the map. A PMTiles archive is checked before anything is added:
+one that cannot be read is `LAYER_LOAD_FAILED`.
+
+**Credit.** A layer's `attribution` is put on its MapLibre sources, so
+MapLibre's own attribution control shows it while the layer is shown. deck.gl
+layers have no source, so their credits appear in a second small box in the
+same corner. The text is escaped and a credit links only to an `http(s)` URL
+(`attributionHtml()` is exported for a host that wants to render credits itself).
+
+Not yet handled: a 16-bit image shows nothing in a browser without
+`EXT_texture_norm16` and nothing reports it (`deckSupport()` tells you
+whether the browser has it). Stretches and band composites are imagery work
+for a later phase.
 
 **What draws what.** `pmtiles-vector` and `geojson` are MapLibre style layers.
 `cog` is drawn by Development Seed's deck.gl-raster in one shared, interleaved

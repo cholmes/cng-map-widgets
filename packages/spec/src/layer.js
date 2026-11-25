@@ -75,8 +75,9 @@ const SOURCE_CHECKS = {
     requireUrl(source.url, 'source.url');
   },
   geojson(source) {
+    if (source.url !== undefined) requireUrl(source.url, 'source.url');
     if (source.data && typeof source.data === 'object') return;
-    if (source.url !== undefined) return requireUrl(source.url, 'source.url');
+    if (source.url !== undefined) return;
     throw invalid('A geojson LayerSpec needs source.data (a GeoJSON object) or source.url', 'source');
   },
   scenes(source) {
@@ -135,11 +136,24 @@ export function validateLayerSpec(spec) {
   if (input.attribution !== undefined && !Array.isArray(input.attribution)) {
     throw invalid('LayerSpec.attribution must be an array', 'attribution');
   }
+  // A spec usually comes from a remote catalog, and these two end up in an
+  // href and an <img src>. Only http(s) may get that far.
+  for (const a of input.attribution ?? []) {
+    if (a?.url !== undefined && a.url !== null) requireUrl(a.url, 'attribution.url');
+  }
+  if (input.thumbnail !== undefined) requireUrl(input.thumbnail, 'thumbnail');
+
+  let source;
+  try {
+    source = structuredClone(input.source);
+  } catch {
+    throw invalid('LayerSpec.source must be plain data (it could not be copied)', 'source');
+  }
 
   return /** @type {LayerSpec} */ ({
     ...input,
     title: typeof input.title === 'string' && input.title ? input.title : input.id,
-    source: structuredClone(input.source),
+    source,
     attribution: (input.attribution ?? []).map((a) => ({ ...a })),
     ...(input.bbox ? { bbox: [...input.bbox] } : {}),
     ...(input.temporal ? { temporal: [...input.temporal] } : {}),

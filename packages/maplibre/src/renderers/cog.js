@@ -13,6 +13,8 @@
 // each time, with the SAME id and the SAME `source` string -- a changed
 // `source` would reopen the file.
 
+import { CngError } from '@cngeo/spec';
+
 /** @param {import('../layer-manager.js').RendererContext} ctx */
 export function cogRenderer(ctx) {
   const id = `cng-layer-${ctx.slug}`;
@@ -41,6 +43,21 @@ export function cogRenderer(ctx) {
           // A tile that fails (a 403, a truncated file) should not take the
           // layer down or go unseen: say so on the layer.
           onTileError: (err) => ctx.note(`Some of this image could not be loaded: ${err?.message ?? err}`),
+          // A file deck.gl cannot OPEN (a 404, not a GeoTIFF) or cannot DRAW
+          // (a pixel type it has no default pipeline for, such as Float32)
+          // arrives here, some time after the layer was handed over. Without
+          // this the layer sat in the list as "ready" with nothing on the map.
+          // Returning true tells deck.gl the error is handled (it would
+          // otherwise only log it).
+          onError: (err) => {
+            ctx.fail(
+              new CngError(`"${ctx.spec.title}" could not be drawn: ${err?.message ?? err}`, 'LAYER_LOAD_FAILED', {
+                cause: err,
+                context: { id: ctx.spec.id, kind: ctx.spec.kind, url },
+              }),
+            );
+            return true;
+          },
         }),
       ];
     },

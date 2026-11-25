@@ -56,6 +56,25 @@ test('a load failure of deck.gl rejects with DECK_LOAD_FAILED and leaves the ent
   assert.equal(manager.get('img').error.code, 'DECK_LOAD_FAILED');
 });
 
+// Found by the Phase 1 review, live: a 404 .tif and a Float32 COG both sat in
+// the list as `ready` with nothing drawn and nothing said. deck.gl reports
+// "cannot open" and "cannot draw" through the layer's onError, not onTileError.
+test('a file deck.gl cannot open or cannot draw turns the layer into an error', async () => {
+  const map = createFakeMap();
+  const manager = new LayerManager(map, { renderers: { cog: cogRenderer } });
+  const errors = [];
+  manager.on('error', (e) => errors.push(e));
+  await manager.add(cog());
+  const handled = overlayLayers(map)[0].props.onError(new Error("Can't draw the source in COGLayer: Inferring render pipeline for non-unsigned integers not yet supported"));
+  assert.equal(handled, true, 'returning true tells deck.gl the error was handled');
+  const entry = manager.get('img');
+  assert.equal(entry.status, 'error');
+  assert.equal(entry.error.code, 'LAYER_LOAD_FAILED');
+  assert.match(entry.error.message, /non-unsigned integers/);
+  assert.equal(errors.length, 1);
+  assert.deepEqual(overlayLayers(map), []);
+});
+
 test('a tile error is recorded as a note on the layer, not thrown', async () => {
   const map = createFakeMap();
   const manager = new LayerManager(map, { renderers: { cog: cogRenderer } });

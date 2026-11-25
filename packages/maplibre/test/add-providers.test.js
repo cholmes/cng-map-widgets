@@ -66,6 +66,27 @@ test('two urls that differ only in their folder get different ids', async () => 
   assert.notEqual(a.id, b.id);
 });
 
+// Found by the Phase 1 review: the id dropped the extension, the query and
+// the port, so these all collided and the second was refused as a duplicate.
+test('urls that differ in extension, query or port get different ids', async () => {
+  const ids = [];
+  for (const url of [
+    'https://example.org/data/x.tif',
+    'https://example.org/data/x.pmtiles',
+    'https://example.org/data/x.tif?v=2',
+    'https://example.org:8443/data/x.tif',
+  ]) {
+    ids.push((await specsFromUrl(url, { fetch: never }))[0].id);
+  }
+  assert.equal(new Set(ids).size, 4, JSON.stringify(ids));
+});
+
+test('a url with a malformed percent-escape is handled, not a raw URIError', async () => {
+  const [spec] = await specsFromUrl('https://example.org/data/100%zz.tif', { fetch: never });
+  assert.equal(spec.kind, 'cog');
+  assert.equal(typeof spec.title, 'string');
+});
+
 test('a collection url with no layersFromCollection supplied says what is missing', async () => {
   await assert.rejects(
     specsFromUrl('https://example.org/c/collection.json', { fetch: jsonFetch({ type: 'Collection', id: 'c' }) }),

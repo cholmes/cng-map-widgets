@@ -363,7 +363,9 @@ layer.attribution;  // []
 | `unsupported` | `{ reason, assetTypes }` — recognised but not drawable; says why |
 | `timeline` | defined by `@cngeo/timeline` |
 
-Every URL must be absolute `http(s)`. `bbox` is `[w, s, e, n]` with `w <= e`.
+Every URL must be absolute `http(s)`: the `source` URLs above, `thumbnail`,
+and each `attribution[].url` (they end up in an `<img src>` and an `href`).
+`bbox` is `[w, s, e, n]` with `w <= e`.
 
 ### Errors
 

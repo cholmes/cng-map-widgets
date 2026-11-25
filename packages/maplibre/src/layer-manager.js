@@ -26,6 +26,7 @@
 
 import { CngError, RENDERABLE_KINDS, layerSlug, validateLayerSpec } from '@cngeo/spec';
 import { loadDeck } from './deck-loader.js';
+import { attributionHtml } from './layer-attribution.js';
 
 /**
  * @typedef {{ visible: boolean, opacity: number }} LayerState
@@ -94,12 +95,28 @@ export class LayerManager {
     this._entries = [];
     this._handlers = { change: new Set(), error: new Set() };
     this._overlay = null;
+    /** The attribution box for deck.gl layers, once one is needed. */
+    this._credits = null;
     /** @type {any[]} */
     this._deckLayers = [];
     this._destroyed = false;
     /** @type {Set<Promise<unknown>>} */
     this._inFlight = new Set();
-    this._onStyleLoad = () => this._track(this._rebuild());
+    /** Resolvers of adds waiting for the style to load. */
+    this._styleWaiters = new Set();
+    this._onStyleLoad = () => {
+      // deck.gl re-adds its layer groups the moment a style loads. A group
+      // slotted under one of OUR style layers would name a layer that is not
+      // back yet ("Cannot add layer … before non-existing layer"), so the
+      // overlay is emptied first and refilled once the stack is rebuilt.
+      if (this._overlay) {
+        this._deckLayers = [];
+        this._overlay.setProps({ layers: [] });
+      }
+      for (const resolve of [...this._styleWaiters]) resolve();
+      this._styleWaiters.clear();
+      this._track(this._rebuild());
+    };
     map.on('style.load', this._onStyleLoad);
   }
 
@@ -189,6 +206,24 @@ export class LayerManager {
   }
 
   /**
+   * What must be credited for the layers currently SHOWN (ready and visible),
+   * bottom first: each attribution entry with the `id` and `title` of its
+   * layer. Style layers also carry their credit on their MapLibre sources, so
+   * MapLibre's own attribution control shows it; deck.gl layers have no
+   * source, which is what `deckOnly` is for.
+   * @param {{ deckOnly?: boolean }} [options]
+   */
+  attribution(options = {}) {
+    const out = [];
+    for (const entry of this._entries) {
+      if (entry.status !== 'ready' || !entry.visible) continue;
+      if (options.deckOnly && !entry.renderer?.deckLayers) continue;
+      for (const a of entry.spec.attribution) out.push({ id: entry.id, title: entry.spec.title, ...a });
+    }
+    return out;
+  }
+
+  /**
    * @param {'change'|'error'} event `change`: `{ type: 'add'|'ready'|'remove'|'move'|'visible'|'opacity'|'error', id }`.
    *   `error`: `{ id, error }`.
    * @returns {() => void} unsubscribe
@@ -215,8 +250,15 @@ export class LayerManager {
       this._map.removeControl(this._overlay);
       this._overlay = null;
     }
+    if (this._credits) {
+      this._map.removeControl(this._credits);
+      this._credits = null;
+    }
     this._deckLayers = [];
     this._map.off('style.load', this._onStyleLoad);
+    // Let any add still waiting for the style finish (it will find itself removed).
+    for (const resolve of [...this._styleWaiters]) resolve();
+    this._styleWaiters.clear();
     this._handlers.change.clear();
     this._handlers.error.clear();
   }
@@ -233,6 +275,18 @@ export class LayerManager {
         retryable: false,
         context: { reason: 'duplicate', id: spec.id },
       });
+    }
+    // MapLibre ids are built from the SLUG, and different ids can share one
+    // ("a b" and "a/b"). Two such layers would be one set of map layers that
+    // both entries believed they owned.
+    const slug = layerSlug(spec.id);
+    const clash = this._entries.find((e) => e.slug === slug);
+    if (clash) {
+      throw new CngError(
+        `The layer id "${spec.id}" is too close to "${clash.id}", which is already in the stack: both become "${slug}" on the map`,
+        'LAYER_INVALID',
+        { retryable: false, context: { reason: 'duplicate', id: spec.id, clashesWith: clash.id } },
+      );
     }
     const factory = this._renderers[spec.kind] ?? REGISTRY.get(spec.kind);
     if (!RENDERABLE_KINDS.includes(spec.kind) || !factory) {
@@ -251,7 +305,7 @@ export class LayerManager {
     const entry = {
       id: spec.id,
       spec,
-      slug: layerSlug(spec.id),
+      slug,
       visible: options.visible !== false,
       opacity: typeof options.opacity === 'number' && Number.isFinite(options.opacity) ? clamp01(options.opacity) : 1,
       status: 'loading',
@@ -265,31 +319,58 @@ export class LayerManager {
     this._entries.splice(at, 0, entry);
     this._emit('change', { type: 'add', id: entry.id });
 
+    /** The state the renderer was last told about. */
+    let given;
     try {
       entry.renderer = factory(this._context(entry));
-      await entry.renderer.add({ visible: entry.visible, opacity: entry.opacity });
+      given = await this._addToMap(entry);
+      // A renderer may report a failure before its add() has even returned.
+      if (entry.failedEarly) throw entry.failedEarly;
     } catch (cause) {
-      if (entry.removed) return this._public(entry); // removed while loading: not a failure
-      entry.status = 'error';
-      entry.error =
-        cause instanceof CngError
-          ? cause
-          : new CngError(`Could not load "${spec.title}": ${cause?.message ?? cause}`, 'LAYER_LOAD_FAILED', { cause, context: { id: spec.id } });
-      this._safeRemove(entry); // whatever it managed to add before failing
-      this._emit('error', { id: entry.id, error: entry.error });
-      this._emit('change', { type: 'error', id: entry.id });
+      if (entry.removed) {
+        this._discard(entry);
+        return this._public(entry); // removed while loading: not a failure
+      }
+      this._markFailed(entry, cause, 'load');
       throw entry.error;
     }
 
     if (entry.removed) {
-      this._safeRemove(entry);
-      this._syncDeck();
+      this._discard(entry);
       return this._public(entry);
     }
     entry.status = 'ready';
+    // Visibility or opacity may have been changed while it was loading. Deck
+    // layers are rebuilt from current state anyway; a style renderer is told.
+    if (given && !entry.renderer.deckLayers) {
+      if (given.visible !== entry.visible) entry.renderer.setVisible(entry.visible);
+      if (given.opacity !== entry.opacity) entry.renderer.setOpacity(entry.opacity);
+    }
     this._applyOrder();
     this._emit('change', { type: 'ready', id: entry.id });
     return this._public(entry);
+  }
+
+  /**
+   * Run a renderer's `add`, waiting for the map's style first if it is not
+   * loaded yet (a manager made before the map's `load`, or an add made just
+   * after `map.setStyle()`). MapLibre has no public "is the style ready for
+   * addSource?" -- `isStyleLoaded()` is also false while tiles load -- so the
+   * refusal itself is the signal.
+   * @returns {Promise<LayerState|undefined>} the state the renderer was given
+   */
+  async _addToMap(entry) {
+    for (let attempt = 0; ; attempt++) {
+      const state = { visible: entry.visible, opacity: entry.opacity };
+      try {
+        await entry.renderer.add(state);
+        return state;
+      } catch (err) {
+        if (attempt > 0 || !/style is not done loading/i.test(String(err?.message ?? err))) throw err;
+        await new Promise((resolve) => this._styleWaiters.add(resolve));
+        if (entry.removed || this._destroyed) return undefined;
+      }
+    }
   }
 
   /** `map.setStyle()` drops every added source and layer. Put the stack back. */
@@ -299,12 +380,36 @@ export class LayerManager {
       try {
         await entry.renderer.add({ visible: entry.visible, opacity: entry.opacity });
       } catch (cause) {
-        entry.status = 'error';
-        entry.error = cause instanceof CngError ? cause : new CngError(`Could not restore "${entry.spec.title}": ${cause?.message ?? cause}`, 'LAYER_LOAD_FAILED', { cause, context: { id: entry.id } });
-        this._emit('error', { id: entry.id, error: entry.error });
+        if (!entry.removed && !this._destroyed) this._markFailed(entry, cause, 'restore');
+        continue;
       }
+      // Removed (or the manager destroyed) while it was being re-added.
+      if (entry.removed || this._destroyed) this._discard(entry);
     }
     if (!this._destroyed) this._applyOrder();
+  }
+
+  /** Record a failure: the entry stays in the list as an error and nothing of it stays on the map. */
+  _markFailed(entry, cause, during) {
+    entry.status = 'error';
+    entry.error =
+      cause instanceof CngError
+        ? cause
+        : new CngError(`Could not ${during} "${entry.spec.title}": ${cause?.message ?? cause}`, 'LAYER_LOAD_FAILED', { cause, context: { id: entry.id } });
+    this._safeRemove(entry); // whatever it managed to add before failing
+    this._emit('error', { id: entry.id, error: entry.error });
+    this._emit('change', { type: 'error', id: entry.id });
+  }
+
+  /**
+   * Clean up after an entry that was removed while it was loading. If a NEW
+   * layer has since taken the same map ids (remove then re-add of one id),
+   * those ids are no longer this entry's to remove.
+   */
+  _discard(entry) {
+    const heir = this._entries.find((e) => e !== entry && e.slug === entry.slug);
+    if (!heir) this._safeRemove(entry);
+    if (!this._destroyed) this._syncDeck();
   }
 
   _context(entry) {
@@ -315,7 +420,21 @@ export class LayerManager {
       addProtocol: this._addProtocol,
       deck: () => this._deck(),
       note: (text) => {
+        if (entry.removed || entry.note === text) return;
         entry.note = text;
+        this._emit('change', { type: 'note', id: entry.id });
+      },
+      // For a failure that arrives AFTER add() resolved -- deck.gl reports a
+      // file it cannot open or cannot draw through a layer callback, long
+      // after the layer object was handed over.
+      fail: (cause) => {
+        if (entry.removed || this._destroyed || entry.status === 'error') return;
+        if (entry.status === 'loading') {
+          entry.failedEarly = cause;
+          return;
+        }
+        this._markFailed(entry, cause, 'load');
+        this._applyOrder();
       },
     };
   }
@@ -364,7 +483,35 @@ export class LayerManager {
     }
     this._deckLayers = layers;
     this._overlay.setProps({ layers });
+    this._renderDeckCredits();
     this._map.triggerRepaint?.();
+  }
+
+  /**
+   * Credit for deck.gl layers. A style layer's credit rides on its MapLibre
+   * source and shows in MapLibre's own attribution control; a deck.gl layer
+   * has no source, so its credit would otherwise never be displayed. This is
+   * a second small attribution box in the same corner, listing the credits
+   * of the deck.gl layers currently shown. Browser only.
+   */
+  _renderDeckCredits() {
+    const doc = this._map.getContainer?.()?.ownerDocument;
+    if (!doc) return;
+    const html = attributionHtml(this.attribution({ deckOnly: true }));
+    if (!this._credits) {
+      if (!html) return;
+      const el = doc.createElement('div');
+      el.className = 'maplibregl-ctrl maplibregl-ctrl-attrib cng-layer-attribution';
+      const inner = doc.createElement('div');
+      inner.className = 'maplibregl-ctrl-attrib-inner';
+      el.appendChild(inner);
+      this._credits = { el, inner, onAdd: () => el, onRemove: () => el.remove() };
+      this._map.addControl(this._credits, 'bottom-right');
+    }
+    // `attributionHtml` escapes everything and links only http(s): the one
+    // place layer text is set as markup.
+    if (this._credits.inner.innerHTML !== html) this._credits.inner.innerHTML = html;
+    this._credits.el.hidden = !html;
   }
 
   _safeRemove(entry) {

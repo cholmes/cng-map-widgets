@@ -272,6 +272,164 @@ test('after the basemap style is replaced the stack is rebuilt in the same order
   assert.deepEqual(manager.list().map((e) => [e.id, e.status]), [['low', 'ready'], ['img', 'ready'], ['high', 'ready']]);
 });
 
+// --- Found by the Phase 1 review, each first reproduced as a probe -----------
+
+test('visibility and opacity set while a layer is still loading are applied when it is ready', async () => {
+  const map = createFakeMap();
+  const gate = deferred();
+  const manager = new LayerManager(map, { renderers: { geojson: styleRenderer({ gate }) } });
+  const pending = manager.add(vector('slow'), { opacity: 0.5 });
+  manager.setVisible('slow', false);
+  manager.setOpacity('slow', 0.3);
+  gate.resolve();
+  await pending;
+  assert.equal(map.getLayoutProperty('cng-layer-slow', 'visibility'), 'none');
+  assert.equal(map.getPaintProperty('cng-layer-slow', 'fill-opacity'), 0.3);
+  assert.deepEqual([manager.get('slow').visible, manager.get('slow').opacity], [false, 0.3]);
+});
+
+test('add() before the map style has loaded waits for it instead of failing', async () => {
+  const map = createFakeMap({ styleLoaded: false });
+  const manager = new LayerManager(map, { renderers: renderers() });
+  const pending = manager.add(vector('early'));
+  await Promise.resolve();
+  assert.equal(manager.get('early').status, 'loading');
+  map.finishLoadingStyle();
+  const entry = await pending;
+  assert.equal(entry.status, 'ready');
+  assert.deepEqual(map.ours(), ['cng-layer-early']);
+});
+
+test('two ids that reduce to the same map id are refused, not silently merged', async () => {
+  const map = createFakeMap();
+  const manager = new LayerManager(map, { renderers: renderers() });
+  await manager.add(vector('a b'));
+  await assert.rejects(manager.add(vector('a/b')), (e) => e.code === 'LAYER_INVALID' && e.context.reason === 'duplicate' && /a b/.test(e.message));
+  assert.deepEqual(manager.list().map((e) => e.id), ['a b']);
+});
+
+test('remove then re-add of the same id while the first is still loading keeps the second', async () => {
+  const map = createFakeMap();
+  const first = deferred();
+  let calls = 0;
+  // Like the real style renderers, this one skips what is already on the map
+  // -- which is what lets a late, abandoned add "succeed" and then clean up
+  // layers that now belong to someone else.
+  const tolerant = ({ gate } = {}) => (ctx) => {
+    const id = `cng-layer-${ctx.slug}`;
+    return {
+      async add() {
+        if (gate) await gate.promise;
+        if (!ctx.map.getSource(id)) ctx.map.addSource(id, { type: 'geojson' });
+        if (!ctx.map.getLayer(id)) ctx.map.addLayer({ id, type: 'fill', source: id });
+      },
+      remove() {
+        if (ctx.map.getLayer(id)) ctx.map.removeLayer(id);
+        if (ctx.map.getSource(id)) ctx.map.removeSource(id);
+      },
+      setVisible() {},
+      setOpacity() {},
+      styleLayerIds: () => [id],
+    };
+  };
+  // The first add waits on a gate; the second completes at once.
+  const renderer = (ctx) => (calls++ === 0 ? tolerant({ gate: first })(ctx) : tolerant()(ctx));
+  const manager = new LayerManager(map, { renderers: { geojson: renderer } });
+  const one = manager.add(vector('sites'));
+  manager.remove('sites');
+  await manager.add(vector('sites'));
+  first.resolve(); // the abandoned add finishes last
+  await one;
+  assert.deepEqual(manager.list().map((e) => [e.id, e.status]), [['sites', 'ready']]);
+  assert.deepEqual(map.ours(), ['cng-layer-sites']);
+  assert.deepEqual(map.sourceIds(), ['cng-layer-sites']);
+});
+
+test('a renderer can report a failure after it was ready: the entry becomes an error', async () => {
+  const map = createFakeMap();
+  let ctxOf;
+  const manager = new LayerManager(map, {
+    renderers: { cog: (ctx) => { ctxOf = ctx; return deckRenderer()(ctx); } },
+  });
+  const events = [];
+  manager.on('change', (e) => events.push(e.type));
+  const errors = [];
+  manager.on('error', (e) => errors.push(e));
+  await manager.add(raster('img'));
+  assert.equal(overlayOf(map).props.layers.length, 1);
+
+  ctxOf.fail(new Error('Metadata loading failed: 404'));
+  const entry = manager.get('img');
+  assert.equal(entry.status, 'error');
+  assert.equal(entry.error.code, 'LAYER_LOAD_FAILED');
+  assert.match(entry.error.message, /404/);
+  assert.deepEqual(errors.map((e) => e.id), ['img']);
+  assert.equal(events.at(-1), 'error');
+  assert.deepEqual(overlayOf(map).props.layers, []); // nothing is drawn for a failed layer
+});
+
+test('a note from a renderer is announced, so a panel can show it at once', async () => {
+  let ctxOf;
+  const manager = new LayerManager(createFakeMap(), { renderers: { geojson: (ctx) => { ctxOf = ctx; return styleRenderer()(ctx); } } });
+  await manager.add(vector('a'));
+  const events = [];
+  manager.on('change', (e) => events.push([e.type, e.id]));
+  ctxOf.note('Some of this image could not be loaded');
+  assert.deepEqual(events, [['note', 'a']]);
+  assert.equal(manager.get('a').note, 'Some of this image could not be loaded');
+});
+
+test('attribution() lists what must be credited for the layers currently shown', async () => {
+  const manager = new LayerManager(createFakeMap(), { renderers: renderers() });
+  const credit = (text, license, shareAlike = false) => [{ text, license, shareAlike, share_alike: shareAlike }];
+  await manager.add(vector('a', { attribution: credit('Parishes of Jamaica', 'CC-BY-4.0') }));
+  await manager.add(raster('img', { attribution: credit('Sentinel-2', 'CC-BY-SA-3.0-IGO', true) }));
+  await manager.add(vector('none'));
+  assert.deepEqual(manager.attribution().map((a) => [a.id, a.text, a.license, a.shareAlike]), [
+    ['a', 'Parishes of Jamaica', 'CC-BY-4.0', false],
+    ['img', 'Sentinel-2', 'CC-BY-SA-3.0-IGO', true],
+  ]);
+  manager.setVisible('img', false);
+  assert.deepEqual(manager.attribution().map((a) => a.id), ['a']); // a hidden layer needs no credit
+  assert.deepEqual(manager.attribution({ deckOnly: true }).map((a) => a.id), []);
+  manager.setVisible('img', true);
+  assert.deepEqual(manager.attribution({ deckOnly: true }).map((a) => a.id), ['img']);
+});
+
+test('when the basemap style is replaced the overlay is emptied before the stack is rebuilt', async () => {
+  const map = createFakeMap();
+  const manager = new LayerManager(map, { renderers: renderers() });
+  await manager.add(vector('low'));
+  await manager.add(raster('img'));
+  // deck.gl re-adds its layer groups the moment the style loads; a group slotted
+  // under a style layer that is not back yet is a console error.
+  let seenDuringStyleLoad;
+  map.on('style.load', () => { seenDuringStyleLoad = overlayOf(map).props.layers.length; });
+  map.simulateSetStyle();
+  assert.equal(seenDuringStyleLoad, 0);
+  await manager.settled();
+  assert.equal(overlayOf(map).props.layers.length, 1);
+});
+
+test('a layer removed while the stack is being rebuilt is not put back', async () => {
+  const map = createFakeMap();
+  const gate = deferred();
+  let adds = 0;
+  // The first add is immediate; the re-add after setStyle waits on a gate.
+  const slowSecond = (ctx) => {
+    const inner = styleRenderer()(ctx);
+    return { ...inner, async add(state) { if (adds++ > 0) await gate.promise; return inner.add(state); } };
+  };
+  const manager = new LayerManager(map, { renderers: { geojson: slowSecond } });
+  await manager.add(vector('a'));
+  map.simulateSetStyle();
+  manager.remove('a');
+  gate.resolve();
+  await manager.settled();
+  assert.deepEqual(manager.list(), []);
+  assert.deepEqual(map.ours(), []);
+});
+
 test('change events name what happened; an unsubscribe stops them', async () => {
   const manager = new LayerManager(createFakeMap(), { renderers: renderers() });
   const events = [];

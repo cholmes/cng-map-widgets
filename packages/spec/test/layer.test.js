@@ -81,6 +81,29 @@ test('a valid bbox and temporal pass through', () => {
   assert.deepEqual(out.temporal, ['2020-01-01T00:00:00Z', null]);
 });
 
+// Layer documents come from remote catalogs. Anything that may end up in an
+// href or an <img src> has to be http(s) before a UI ever sees it.
+test('refuses a thumbnail or an attribution url that is not http(s)', () => {
+  assert.throws(() => validateLayerSpec({ ...ok, thumbnail: 'javascript:alert(1)' }), (e) => e.code === 'LAYER_INVALID' && e.context.field === 'thumbnail');
+  assert.throws(
+    () => validateLayerSpec({ ...ok, attribution: [{ text: 'x', url: 'javascript:alert(1)' }] }),
+    (e) => e.code === 'LAYER_INVALID' && e.context.field === 'attribution.url',
+  );
+  const fine = validateLayerSpec({ ...ok, thumbnail: 'https://x/t.jpg', attribution: [{ text: 'x', url: 'https://x/licence' }, { text: 'no url' }] });
+  assert.equal(fine.thumbnail, 'https://x/t.jpg');
+});
+
+test('every url is checked, including a geojson url given beside inline data', () => {
+  assert.throws(
+    () => validateLayerSpec({ ...ok, kind: 'geojson', source: { data: { type: 'FeatureCollection', features: [] }, url: 'ftp://x/a.geojson' } }),
+    (e) => e.context.field === 'source.url',
+  );
+});
+
+test('a source that cannot be copied is refused as invalid, not with a raw error', () => {
+  assert.throws(() => validateLayerSpec({ ...ok, source: { url: 'https://x/y.tif', onload() {} } }), (e) => e.code === 'LAYER_INVALID' && e.context.field === 'source');
+});
+
 test('layerSlug keeps ids usable as MapLibre ids', () => {
   assert.equal(layerSlug('a/b c:d'), 'a-b-c-d');
   assert.equal(layerSlug('ok_id-1'), 'ok_id-1');

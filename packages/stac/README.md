@@ -41,9 +41,20 @@ scenes and its national overview COG):
 | 4 | `table` | parquet with no geometry column — described, not drawable |
 | 5 | `unsupported` | anything else; `source.reason` says why and `source.assetTypes` what was found |
 
-It never throws for a real collection: one it cannot draw comes back as a
-single `table` or `unsupported` layer, so a UI can say *why* there is no map
-layer. It throws `LAYER_INVALID` only for something that is not a collection.
+It does not refuse a collection: one it cannot draw comes back as a single
+`table` or `unsupported` layer, so a UI can say *why* there is no map layer.
+Members of the wrong shape (a `links` that is an object, a null in
+`table:columns`, a `roles` that is a string) are tolerated, because this is
+meant to be run over thousands of other people's documents.
+
+It throws `LAYER_INVALID` for two things, both the caller's: something that
+is not a collection (`context.field: 'collection'`), and a missing or relative
+`baseUrl` (`'baseUrl'`). `baseUrl` is required because collections use
+relative hrefs and a layer must be self-contained.
+
+Only assets a browser can fetch count. A collection whose tiles or imagery
+are published at `s3://…` is `unsupported`, and its reason names the URL. An
+attribution link or thumbnail that is not `http(s)` is dropped.
 
 The first layer takes the collection's `id` and `title`; any further layer
 is `<id>:<asset key>`. `bbox` is left off when the collection's extent

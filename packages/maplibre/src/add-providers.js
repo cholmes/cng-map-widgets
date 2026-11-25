@@ -24,12 +24,24 @@ function parseUrl(input) {
   return url;
 }
 
-/** `https://host/a/b/My%20File.tif?x=1` -> `{ id: 'host/a/b/My File', title: 'My File' }`. */
+/**
+ * `https://host:8443/a/b/My%20File.tif?x=1` ->
+ * `{ id: 'host:8443/a/b/My File.tif?x=1', title: 'My File' }`.
+ *
+ * The id keeps everything that distinguishes one resource from another --
+ * port, extension, query -- so two different URLs never claim one id. The
+ * title is the file's name without its extension, for a person to read.
+ */
 function nameOf(url) {
-  const path = decodeURIComponent(url.pathname).replace(/\/+$/, '');
-  const noExt = path.replace(/\.[A-Za-z0-9]+$/, '');
-  const title = noExt.split('/').pop() || url.hostname;
-  return { id: `${url.hostname}${noExt}`, title };
+  let path = url.pathname;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    /* a malformed %-escape: keep the path as it is written */
+  }
+  path = path.replace(/\/+$/, '');
+  const title = path.replace(/\.[A-Za-z0-9]+$/, '').split('/').pop() || url.hostname;
+  return { id: `${url.host}${path}${url.search}`, title };
 }
 
 /**
