@@ -6,6 +6,7 @@ import { CngError } from '@cngeo/spec';
 import { resolveDataset } from './dataset-resolve.js';
 import { enumeratePartitions, partitionPruneCascade } from './partitions.js';
 import { openParquetFile } from './parquet-io.js';
+import { raceAbort, partListingKey } from './plan-cache.js';
 import { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, readBytesForRowGroups, coveringPaths, avgColumnBytesPerRow } from './prune.js';
 import { resolveOutputColumns, resolveReadColumns, geometryNeededForFilter } from './columns.js';
 import { effectiveCeiling, requirementsOf } from './ceiling.js';
@@ -150,6 +151,18 @@ export async function planRequest(dataset, area, filter, options = {}) {
     parts = [{ url: src.url }];
   } else if (src.kind === 'parquet-set') {
     parts = src.parts ?? src.urls.map((url) => ({ url }));
+  } else if (options.cache) {
+    // A listing is shared and kept (plan-cache.js). It is loaded without this
+    // call's signal so a superseded search still leaves it for the next one;
+    // `requests` counts it only for the plan that actually paid.
+    let listedHere = false;
+    const shared = options.cache.parts(partListingKey(src), () => {
+      listedHere = true;
+      return enumeratePartitions(src, { fetch: fetchImpl });
+    });
+    const en = await raceAbort(shared, signal, "listing the dataset's parts");
+    parts = en.parts;
+    if (listedHere) requests += en.requests;
   } else {
     const en = await enumeratePartitions(src, { fetch: fetchImpl, signal });
     parts = en.parts;
@@ -171,8 +184,8 @@ export async function planRequest(dataset, area, filter, options = {}) {
   let allRowGroupsTotal = 0;
   const perPart = [];
   for (const part of selectedParts) {
-    const handle = await openParquetFile(part.url, fetchImpl, { signal });
-    requests += 1;
+    const handle = await openParquetFile(part.url, fetchImpl, { signal, cache: options.cache });
+    if (!handle.fromCache) requests += 1;
     if (!table) {
       table = inferTableFromSchema(handle.metadata);
       geometryColumn = table.geometryColumn;

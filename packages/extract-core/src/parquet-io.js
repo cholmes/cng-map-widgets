@@ -6,6 +6,7 @@
 
 import { CngError, CancelledError } from '@cngeo/spec';
 import { loadHyparquet } from './cdn.js';
+import { raceAbort } from './plan-cache.js';
 
 /**
  * Map a thrown error to `CancelledError` when the operation's own signal is
@@ -58,6 +59,7 @@ function cancellationOf(cause, signal, what) {
  * @param {{ initialFetchSize?: number, signal?: AbortSignal }} [opts]
  */
 export async function openParquetFile(url, fetchImpl, opts = {}) {
+  if (opts.cache) return openCachedParquetFile(url, fetchImpl, opts);
   const { hyparquet } = await loadHyparquet();
   let file;
   try {
@@ -107,6 +109,38 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
   // `fetch`/`signal` of its own, because the AsyncBuffer on `file` already
   // has both bound in -- can still tell a cancelled read from a failed one.
   return { url, file, metadata, rowGroups, byteLength: file.byteLength, signal: opts.signal };
+}
+
+/**
+ * `openParquetFile` through a `PlanCache` (`opts.cache`). The footer -- the
+ * expensive part -- is read once per file and shared; on a hit there is NO
+ * request at all, not even hyparquet's HEAD, because the cached byte length
+ * is handed to `asyncBufferFromUrl`.
+ *
+ * The buffer is always new. It is what carries this call's abort signal into
+ * every later read, so two callers sharing one footer can still be cancelled
+ * independently. The footer load itself runs with no signal (see
+ * plan-cache.js): a superseded search leaves its footers for the next one.
+ *
+ * `fromCache` on the handle says whether this call paid for the footer, so a
+ * planner can report an honest request count.
+ */
+async function openCachedParquetFile(url, fetchImpl, opts) {
+  const { hyparquet } = await loadHyparquet();
+  let loadedHere = false;
+  const shared = opts.cache.footer(url, async () => {
+    loadedHere = true;
+    const handle = await openParquetFile(url, fetchImpl, { initialFetchSize: opts.initialFetchSize });
+    return { metadata: handle.metadata, rowGroups: handle.rowGroups, byteLength: handle.byteLength };
+  });
+  const footer = await raceAbort(shared, opts.signal, `reading the parquet footer of ${url}`);
+  const file = await hyparquet.asyncBufferFromUrl({
+    url,
+    byteLength: footer.byteLength,
+    fetch: fetchImpl,
+    requestInit: { cache: 'no-store', signal: opts.signal },
+  });
+  return { url, file, metadata: footer.metadata, rowGroups: footer.rowGroups, byteLength: footer.byteLength, signal: opts.signal, fromCache: !loadedHere };
 }
 
 /** @param {any} metadata @returns {RowGroupInfo[]} */

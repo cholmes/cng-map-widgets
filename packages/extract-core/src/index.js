@@ -23,6 +23,7 @@ export { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 export { boundedExact, boundedRange, addBounded, sumBounded, scaleBounded, capBounded, isEstimateWide } from './bounded.js';
 export { enumeratePartitions, partitionPruneCascade, resolveMirrorPartUrl } from './partitions.js';
 export { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, predicateExcludesRowGroup, avgColumnBytesPerRow, STATS_PRUNABLE_OPS } from './prune.js';
+export { createPlanCache } from './plan-cache.js';
 export { CngError, CancelledError, CeilingExceededError, isCngError } from '@cngeo/spec';
 export { RAW_FORMAT_ID, rawFormatDescriptor, planRaw, rawEstimate } from './raw.js';
 
