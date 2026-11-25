@@ -114,8 +114,13 @@ export class LayerControl {
       }),
     );
     // Rows are rebuilt by the panel at will; keep our additions in place.
+    // The panel also decides its own row order when it rebuilds (it appends
+    // layers as it hears of them), so the order is re-asserted after every
+    // rebuild. `_syncPanelOrder` does nothing when the order already agrees,
+    // which is what stops this from looping.
     const observer = new MutationObserver(() => {
       this._ensureAddButton(root, doc);
+      if (!root.querySelector('.layer-control-item-dragging, .layer-control-drop-placeholder')) this._syncPanelOrder();
       this._renderNotes(root);
     });
     observer.observe(root, { childList: true, subtree: true });

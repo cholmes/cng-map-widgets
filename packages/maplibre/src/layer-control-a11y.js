@@ -37,6 +37,31 @@ export function attachPanelA11y({ root, move, closeMenu }) {
 
   const checkboxFor = (id) => root.querySelector(`${ROW}[data-layer-id="${CSS.escape(id)}"] .layer-control-checkbox`);
 
+  // An action from the keyboard usually makes the panel rebuild its rows,
+  // sometimes more than once, and a rebuilt row is a new element: focus is
+  // lost to <body>. `keepFocus(id)` asks for focus to stay on that layer's row
+  // through any rebuild in the next moment; the observer below honours it.
+  let wantFocus = null;
+  const keepFocus = (id) => {
+    wantFocus = { id, until: performance.now() + 800 };
+    restoreFocus();
+  };
+  function restoreFocus() {
+    if (!wantFocus) return;
+    if (performance.now() > wantFocus.until) {
+      wantFocus = null;
+      return;
+    }
+    const active = doc.activeElement;
+    // An OPEN menu has focus on purpose. A menu that was just hidden still
+    // holds `activeElement` until the browser's next focus fix-up, and must
+    // not count.
+    const menu = active?.closest?.(MENU);
+    if (menu && menu.style.display !== 'none') return;
+    if (active?.closest?.(ROW)?.dataset.layerId === wantFocus.id) return;
+    checkboxFor(wantFocus.id)?.focus();
+  }
+
   function nameRows() {
     for (const row of root.querySelectorAll(ROW)) {
       const name = nameOf(row);
@@ -88,12 +113,12 @@ export function attachPanelA11y({ root, move, closeMenu }) {
       const opener = menuOpener;
       doc.activeElement?.click?.();
       // The action usually rebuilds the list; put focus back on the row.
-      queueMicrotask(() => requestAnimationFrame(() => opener && checkboxFor(opener)?.focus()));
+      if (opener) keepFocus(opener);
     } else if (event.key === 'Escape' || event.key === 'Tab') {
       const opener = menuOpener;
       closeMenu ? closeMenu() : (menu.style.display = 'none');
       menuOpener = null;
-      if (opener) checkboxFor(opener)?.focus();
+      if (opener) keepFocus(opener);
       if (event.key === 'Tab') return; // let Tab move on
     } else return;
     event.preventDefault();
@@ -108,7 +133,7 @@ export function attachPanelA11y({ root, move, closeMenu }) {
       event.preventDefault();
       move(id, event.key === 'ArrowUp' ? 'up' : 'down');
       // The list is rebuilt by the move; keep focus on the same layer.
-      requestAnimationFrame(() => checkboxFor(id)?.focus());
+      keepFocus(id);
       return;
     }
     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
@@ -130,6 +155,7 @@ export function attachPanelA11y({ root, move, closeMenu }) {
   const observer = new MutationObserver(() => {
     nameRows();
     dressMenu();
+    restoreFocus();
   });
   observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'data-layer-id'] });
   root.addEventListener('keydown', onMenuKeydown, true);

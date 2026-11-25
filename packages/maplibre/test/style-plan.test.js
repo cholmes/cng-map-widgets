@@ -76,6 +76,30 @@ test('an already-absolute pmtiles url and plain tile urls are handled', () => {
   assert.deepEqual(plan.sources['cng-layer-x--inline'].data, { type: 'FeatureCollection', features: [] });
 });
 
+// Found live (carto-open-catalogs' Jamaica parishes, 2026-11-25): a published
+// style gives its archive as a bare relative path, with no `pmtiles://`.
+// MapLibre then fetches the archive itself as TileJSON and fails with
+// `Unexpected token 'P', "PMTiles"... is not valid JSON`.
+test('a .pmtiles source url with no pmtiles:// scheme is still read as PMTiles', () => {
+  const plan = planStyle({
+    slug: 'x',
+    styleUrl: 'https://storage.googleapis.com/carto-open-catalogs/ocha-cod-jamaica/main/parishes/styles/default.json',
+    styleJson: {
+      version: 8,
+      sources: {
+        data: { type: 'vector', url: '../parishes.pmtiles' },
+        absolute: { type: 'vector', url: 'https://example.org/t.pmtiles?v=2' },
+        tilejson: { type: 'vector', url: './tiles.json' },
+      },
+      layers: [],
+    },
+  });
+  assert.equal(plan.sources['cng-layer-x--data'].url, 'pmtiles://https://storage.googleapis.com/carto-open-catalogs/ocha-cod-jamaica/main/parishes/parishes.pmtiles');
+  assert.equal(plan.sources['cng-layer-x--absolute'].url, 'pmtiles://https://example.org/t.pmtiles?v=2');
+  // A real TileJSON url is left as one.
+  assert.equal(plan.sources['cng-layer-x--tilejson'].url, 'https://storage.googleapis.com/carto-open-catalogs/ocha-cod-jamaica/main/parishes/styles/tiles.json');
+});
+
 test('a layer naming a missing source is dropped, with a note', () => {
   const style = unosatStyle();
   style.layers.push({ id: 'orphan', type: 'line', source: 'nope' });

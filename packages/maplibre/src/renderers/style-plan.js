@@ -33,7 +33,22 @@ function resolveSource(def, styleUrl) {
   if (typeof out.url === 'string') {
     // Portolan's convention: `pmtiles://../x.pmtiles` is relative to the STYLE
     // file, not to the page.
-    out.url = out.url.startsWith(PMTILES) ? PMTILES + absolute(out.url.slice(PMTILES.length), styleUrl) : absolute(out.url, styleUrl);
+    if (out.url.startsWith(PMTILES)) {
+      out.url = PMTILES + absolute(out.url.slice(PMTILES.length), styleUrl);
+    } else {
+      const resolved = absolute(out.url, styleUrl);
+      // Styles in the wild also name the archive with NO scheme
+      // (`"url": "../parishes.pmtiles"`). Left alone, MapLibre fetches the
+      // archive as TileJSON and fails on its first bytes. An archive is
+      // recognisable by its extension, so read it as what it is.
+      let isArchive = false;
+      try {
+        isArchive = /\.pmtiles$/i.test(new URL(resolved).pathname);
+      } catch {
+        /* not a URL we can parse: leave it */
+      }
+      out.url = isArchive ? PMTILES + resolved : resolved;
+    }
   }
   if (Array.isArray(out.tiles)) out.tiles = out.tiles.map((t) => absoluteTemplate(t, styleUrl));
   if (typeof out.data === 'string') out.data = absolute(out.data, styleUrl);

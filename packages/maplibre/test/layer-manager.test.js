@@ -190,6 +190,18 @@ test('deck layers carry visibility and opacity', async () => {
   assert.deepEqual(overlayOf(map).props.layers.map((l) => [l.visible, l.opacity]), [[false, 0.5]]);
 });
 
+test('deckLayers() reports what was last handed to the overlay', async () => {
+  const map = createFakeMap();
+  const manager = new LayerManager(map, { renderers: renderers() });
+  assert.deepEqual(manager.deckLayers(), []); // before any deck layer: no overlay, nothing
+  await manager.add(vector('low'));
+  await manager.add(raster('img'));
+  assert.deepEqual(manager.deckLayers(), overlayOf(map).props.layers);
+  assert.notEqual(manager.deckLayers(), overlayOf(map).props.layers); // a copy of the list
+  manager.remove('img');
+  assert.deepEqual(manager.deckLayers(), []);
+});
+
 test('beforeId: null puts the stack above everything, labels included', async () => {
   const map = createFakeMap();
   const manager = new LayerManager(map, { renderers: renderers(), beforeId: null });

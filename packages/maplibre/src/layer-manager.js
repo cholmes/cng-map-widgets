@@ -94,6 +94,8 @@ export class LayerManager {
     this._entries = [];
     this._handlers = { change: new Set(), error: new Set() };
     this._overlay = null;
+    /** @type {any[]} */
+    this._deckLayers = [];
     this._destroyed = false;
     /** @type {Set<Promise<unknown>>} */
     this._inFlight = new Set();
@@ -177,6 +179,16 @@ export class LayerManager {
   }
 
   /**
+   * The deck.gl layer objects last handed to the shared overlay, bottom
+   * first. For a legend, a debugger or a test: each carries its `id` and
+   * `props` (`opacity`, `visible`, `beforeId`).
+   * @returns {any[]}
+   */
+  deckLayers() {
+    return [...this._deckLayers];
+  }
+
+  /**
    * @param {'change'|'error'} event `change`: `{ type: 'add'|'ready'|'remove'|'move'|'visible'|'opacity'|'error', id }`.
    *   `error`: `{ id, error }`.
    * @returns {() => void} unsubscribe
@@ -203,6 +215,7 @@ export class LayerManager {
       this._map.removeControl(this._overlay);
       this._overlay = null;
     }
+    this._deckLayers = [];
     this._map.off('style.load', this._onStyleLoad);
     this._handlers.change.clear();
     this._handlers.error.clear();
@@ -349,6 +362,7 @@ export class LayerManager {
       if (entry.status !== 'ready' || !entry.renderer.deckLayers) continue;
       layers.push(...entry.renderer.deckLayers({ visible: entry.visible, opacity: entry.opacity }, entry.beforeId));
     }
+    this._deckLayers = layers;
     this._overlay.setProps({ layers });
     this._map.triggerRepaint?.();
   }
