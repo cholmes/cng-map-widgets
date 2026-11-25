@@ -52,6 +52,70 @@ function cancellationOf(cause, signal, what) {
  */
 
 /**
+ * A remote file's real size, in bytes -- without a HEAD request.
+ *
+ * HEAD is the obvious way and it is wrong on GitHub Pages (where the Portolan
+ * registry's index is published): the answer is the length of the file's GZIP
+ * encoding, `Content-Encoding: gzip`, and a script can neither read that
+ * header cross-origin nor decline the encoding. A footer looked for at that
+ * offset is not there. A request that carries a `Range` is served unencoded
+ * (a browser adds `Accept-Encoding: identity` to it), so the size is asked for
+ * that way:
+ *
+ *   1. `Range: bytes=0-0`. A 206 whose `Content-Range` total can be read is
+ *      the answer, for one byte.
+ *   2. A 206 whose `Content-Range` is hidden -- CORS exposes it only where
+ *      the host says so, and GitHub Pages does not -- is followed by
+ *      `Range: bytes=0-`: its `Content-Length` is the whole file's and is
+ *      always readable. The body is abandoned at once.
+ *   3. A 200 means the server ignores `Range`; its `Content-Length` is the
+ *      best there is.
+ *
+ * @param {string} url
+ * @param {typeof fetch} fetchImpl
+ * @param {{ signal?: AbortSignal }} [opts]
+ * @returns {Promise<number>}
+ */
+export async function remoteByteLength(url, fetchImpl, opts = {}) {
+  const failed = (status, why) => new CngError(`Couldn't find the size of ${url}: ${why}`, 'NETWORK', { context: { url, ...(status ? { status } : {}) } });
+  const lengthOf = (res) => {
+    const n = Number(res.headers?.get?.('content-length'));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  /** One request whose body is dropped as soon as its headers have been read. */
+  const ask = async (range) => {
+    const own = new AbortController();
+    const onOuter = () => own.abort(opts.signal.reason);
+    if (opts.signal?.aborted) own.abort(opts.signal.reason);
+    else opts.signal?.addEventListener('abort', onOuter, { once: true });
+    try {
+      const res = await fetchImpl(url, { headers: new Headers({ Range: range }), cache: 'no-store', signal: own.signal });
+      const seen = { status: res.status, total: /\/(\d+)\s*$/.exec(res.headers?.get?.('content-range') ?? '')?.[1] ?? null, length: lengthOf(res) };
+      own.abort(); // nothing of the body is wanted
+      res.body?.cancel?.().catch(() => {});
+      return seen;
+    } finally {
+      opts.signal?.removeEventListener('abort', onOuter);
+    }
+  };
+  let first;
+  try {
+    first = await ask('bytes=0-0');
+    if (first.status === 206 && first.total !== null) return Number(first.total);
+    if (first.status === 200 && first.length !== null) return first.length;
+    if (first.status === 206) {
+      const whole = await ask('bytes=0-');
+      if (whole.status === 206 && whole.length !== null) return whole.length;
+      throw failed(whole.status, `HTTP ${whole.status} with no usable Content-Length`);
+    }
+  } catch (cause) {
+    if (cause instanceof CngError) throw cause;
+    throw cancellationOf(cause, opts.signal, `fetching ${url}`) ?? new CngError(`Couldn't fetch parquet file: ${url}`, 'NETWORK', { cause, context: { url } });
+  }
+  throw failed(first.status, `HTTP ${first.status}`);
+}
+
+/**
  * Open a remote parquet file: fetch the footer (and the whole file's byte
  * length), return a handle with `{ file, metadata, rowGroups, url }`.
  * @param {string} url
@@ -61,11 +125,15 @@ function cancellationOf(cause, signal, what) {
 export async function openParquetFile(url, fetchImpl, opts = {}) {
   if (opts.cache) return openCachedParquetFile(url, fetchImpl, opts);
   const { hyparquet } = await loadHyparquet();
+  const timed = withRequestTimeout(fetchImpl, opts.requestTimeoutMs);
+  // The size first, by a ranged request: given it, hyparquet makes no HEAD.
+  const byteLength = await remoteByteLength(url, timed, { signal: opts.signal });
   let file;
   try {
     file = await hyparquet.asyncBufferFromUrl({
       url,
-      fetch: withRequestTimeout(fetchImpl, opts.requestTimeoutMs),
+      byteLength,
+      fetch: timed,
       requestInit: { cache: 'no-store', signal: opts.signal },
     });
   } catch (cause) {

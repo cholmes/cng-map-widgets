@@ -164,6 +164,34 @@ test("geometry: 'none' on a table whose bbox is a list, with no area, returns ev
   assert.equal(full.rows[0].geometry.type, 'Polygon');
 });
 
+// Found reading the Portolan registry index: 7,049 of 17,585 rows came back.
+// The rest -- every catalog, every non-spatial table -- have no geometry and
+// no bbox, and a row with neither was dropped as "can never match a spatial
+// filter" even when there was no spatial filter to match.
+test('with no area, rows that have no geometry are returned; with one, they are not', async () => {
+  const str = (name) => ({ name, type: 'BYTE_ARRAY', converted_type: 'UTF8', repetition_type: 'OPTIONAL' });
+  const dbl = (name) => ({ name, type: 'DOUBLE', repetition_type: 'OPTIONAL' });
+  const columns = [str('id'), [{ name: 'bbox', repetition_type: 'OPTIONAL', num_children: 4 }, dbl('xmin'), dbl('ymin'), dbl('xmax'), dbl('ymax')], { name: 'geometry', type: 'BYTE_ARRAY', repetition_type: 'OPTIONAL' }];
+  // Even rows are spatial; odd rows are tables: no bbox, no geometry.
+  const rows = [0, 1, 2, 3, 4, 5].map((i) => (i % 2 ? { id: `table-${i}`, bbox: null, geometry: null } : { id: `map-${i}`, bbox: { xmin: i * 10, ymin: 0, xmax: i * 10 + 1, ymax: 1 }, geometry: squareWkb(i * 10, 0, 1) }));
+  const bytes = new Uint8Array(parquetWriteBuffer({
+    columnData: ['id', 'bbox', 'geometry'].map((name) => ({ name, data: rows.map((r) => r[name]) })),
+    schema: [{ name: 'schema', num_children: columns.length }, ...columns.flat()],
+    rowGroupSize: 3,
+  }));
+  const host = scenesHost(bytes);
+  const dataset = { spec: 'cng-dataset/1.0', id: 'mixed', source: { kind: 'parquet', url: SCENES_URL } };
+  const everything = await queryRows(dataset, null, { ...ALL, columns: { include: ['id'], includeBbox: true } }, { fetch: host.fetch, geometry: 'none' });
+  assert.deepEqual(ids(everything.rows), ['map-0', 'table-1', 'map-2', 'table-3', 'map-4', 'table-5']);
+  assert.equal(everything.rows[1].bbox, null);
+  const withGeometry = await queryRows(dataset, null, ALL, { fetch: host.fetch });
+  assert.equal(withGeometry.rows.length, 6);
+  assert.equal(withGeometry.rows[1].geometry, null);
+  // An area is a spatial filter: a row with no place cannot be in it.
+  const area = buildArea({ name: 'west', geometry: { type: 'Polygon', coordinates: [[[-1, -1], [25, -1], [25, 2], [-1, 2], [-1, -1]]] }, source: 'draw', features: [] });
+  assert.deepEqual(ids((await queryRows(dataset, area, ALL, { fetch: host.fetch })).rows), ['map-0', 'map-2']);
+});
+
 test('limit truncates and reports it', async () => {
   const host = scenesHost(buildScenes());
   const cut = await queryRows(scenesDataset(), null, { ...ALL, limit: 5 }, { fetch: host.fetch });
@@ -250,7 +278,10 @@ test('a file that keeps changing fails with a retryable error rather than loopin
   const fetch = async (url, init = {}) => {
     const res = await shifting.fetch(url, init);
     const range = res.headers.get('content-range');
-    if (!range || shifting.log.at(-1).end >= shifting.bytes.byteLength) return res;
+    const asked = shifting.log.at(-1);
+    // Honest about the size when it is asked for (the one-byte probe) and for
+    // the footer; it is the ROW reads that then disagree, every time.
+    if (!range || asked.end >= shifting.bytes.byteLength || asked.end - asked.start <= 1) return res;
     const headers = new Headers(res.headers);
     headers.set('content-range', range.replace(/\/\d+$/, `/${999_000 + n++}`));
     return new Response(await res.arrayBuffer(), { status: 206, headers });

@@ -25,6 +25,7 @@ export { enumeratePartitions, partitionPruneCascade, resolveMirrorPartUrl } from
 export { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, predicateExcludesRowGroup, avgColumnBytesPerRow, STATS_PRUNABLE_OPS } from './prune.js';
 export { createPlanCache } from './plan-cache.js';
 export { queryRows, describeDataset } from './query.js';
+export { remoteByteLength } from './parquet-io.js';
 export { CngError, CancelledError, CeilingExceededError, isCngError } from '@cngeo/spec';
 export { RAW_FORMAT_ID, rawFormatDescriptor, planRaw, rawEstimate } from './raw.js';
 

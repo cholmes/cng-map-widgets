@@ -567,6 +567,11 @@ plan.rowGroups;     // { total: 825, selected: 27 }
   request per row group. The reader issues one per column chunk, measured at
   about four per row group on Sentinel-2's item table.)
 - Cancelling rejects with `CANCELLED`.
+- **With no area, a row with no geometry is returned like any other.** There
+  is no spatial filter then, and an index of mixed things — a catalog index
+  holds catalogs and non-spatial tables beside its maps — would otherwise
+  lose them. With an area such a row is left out: it has no place to be in
+  it. (A download still leaves out a row with no geometry either way.)
 - `requestTimeoutMs` abandons a row read that has not finished — headers and
   body — in that time; it is then made again (`readRetries`). Off by default,
   and deliberately not offered as a default for downloads: the limit covers
@@ -1161,6 +1166,25 @@ buffer rather than throwing something legible.
 
 Which this package does internally. Chrome serializes concurrent reads of one
 URL behind its cache lock: **2.1 s → 0.4 s for the same eight reads**, measured.
+
+### A file's size is not what `HEAD` says
+
+A parquet reader needs the file's length to find the footer, and `HEAD` is
+the obvious way to ask. On **GitHub Pages** the answer is the length of the
+file's *gzip encoding* (`Content-Encoding: gzip`: 19,030,300 for a file of
+20,409,030 bytes, measured on the Portolan registry's index), a header a
+script cannot read cross-origin and an encoding it cannot decline. The footer
+is then looked for in the wrong place: `parquet file invalid (footer != PAR1)`.
+
+A request that carries a `Range` is served unencoded, so this package never
+sends a `HEAD`. `remoteByteLength(url, fetch)` asks for one byte
+(`Range: bytes=0-0`) and reads the total from `Content-Range`; where a host
+does not expose that header to scripts — GitHub Pages again — it asks for
+`bytes=0-` and reads `Content-Length`, which is always readable, then drops
+the body. One request where there used to be one; two on such a host.
+
+If you write your own reader with hyparquet, pass it `byteLength` found this
+way: given a length, `asyncBufferFromUrl` makes no `HEAD` of its own.
 
 ### A Portolan `partition:glob` is an `s3://` URI
 
