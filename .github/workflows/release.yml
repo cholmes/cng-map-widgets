@@ -16,11 +16,17 @@
 #
 # Every field is case-sensitive. The workflow filename is the file name
 # alone, not a path. A configuration expires if it does not publish inside 2
-# days, so add the 11 entries just before a release, not in advance.
+# days, so add the 13 entries just before a release, not in advance.
 #
 # npm cannot attach a trusted publisher to a package that does not exist, so
 # a package's FIRST version goes up with a short-lived granular token. Later
-# versions use this workflow.
+# versions use this workflow. As of 0.4.0 that is two packages:
+# @cngeo/timeline and @cngeo/stac. Publish those two by hand first
+# (`npm publish --access public` in packages/timeline, then packages/stac),
+# then run this workflow straight away: it skips what is already on the
+# registry and publishes the rest. In between, those two name a version of
+# @cngeo/spec that is not on the registry yet and cannot be installed, so do
+# the two steps back to back. Then add their trusted publishers.
 #
 # The run publishes nothing when a version is already on the registry, so a
 # re-run after a partial failure is safe.
@@ -80,13 +86,22 @@ jobs:
 
       - run: npm ci
 
+      # The deck.gl bundle is committed, and packed into @cngeo/maplibre as it
+      # is. A release must not ship one that differs from its own source.
+      - name: Check the committed deck.gl bundle against a fresh build
+        run: npm run check:deck
+
       - run: npm test
 
       - name: Verify the documentation snippets against live catalogs
         run: npm run verify:docs
 
-      # @cngeo/spec first. The other ten declare it as a dependency, so it has
-      # to resolve from the registry before they go up.
+      # @cngeo/spec first. The other twelve declare it as a dependency, so it
+      # has to resolve from the registry before they go up. The same goes for
+      # extract-core before stac, and timeline before maplibre. A unit test
+      # (packages/spec/test/release-order.test.js) reads this list and every
+      # package.json, and fails when a package is missing from it or comes
+      # before something it depends on.
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ''
@@ -95,9 +110,9 @@ jobs:
           set -euo pipefail
           unset NODE_AUTH_TOKEN
 
-          order="spec geocoder-core upload-core extract-core maplibre openlayers
-                 raster-core format-gpkg format-shapefile format-flatgeobuf
-                 format-extras"
+          order="spec geocoder-core upload-core extract-core timeline stac
+                 maplibre openlayers raster-core format-gpkg format-shapefile
+                 format-flatgeobuf format-extras"
 
           for pkg in $order; do
             dir="packages/$pkg"

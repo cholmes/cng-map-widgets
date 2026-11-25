@@ -58,4 +58,12 @@ jobs:
           duckdb -c "INSTALL spatial; LOAD spatial; select 'duckdb + spatial ok';"
 
       - run: npm ci
+      # packages/maplibre/vendor/deck-stack.js is the one built file in the
+      # repository, and it is committed (the packages are served as raw files
+      # from GitHub Pages and jsDelivr, where a build artifact would be
+      # missing). This rebuilds it from the lockfile and fails if the
+      # committed copy differs: a dependency bump without a rebuild, or a
+      # hand edit. Offline -- it reads node_modules only.
+      - name: Check the committed deck.gl bundle against a fresh build
+        run: npm run check:deck
       - run: npm test
