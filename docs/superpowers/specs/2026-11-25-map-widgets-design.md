@@ -136,10 +136,21 @@ Skip: `@geoarrow/deck.gl-layers` (pulls a second deck.gl 9.3), `maplibre-gl-rast
   unsound, rasters stay on top and the control says so.
 - **Renderers** by `kind`: `pmtiles-vector` (the `style`-role asset, default role wins; fallback style by
   geometry type from the archive's `vector_layers`), `cog`, `geojson`.
-- **`LayerControl`** (`IControl`): toggle, opacity, reorder (up/down buttons as the accessible baseline;
-  drag via `sortablejs` only if cheap), remove, zoom-to, attribution, and an **Add** button opening
-  registered add-providers (paste-a-URL now; catalog search in Phase 3). Reuse the `--cng-*` tokens,
-  `injectCssOnce` and compact attribution from `packages/maplibre/src/geocoder-control.js`. Legend model:
+- **`LayerControl`** (`IControl`): **decided 2026-11-25 after Gate B — wrap
+  `maplibre-gl-layer-control` 0.18.3, do not build our own.** It already provides toggle, opacity,
+  drag-reorder, remove, zoom-to and a deck.gl adapter (5 of 7 requirements in
+  `experiments/e12-deck-bundle/RESULTS.md`). Ours to add:
+  - a `CustomLayerAdapter` over `LayerManager`, with `onLayerReorder` translated into
+    `LayerManager.move` (deck layers are not in the style, so the control only notifies);
+  - an override stylesheet mapping its classes onto the `--cng-*` tokens, with dark mode;
+  - a keyboard shim: focusable, operable context-menu items, a name for the checkbox, and a keyboard
+    path for reordering;
+  - an **Add** button opening registered add-providers (paste-a-URL now; catalog search in Phase 3),
+    and attribution, reusing `injectCssOnce` and the compact attribution from
+    `packages/maplibre/src/geocoder-control.js`.
+  Load it through a loader seam with an exact pinned URL, like every other third-party module. Draft the
+  theming and keyboard fixes as upstream contributions; **do not open them without Chris's go-ahead.**
+  Verify that an order set by the host is reflected back in its list (untested in Gate B). Legend model:
   `portolan-browser/src/components/maps/LayerControl.vue`.
 - Example `examples/layers-demo/` with `verify.mjs`.
 

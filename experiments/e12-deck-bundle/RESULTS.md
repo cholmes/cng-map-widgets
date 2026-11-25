@@ -203,3 +203,10 @@ the rule anticipated, so both readings are recorded for Chris to choose:
 Either way the `LayerManager` (the ordered stack and its two executors) is
 ours; the question is only whether the panel that drives it is this control
 or a small one of our own.
+
+**Decision (Chris, 2026-11-25): adopt it, with a wrapper.** Phase 1 uses
+`maplibre-gl-layer-control` and adds an override stylesheet (the `--cng-*`
+tokens and dark mode) and a keyboard shim for its context menu and
+reordering, and offers both fixes upstream. This sets aside the plan's
+all-seven rule on purpose: the five functional requirements pass, and the two
+gaps are ones a wrapper can close.
