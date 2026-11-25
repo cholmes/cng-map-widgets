@@ -14,6 +14,8 @@
 // `source` would reopen the file.
 
 import { CngError } from '@cngeo/spec';
+import { registerKnownProjections } from '../projections.js';
+import { decodePoolFor } from '../decode-pool.js';
 
 /** @param {import('../layer-manager.js').RendererContext} ctx */
 export function cogRenderer(ctx) {
@@ -21,10 +23,19 @@ export function cogRenderer(ctx) {
   const url = ctx.spec.source.url;
   /** @type {any} */
   let COGLayer = null;
+  /** @type {object|undefined} */
+  let pool;
 
   return {
     async add() {
-      ({ COGLayer } = await ctx.deck());
+      const deck = await ctx.deck();
+      // Both before the first layer exists, because a layer opens its file
+      // as soon as deck.gl has it: the CRS of a NAIP or OpenAerialMap scene
+      // must already resolve locally (projections.js), and the pool must
+      // already be one this page can run (decode-pool.js).
+      registerKnownProjections(deck);
+      pool = await decodePoolFor(deck);
+      ({ COGLayer } = deck);
     },
     remove() {
       /* nothing of its own on the map: the manager rebuilds the overlay's layer list */
@@ -40,6 +51,9 @@ export function cogRenderer(ctx) {
           visible: state.visible,
           opacity: state.opacity,
           beforeId,
+          // The same object every time: one pool for the page, and no
+          // changed prop for deck.gl to react to.
+          ...(pool ? { pool } : {}),
           // A tile that fails (a 403, a truncated file) should not take the
           // layer down or go unseen: say so on the layer.
           onTileError: (err) => ctx.note(`Some of this image could not be loaded: ${err?.message ?? err}`),

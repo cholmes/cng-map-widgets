@@ -24,7 +24,7 @@ Gate A of [`docs/superpowers/specs/2026-11-25-map-widgets-design.md`](../../docs
 | deck.gl-raster, deck.gl-geotiff, geotiff | 0.10.0 |
 | @loaders.gl/mvt | 4.5.5 |
 | proj4 | 2.22.0 |
-| Bundle size | **1,495,266 bytes raw, 446,204 bytes gzip -9** |
+| Bundle size | **1,495,266 bytes raw, 446,204 bytes gzip -9** (as measured here; rebuilt in Phase 2 with `registerProjection`, `PROJECTION_REGISTRY` and `epsgResolver` exported: 1,495,398 / 446,265, bundle `71cdc8fec67c…`) |
 | Packages in the bundle | 49, listed with licence texts in `deck-stack.js.NOTICES.txt` (58 KB) |
 | Reproducible | on this machine: `--check` rebuilds all three outputs to the same SHA-256 (bundle `d0e7a002e25e…`). Not yet shown across machines or Node versions |
 | Copies of `@deck.gl/core` / `@luma.gl/core` | one each (`npm ls`; one module graph in, one file out). There is no runtime assertion of this yet |

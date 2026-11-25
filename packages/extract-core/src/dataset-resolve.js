@@ -179,6 +179,16 @@ function deriveSource(collection, assets, originalSource, columns) {
     dataAssets.find((a) => !a.type && /\.(parquet|pq)$/i.test(a.href ?? ''));
 
   if (!parquetAsset) {
+    // The FALLBACK, only when the collection has no data parquet of its own:
+    // a STAC item table published as one file -- a `collection-mirror` asset
+    // on a collection that is not partitioned (OpenAerialMap, whose data is
+    // imagery). Its item index is then what there is to read. It is plain
+    // parquet -- deliberately not `stac-geoparquet`, whose enumeration treats
+    // a mirror as a LIST of partition files and would read every item as a
+    // part. A collection that publishes a data parquet AND a mirror keeps
+    // resolving to its data, as it always did.
+    const itemTable = assets.find((a) => (a.roles ?? []).includes('collection-mirror') && /parquet/i.test(`${a.type ?? ''} ${a.href ?? ''}`));
+    if (itemTable?.href) return { kind: 'parquet', url: itemTable.href };
     const foundTypes = [...new Set(assets.map((a) => a.type).filter(Boolean))];
     throw new CngError(
       foundTypes.some((t) => RASTER_ZARR_TYPES.test(t))
@@ -203,6 +213,10 @@ function deriveTable(collection, columns) {
   const geometryColumn = collection['table:primary_geometry'] ?? geoparquetMeta?.primary_column ?? 'geometry';
   const bbox = deriveCovering(geoparquetMeta, columns, geometryColumn);
   const timeColumn = deriveTimeColumn(columns);
+  const names = new Set((columns ?? []).map((c) => c?.name));
+  // STAC items that cover a span carry it in these two columns, often with a
+  // null `datetime`. Declaring them is what lets a time filter match by span.
+  const timeInterval = names.has('start_datetime') && names.has('end_datetime') ? { start: 'start_datetime', end: 'end_datetime' } : undefined;
   const crs = geoparquetMeta?.columns?.[geometryColumn]?.crs ? 'OGC:CRS84' : undefined;
 
   const hasAnything = columns || collection['table:row_count'] !== undefined || bbox.kind !== 'none';
@@ -214,6 +228,7 @@ function deriveTable(collection, columns) {
     crs: crs ?? 'OGC:CRS84',
     bbox,
     timeColumn,
+    ...(timeInterval ? { timeInterval } : {}),
     rowCount: collection['table:row_count'],
     columns,
   };

@@ -43,6 +43,10 @@ export {
   clearDeckModules,
   deckSupport,
 } from './deck-loader.js';
+export { utmDefinition, registerKnownProjections, KNOWN_UTM_CODES } from './projections.js';
+export { decodePoolFor, canStartBlobWorker } from './decode-pool.js';
+export { ImagerySearchControl, FOOTPRINTS_SOURCE, FOOTPRINTS_FILL, FOOTPRINTS_LINE } from './imagery-search-control.js';
+export { createImagerySearchModel, footprintsGeoJson, areaFromBounds, whereFromFilters, statusOf, defaultTimeWindow } from './imagery-search-model.js';
 export {
   createDrawTool,
   rectangleRingFromCorners,

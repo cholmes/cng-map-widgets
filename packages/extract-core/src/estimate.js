@@ -6,6 +6,7 @@ import { CngError } from '@cngeo/spec';
 import { resolveDataset } from './dataset-resolve.js';
 import { enumeratePartitions, partitionPruneCascade } from './partitions.js';
 import { openParquetFile } from './parquet-io.js';
+import { raceAbort, partListingKey } from './plan-cache.js';
 import { pruneRowGroupsByBBox, pruneRowGroupsByTime, pruneRowGroupsByWhere, readBytesForRowGroups, coveringPaths, avgColumnBytesPerRow } from './prune.js';
 import { resolveOutputColumns, resolveReadColumns, geometryNeededForFilter } from './columns.js';
 import { effectiveCeiling, requirementsOf } from './ceiling.js';
@@ -55,11 +56,28 @@ function topLevelSchemaColumns(schema) {
     }
     return size;
   }
+  /** Names of the direct children of the group at `schema[index]`. */
+  function childNames(index) {
+    const names = [];
+    let at = index + 1;
+    for (let seen = 0; seen < (schema[index].num_children ?? 0); seen++) {
+      names.push(schema[at].name);
+      at += subtreeSize(at);
+    }
+    return names;
+  }
   const out = [];
   let i = 1; // schema[0] is the synthetic root
   while (i < schema.length) {
     const el = schema[i];
-    out.push({ name: el.name, isStruct: (el.num_children ?? 0) > 0 });
+    // A LIST or MAP is a group too (`num_children > 0`), but not a struct:
+    // its one child is the repeated wrapper, not a field.
+    const isGroup = (el.num_children ?? 0) > 0;
+    // `isStruct` keeps its long-standing meaning here ("any group"), which
+    // the covering inference relies on; `isPlainStruct` is the strict one.
+    const container = (t) => t === 'LIST' || t === 'MAP' || t === 'MAP_KEY_VALUE';
+    const isPlainStruct = isGroup && !container(el.converted_type) && !container(el.logical_type?.type);
+    out.push({ name: el.name, isStruct: isGroup, isPlainStruct, fields: isPlainStruct ? childNames(i) : [] });
     i += subtreeSize(i);
   }
   return out;
@@ -87,6 +105,16 @@ export const DEFAULT_THROUGHPUT_BYTES_PER_SECOND = 10_000_000;
 /** Seconds above which `finalizeEstimate` raises `slow-download`. */
 export const SLOW_DOWNLOAD_SECONDS = 120;
 
+/** Can a column of this parquet type be read as a point in time? @param {any} el A thrift `SchemaElement`. */
+function isTimeLike(el) {
+  if (!el) return false;
+  const logical = el.logical_type?.type;
+  const converted = el.converted_type;
+  if (logical === 'TIMESTAMP' || logical === 'DATE' || converted === 'TIMESTAMP_MILLIS' || converted === 'TIMESTAMP_MICROS' || converted === 'DATE') return true;
+  if (el.type === 'INT96') return true; // the legacy timestamp
+  return el.type === 'BYTE_ARRAY' && (logical === 'STRING' || converted === 'UTF8');
+}
+
 /** Guess a minimal `DatasetTable` from a parquet schema when the descriptor didn't declare one. @param {{ schema: readonly { name: string, num_children?: number }[] }} metadata */
 export function inferTableFromSchema(metadata) {
   const topLevel = topLevelSchemaColumns(metadata.schema);
@@ -94,11 +122,25 @@ export function inferTableFromSchema(metadata) {
   const geometryColumn = names.includes('geometry') ? 'geometry' : names[names.length - 1];
   const bboxCol = topLevel.find((c) => c.name === 'bbox');
   const bbox = bboxCol?.isStruct ? { kind: 'struct', column: 'bbox' } : { kind: 'none' };
+  // STAC's own column names for time. Without this a bare item table (NAIP's,
+  // OpenAerialMap's) had no time column at all, and a time filter on it was
+  // silently not applied (E14, conclusion 5).
+  // By name AND type: a `datetime` that is a bare integer could be seconds,
+  // milliseconds or a year, and guessing wrong returns nothing with no
+  // warning. A timestamp, a date or a string (ISO 8601) can be compared.
+  const holdsTime = (name) => isTimeLike(metadata.schema.find((el, i) => i > 0 && el.name === name));
+  const timeColumn = names.includes('datetime') && holdsTime('datetime') ? 'datetime' : undefined;
+  const timeInterval =
+    names.includes('start_datetime') && names.includes('end_datetime') && holdsTime('start_datetime') && holdsTime('end_datetime')
+      ? { start: 'start_datetime', end: 'end_datetime' }
+      : undefined;
   return {
     geometryColumn,
     geometryEncoding: 'WKB',
     crs: 'OGC:CRS84',
     bbox,
+    ...(timeColumn ? { timeColumn } : {}),
+    ...(timeInterval ? { timeInterval } : {}),
     columns: topLevel.map((c) => ({ name: c.name, type: c.isStruct ? 'struct' : 'unknown' })),
   };
 }
@@ -112,6 +154,41 @@ export function inferTableFromSchema(metadata) {
  * @param {import('./types.js').FilterSpec} filter
  * @param {import('./types.js').DownloadCoreOptions} options
  */
+/**
+ * The files a RESOLVED source is made of, and what finding that out cost.
+ *
+ * With a `cache` the listing is shared and kept (plan-cache.js). It is then
+ * loaded without the caller's signal, so a superseded search still leaves it
+ * for the next one, and `requests` counts it only for the call that paid.
+ * @param {any} src A resolved `DatasetDescriptor.source` (never `portolan-collection`).
+ * @param {{ fetch: typeof fetch, signal?: AbortSignal, cache?: import('./plan-cache.js').PlanCache }} options
+ * @returns {Promise<{ parts: import('./types.js').DatasetPart[], requests: number }>}
+ */
+export async function listParts(src, options) {
+  if (src.kind === 'parquet') return { parts: [{ url: src.url }], requests: 0 };
+  if (src.kind === 'parquet-set') return { parts: src.parts ?? src.urls.map((url) => ({ url })), requests: 0 };
+  // A source that lists its own parts costs nothing to enumerate, and has no
+  // glob or enumeration to tell it from another such source: never cached.
+  if (!options.cache || (Array.isArray(src.parts) && src.parts.length > 0)) return enumeratePartitions(src, { fetch: options.fetch, signal: options.signal });
+  let listedHere = false;
+  const shared = options.cache.parts(partListingKey(src), (loadSignal) => {
+    listedHere = true;
+    return enumeratePartitions(src, { fetch: options.fetch, signal: loadSignal });
+  });
+  const en = await raceAbort(shared, options.signal, "listing the dataset's parts");
+  return { parts: en.parts, requests: listedHere ? en.requests : 0 };
+}
+
+/**
+ * A file's real top-level columns, from its footer. `struct` columns carry
+ * the names of their direct fields.
+ * @param {{ schema: readonly { name: string, num_children?: number }[] }} metadata
+ * @returns {{ name: string, struct: boolean, fields?: string[] }[]}
+ */
+export function schemaColumns(metadata) {
+  return topLevelSchemaColumns(metadata.schema).map((c) => ({ name: c.name, struct: c.isPlainStruct, ...(c.isPlainStruct ? { fields: c.fields } : {}) }));
+}
+
 export async function planRequest(dataset, area, filter, options = {}) {
   const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
   const signal = options.signal;
@@ -136,18 +213,9 @@ export async function planRequest(dataset, area, filter, options = {}) {
   }
 
   // --- partition / part enumeration -------------------------------------
-  const src = resolved.source;
-  /** @type {import('./types.js').DatasetPart[]} */
-  let parts;
-  if (src.kind === 'parquet') {
-    parts = [{ url: src.url }];
-  } else if (src.kind === 'parquet-set') {
-    parts = src.parts ?? src.urls.map((url) => ({ url }));
-  } else {
-    const en = await enumeratePartitions(src, { fetch: fetchImpl, signal });
-    parts = en.parts;
-    requests += en.requests;
-  }
+  const listing = await listParts(resolved.source, { fetch: fetchImpl, signal, cache: options.cache });
+  const parts = listing.parts;
+  requests += listing.requests;
 
   const areaBBoxes = area ? area.bboxes : null;
   const { selected: selectedParts, stages: partStages } = partitionPruneCascade(
@@ -164,8 +232,8 @@ export async function planRequest(dataset, area, filter, options = {}) {
   let allRowGroupsTotal = 0;
   const perPart = [];
   for (const part of selectedParts) {
-    const handle = await openParquetFile(part.url, fetchImpl, { signal });
-    requests += 1;
+    const handle = await openParquetFile(part.url, fetchImpl, { signal, cache: options.cache, requestTimeoutMs: options.requestTimeoutMs });
+    if (!handle.fromCache) requests += 1;
     if (!table) {
       table = inferTableFromSchema(handle.metadata);
       geometryColumn = table.geometryColumn;
@@ -173,7 +241,7 @@ export async function planRequest(dataset, area, filter, options = {}) {
     }
     allRowGroupsTotal += handle.rowGroups.length;
     const bboxPrune = pruneRowGroupsByBBox(handle.rowGroups, covering, areaBBoxes, geometryColumn);
-    const timePrune = pruneRowGroupsByTime(bboxPrune.selected, table.timeColumn ?? null, filter.time);
+    const timePrune = pruneRowGroupsByTime(bboxPrune.selected, table.timeColumn ?? null, filter.time, table.timeInterval ?? null);
     // `where[]` pushdown runs last in the row-group cascade: it is the
     // cheapest stage to report honestly (statistics it cannot decide
     // simply keep the row group) and it narrows what the bbox/time stages
@@ -196,7 +264,7 @@ export async function planRequest(dataset, area, filter, options = {}) {
   // without it. See `columns.js`'s `geometryNeededForFilter` doc comment
   // for the exact rule and the design decision behind it.
   const needsGeometryForFilter = geometryNeededForFilter(area, covering, filter.spatial);
-  const readColumns = resolveReadColumns(outputColumns, filter, table.timeColumn ?? null, bboxCols, geometryColumn, needsGeometryForFilter);
+  const readColumns = resolveReadColumns(outputColumns, filter, table.timeColumn ?? null, bboxCols, geometryColumn, needsGeometryForFilter, table.timeInterval ?? null);
 
   const rowGroupBboxStage = {
     stage: 'row-group-bbox',
@@ -213,7 +281,11 @@ export async function planRequest(dataset, area, filter, options = {}) {
     stage: 'row-group-stats',
     before: perPart.reduce((n, p) => n + p.timePrune.stage.before, 0),
     after: perPart.reduce((n, p) => n + p.timePrune.stage.after, 0),
-    basis: filter.time ? `time ${table.timeColumn ?? '(none declared)'} window` : 'no time filter',
+    basis: !filter.time
+      ? 'no time filter'
+      : table.timeInterval
+        ? `time span ${table.timeInterval.start}…${table.timeInterval.end} overlaps the window`
+        : `time ${table.timeColumn ?? '(none declared)'} window`,
   };
   const rowGroupWhereStage = {
     stage: 'row-group-where',

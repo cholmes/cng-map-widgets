@@ -448,6 +448,17 @@ export class LayerManager {
     return mods;
   }
 
+  /**
+   * The MapLibre layer id the top of the stack sits just below (the first
+   * label layer by default), or `undefined` when the stack is on top of
+   * everything. For something another control draws that belongs just above
+   * the stack: `map.addLayer(layer, manager.anchor())`.
+   * @returns {string|undefined}
+   */
+  anchor() {
+    return this._anchor();
+  }
+
   /** The layer id the top of the stack sits just below; `undefined` means on top of everything. */
   _anchor() {
     if (this._beforeId === null) return undefined;
@@ -456,9 +467,37 @@ export class LayerManager {
     return layers.find((l) => l.type === 'symbol' && !String(l.id).startsWith('cng-layer-'))?.id;
   }
 
+  /**
+   * Declare MapLibre style layers that belong to someone else and must stay
+   * just above the stack, under `anchor()` -- bottom first. The imagery
+   * search's scene footprints are the case: outlines that have to stay
+   * visible over an image that was just added.
+   *
+   * It has to be the manager that places them. deck.gl puts its layer group
+   * DIRECTLY below the layer a raster's `beforeId` names, and moves it back
+   * there on every update, so anything another control slips in between is
+   * covered again. Declared here, the stack is slotted under the lowest of
+   * them instead.
+   *
+   * A layer the map does not have is skipped; declare again once it exists
+   * (after `map.setStyle()`, say). `[]` lets go.
+   * @param {string[]} ids
+   */
+  setTopLayers(ids) {
+    this._topLayers = Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : [];
+    if (!this._destroyed) this._applyOrder();
+  }
+
   /** Make the map's draw order agree with the list. See the header for the rule. */
   _applyOrder() {
     let slot = this._anchor();
+    // Guests first, top down, each just under the last: they end directly
+    // below the anchor, in the order given, and the stack goes under them.
+    const guests = (this._topLayers ?? []).filter((id) => this._map.getLayer(id));
+    for (let i = guests.length - 1; i >= 0; i--) {
+      this._map.moveLayer(guests[i], slot);
+      slot = guests[i];
+    }
     for (let i = this._entries.length - 1; i >= 0; i--) {
       const entry = this._entries[i];
       if (entry.status !== 'ready') continue;

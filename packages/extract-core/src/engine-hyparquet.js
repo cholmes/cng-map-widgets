@@ -3,11 +3,11 @@
 // opt-in).
 
 import { CancelledError } from '@cngeo/spec';
-import { planRequest } from './estimate.js';
-import { readRows } from './parquet-io.js';
+import { planRequest, schemaColumns } from './estimate.js';
+import { readRows, isFileChanged } from './parquet-io.js';
 import { rowMatchesArea } from './spatial.js';
 import { evaluateWhere } from './predicate.js';
-import { coveringPaths, timeRowPredicate } from './prune.js';
+import { coveringPaths, timeRowPredicate, timeSpanPredicate } from './prune.js';
 import { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 
 export const HYPARQUET_ENGINE_ID = 'hyparquet';
@@ -33,6 +33,12 @@ export const HYPARQUET_ENGINE_ID = 'hyparquet';
  * `runHyparquetPlan` for the end-to-end before/after.
  */
 export const DEFAULT_MAX_CONCURRENT_REQUESTS = 12;
+
+/** How many times a failed row-group read is made again before the run fails. `ctx.readRetries` overrides it. */
+export const DEFAULT_READ_RETRIES = 1;
+
+/** The wait before the first retry of a failed read; each further one waits three times as long. */
+const READ_RETRY_BASE_MS = 250;
 
 /** @returns {import('./types.js').Engine} */
 export function createHyparquetEngine() {
@@ -206,21 +212,44 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
   // `resolveReadColumns` added to the read set, and without one there is
   // no cell to test (`finalizeEstimate` already warns `no-statistics`).
   const timeColumn = plan.table?.timeColumn ?? null;
-  const timeOk = timeColumn ? timeRowPredicate(filter.time) : null;
+  // A table whose rows carry start/end columns is tested by SPAN overlap
+  // (its instant is often null, which the single-column test rejects).
+  const timeInterval = plan.table?.timeInterval ?? null;
+  const spanOk = timeInterval ? timeSpanPredicate(filter.time, { instant: timeColumn, ...timeInterval }) : null;
+  const timeOk = !timeInterval && timeColumn ? timeRowPredicate(filter.time) : null;
+
+  // Whether a row's bbox can be known at all from what this plan reads. It
+  // cannot when the geometry was dropped from the output, there is no area
+  // to need it, and no covering columns stand in for it. Then "no bbox" says
+  // nothing about the row, and must not be read as "has no geometry": that
+  // dropped EVERY row of such a request.
+  const rowCovering = coveringPaths(covering);
+  // A `struct` covering is often only INFERRED from a column named `bbox`,
+  // and a STAC-GeoParquet bbox may be a LIST (Sentinel-2's is): read, and no
+  // use for a per-row box. The file's own schema settles which it is.
+  const firstSchema = perPart[0]?.handle?.metadata?.schema;
+  const structIsReal =
+    covering?.kind !== 'struct' || !firstSchema || (schemaColumns({ schema: firstSchema }).find((c) => c.name === covering.column)?.struct ?? true);
+  const bboxKnowable =
+    !readColumns ||
+    readColumns.includes(geometryColumn) ||
+    Boolean(rowCovering && !rowCovering.native && structIsReal && bboxColumnNamesOf(covering).every((c) => readColumns.includes(c)));
+  const requireBBox = Boolean(area) || bboxKnowable;
 
   /** The per-row filter the old sequential loop ran inline. Pure; no awaits. */
   function matchRows(decoded) {
     const cache = new WeakMap();
     const matched = [];
     for (const row of decoded) {
-      const featureBBox = rowBBox(row, covering, geometryColumn, cache);
-      if (!featureBBox) continue; // no geometry at all: can never match a spatial filter
+      const featureBBox = requireBBox ? rowBBox(row, covering, geometryColumn, cache) : null;
+      if (requireBBox && !featureBBox) continue; // no geometry at all: can never match a spatial filter
       if (area) {
         const featureGeometry = filter.spatial.mode === 'intersects' ? decodedGeometry(row, geometryColumn, cache) : undefined;
         const ok = rowMatchesArea({ featureBBox, featureGeometry }, area, filter.spatial);
         if (!ok) continue;
       }
       if (timeOk && !timeOk(row[timeColumn])) continue;
+      if (spanOk && !spanOk(row)) continue;
       if (!evaluateWhere(filter.where, row)) continue;
       matched.push(row);
       // No single row group can contribute more than `limit` rows to the
@@ -229,6 +258,49 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
       if (limit !== undefined && matched.length >= limit) break;
     }
     return matched;
+  }
+
+  /**
+   * Read one row group, trying again when the read fails.
+   *
+   * A run is many range requests -- a Sentinel-2 scene search is about 80 --
+   * and one of them failing used to fail all of it: seen live, two searches
+   * in ten lost a single request to a transport error and, with it, every
+   * scene already found. A row-group read is idempotent, so it is made
+   * again (`ctx.readRetries` times, default once) before the run gives up.
+   *
+   * Not retried: a cancellation, and a file that changed under a kept
+   * footer (parquet-io.js) -- reading that again cannot help; it has to be
+   * re-planned.
+   */
+  const readRetries = Math.max(0, Math.trunc(ctx.readRetries ?? DEFAULT_READ_RETRIES));
+  async function readRowGroup(handle, range) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await readRows(handle, range);
+      } catch (err) {
+        if (attempt >= readRetries || signal?.aborted || stopReads || err?.code === 'CANCELLED' || isFileChanged(err)) throw err;
+        // Not at once: a host that just failed a request (seen live: HTTP
+        // 520, then 520 again on the immediate retry) needs a moment.
+        // 250 ms, then 750 ms, then 2.25 s ... and the wait ends the instant
+        // the run is cancelled or no longer wants this read.
+        await retryPause(READ_RETRY_BASE_MS * 3 ** attempt);
+        if (signal?.aborted) throw new CancelledError();
+        if (stopReads) throw err;
+      }
+    }
+  }
+
+  function retryPause(ms) {
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      signal?.addEventListener('abort', done, { once: true });
+    });
   }
 
   /**
@@ -266,7 +338,7 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
         const i = cursor;
         cursor = i + 1;
         const { handle, rg } = tasks[i];
-        const decoded = await readRows(handle, { rowStart: rg.rowStart, rowEnd: rg.rowEnd, columns: readColumns });
+        const decoded = await readRowGroup(handle, { rowStart: rg.rowStart, rowEnd: rg.rowEnd, columns: readColumns });
         results[i] = {
           matched: matchRows(decoded),
           scanned: decoded.length,
@@ -337,7 +409,10 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
       let matched = slot.matched;
       if (limit !== undefined && rows + matched.length > limit) matched = matched.slice(0, Math.max(0, limit - rows));
       if (matched.length > 0) {
-        await onBatch(buildBatch(matched, outputColumns, geometryColumn));
+        // `rowFormat: 'objects'` (queryRows) takes the matched rows as they
+        // were read -- every READ column, geometry still WKB -- instead of
+        // the columnar batch a format writer wants. No writer sets it.
+        await onBatch(ctx.rowFormat === 'objects' ? { rows: matched.length, objects: matched } : buildBatch(matched, outputColumns, geometryColumn));
         rows += matched.length;
       }
 
@@ -373,6 +448,12 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
   if (signal?.aborted) throw new CancelledError();
 
   return { rows, readBytes, requests };
+}
+
+/** The top-level columns a row-level covering is read from. */
+function bboxColumnNamesOf(covering) {
+  if (covering.kind === 'struct') return [covering.column];
+  return [covering.xmin, covering.ymin, covering.xmax, covering.ymax];
 }
 
 function sumColumnBytes(rg, columnNames) {

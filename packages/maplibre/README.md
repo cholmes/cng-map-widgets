@@ -407,6 +407,26 @@ never loads it. `registerLayerRenderer(kind, factory)` adds or replaces a render
 After `map.setStyle()`, which drops every added layer, the stack is put back
 in the same order and state.
 
+**Projections are local.** A COG is reprojected on the GPU from whatever CRS
+it declares, and deck.gl-raster looks that CRS up by EPSG code: from proj4's
+own definitions when it has one (4326, 3857, the WGS84 UTM zones), and from
+`https://epsg.io/<code>.json` otherwise. Before its first layer the `cog`
+renderer therefore calls `registerKnownProjections(deck)`, which defines the
+UTM families imagery is published in — NAD83 (269xx), NAD83(2011)
+(6328–6348), ETRS89 (258xx), SIRGAS 2000 (31965–31985), GDA94 (283xx),
+GDA2020 (78xx) — so a NAIP or OpenAerialMap scene opens without that request
+(measured: one request to epsg.io before, none after). `utmDefinition(epsg)`
+gives the proj4 string, or `null`. A CRS outside those families still goes to
+epsg.io; to avoid that, define it yourself before adding the layer —
+`deck.proj4.defs('EPSG:2154', '…')`, or `deck.registerProjection(2154, wktOrProjjson)`.
+
+**Decoding survives a strict CSP.** Tiles are decompressed in web workers,
+which the prebuilt bundle starts from a Blob URL. A page whose
+Content-Security-Policy does not allow `blob:` in `worker-src` cannot start
+one. That is probed once per page (`canStartBlobWorker()`); where it fails,
+layers decode on the main thread instead — slower, and drawn, rather than
+"ready" and blank.
+
 ### `new LayerControl({ manager, addProviders?, basemapStyleUrl?, collapsed? })`
 
 The panel: toggle, opacity, drag to reorder, and a menu per row (right-click,
@@ -425,6 +445,85 @@ arrow keys, Enter and Escape); and it has an **Add** button.
 `urlAddProvider({ layersFromCollection })` accepts a `collection.json`,
 `.pmtiles`, `.tif` or `.geojson` URL. Reading a STAC collection is passed in
 because this package does not import `@cngeo/stac`.
+
+### `new ImagerySearchControl({ search, manager, area?, time?, limit?, collapsed? })`
+
+Find imagery scenes and add them to the map. A panel with where to search,
+a date range, the property filters the collection offers, an order and
+result cards; and on the map, the footprints of what was found.
+
+```js
+import { imageryProfile, ImagerySearch } from '@cngeo/stac';
+import { LayerManager, ImagerySearchControl } from '@cngeo/maplibre';
+
+const search = new ImagerySearch(imageryProfile(collection, { baseUrl: collectionUrl }));
+const manager = new LayerManager(map);
+map.addControl(new ImagerySearchControl({ search, manager }), 'top-left');
+```
+
+`search` is injected — an `ImagerySearch` from `@cngeo/stac`, or anything with
+its `search()` and `layerSpecFor()` — because this package does not import
+that one. The host owns it: call `search.close()` when you are done with it.
+
+- **Where.** "This view" searches the map's bounds (a view of the whole world
+  searches everywhere; one across the antimeridian searches both sides). Pass
+  `area: () => Area | null` — the area your geocoder or draw tool holds — and
+  the panel also offers "Selected area".
+- **When.** Two date inputs; "to" is inclusive. `time: { start, end }`
+  (`YYYY-MM-DD`) sets them initially. With no `time`, a partitioned archive
+  starts on its last 30 days (`defaultTimeWindow(profile)`): a search with no
+  dates has to plan every part of it, which on Sentinel-2 is a footer of
+  about 8 MB per year. A single-file collection starts with no dates.
+  `time: null` means none, whatever the collection.
+- **Filters and order** are generated from `profile.filters`: a number input
+  for a `max`/`min` filter, a menu for an `enum` whose values the collection
+  lists, two inputs for a `range`. **Null means unknown:** a numeric filter
+  keeps a scene that has no value in that column — a scene whose cloud cover
+  was never recorded is not a cloudy scene. Choosing a category does not.
+  Changing the order reorders the list at once (by searching again only when
+  some matches are not shown).
+- **Results** stream in as they are read, then settle into the sorted answer.
+  The status line says what is shown out of what matched, and unfolds into
+  how the search ran: the files and row groups read out of how many, and
+  each pruning stage.
+- **Add to map** hands the scene to the `LayerManager` as a `cog` layer in
+  the collection's group. A scene that cannot be added says why on its card.
+- **Footprints** are one GeoJSON source and two style layers
+  (`cng-layer-imagery-footprints--fill` / `--line`), kept just above the
+  layer stack and below the labels — so they stay visible over an image you
+  add. Hovering a card highlights its footprint, and the reverse. Only the
+  hovered footprint is filled: scenes overlap, and a faint fill on each
+  stacks into solid colour.
+
+`control.search()` runs a search programmatically; `control.model` is the
+state. The control survives `map.setStyle()` (its footprints are put back)
+and being removed and added again, as a React wrapper does to one instance;
+it makes a new model then, so read `control.model` rather than keeping a
+reference to it.
+
+Not tested in `npm test`: the panel's DOM. There is no DOM in the unit
+suite, so everything the panel decides lives in the model (`statusOf`,
+`whereFromFilters`, `defaultTimeWindow`, add, order), which is unit-tested,
+and the panel itself is checked in a real browser by
+`examples/imagery-search/verify.mjs`.
+
+Everything from a remote document reaches the panel as text; a thumbnail is
+shown only from an `http(s)` URL, lazily.
+
+**Without the panel.** `createImagerySearchModel({ search, manager })` is the
+same state with no DOM — `setArea`, `setTime`, `setFilter`, `setSort`, `run`,
+`cancel`, `hover`, `add`, `on('change')`, `destroy` — for a host with its own
+UI. `footprintsGeoJson(scenes, hoveredId)` and `areaFromBounds([w, s, e, n])`
+are exported too.
+
+**Drawing something of your own just above the stack.** Add your style
+layers before `manager.anchor()` (the layer the stack sits below), then
+declare them: `manager.setTopLayers([ids, bottom first])`. The declaration
+matters. deck.gl puts an image's layer group *directly* under whatever it is
+slotted beneath and moves it back there on every update, so a layer you
+merely insert under the labels ends up beneath the next image added. Declared,
+the stack is slotted under your layers instead. Declare again after
+`map.setStyle()`; `setTopLayers([])` lets go.
 
 ### Loaders
 

@@ -143,14 +143,110 @@ export function timeRowPredicate(time) {
 }
 
 /**
+ * The per-row time test for INTERVAL data: rows that carry a start and an end
+ * (STAC's `start_datetime` / `end_datetime`), often with a null instant
+ * (`datetime`). `timeRowPredicate` rejects a null, so on such a table a time
+ * filter matched nothing at all -- OpenAerialMap's item table is exactly this.
+ *
+ * A row's span is `row[start] ?? row[instant]` … `row[end] ?? row[instant]`,
+ * each side falling back on its own. It matches when the span OVERLAPS the
+ * window (STAC API's datetime semantics), under the window's `closed`. A row
+ * with no time at all is rejected; a value that is present but unreadable as
+ * a time is kept ("cannot decide, so do not drop").
+ *
+ * With only `instant` given it agrees with `timeRowPredicate` exactly.
+ * @param {import('./types.js').TimeFilter|undefined} time
+ * @param {{ instant?: string|null, start?: string|null, end?: string|null }} columns
+ * @returns {((row: Record<string, unknown>) => boolean)|null} `null` when there is nothing to test.
+ */
+export function timeSpanPredicate(time, columns) {
+  if (!time || (!time.start && !time.end)) return null;
+  const { instant, start, end } = columns ?? {};
+  if (!instant && !start && !end) return null;
+  const startMs = time.start ? Date.parse(time.start) : -Infinity;
+  const endMs = time.end ? Date.parse(time.end) : Infinity;
+  const closed = time.closed ?? '[)';
+  const cell = (row, column) => (column ? row?.[column] : undefined) ?? null;
+  return (row) => {
+    const rawStart = cell(row, start) ?? cell(row, instant);
+    const rawEnd = cell(row, end) ?? cell(row, instant);
+    if (rawStart === null && rawEnd === null) return false;
+    const s = rawStart === null ? null : toEpochMs(rawStart);
+    const e = rawEnd === null ? null : toEpochMs(rawEnd);
+    if ((rawStart !== null && s === null) || (rawEnd !== null && e === null)) return true;
+    const lo = s ?? e;
+    const hi = e ?? s;
+    const startOk = closed[0] === '[' ? hi >= startMs : hi > startMs;
+    const endOk = closed[1] === ']' ? lo <= endMs : lo < endMs;
+    return startOk && endOk;
+  };
+}
+
+/**
+ * What a row group's statistics say about one time column:
+ *   `{ known: [min, max] }`  usable statistics;
+ *   `'empty'`                the column is entirely null in this group, so no
+ *                            row's span can come from it;
+ *   `'unknown'`              anything else -- no such column, no statistics,
+ *                            values that cannot be read as times.
+ */
+function timeStatsOf(rg, column) {
+  const stats = rg.columns.get(column)?.statistics;
+  if (!stats) return 'unknown';
+  if (stats.min_value === undefined || stats.max_value === undefined || stats.min_value === null || stats.max_value === null) {
+    return stats.null_count !== undefined && Number(stats.null_count) >= rg.numRows ? 'empty' : 'unknown';
+  }
+  const min = toEpochMs(stats.min_value);
+  const max = toEpochMs(stats.max_value);
+  return min === null || max === null ? 'unknown' : { known: [min, max] };
+}
+
+/** Row-group pruning for interval data. Sound for any mix of start/end/instant fallbacks. */
+function pruneRowGroupsByTimeSpan(rowGroups, timeColumn, time, interval) {
+  const before = rowGroups.length;
+  const startMs = time.start ? Date.parse(time.start) : -Infinity;
+  const endMs = time.end ? Date.parse(time.end) : Infinity;
+  const closed = time.closed ?? '[)';
+  const columns = [interval.start, interval.end, ...(timeColumn ? [timeColumn] : [])];
+  const selected = rowGroups.filter((rg) => {
+    const stats = columns.map((c) => timeStatsOf(rg, c));
+    // One column we cannot read is enough: a row's span may come from it.
+    if (stats.includes('unknown')) return true;
+    const known = stats.filter((s) => s !== 'empty').map((s) => s.known);
+    if (!known.length) return true;
+    // Every row's span lies within [smallest minimum, largest maximum] of the
+    // columns it can draw from, whichever fallback each side took.
+    const lo = Math.min(...known.map(([min]) => min));
+    const hi = Math.max(...known.map(([, max]) => max));
+    const startOk = closed[0] === '[' ? hi >= startMs : hi > startMs;
+    const endOk = closed[1] === ']' ? lo <= endMs : lo < endMs;
+    return startOk && endOk;
+  });
+  return {
+    selected,
+    stage: {
+      stage: 'row-group-stats',
+      before,
+      after: selected.length,
+      basis: `time span ${interval.start}…${interval.end}${timeColumn ? ` (or ${timeColumn})` : ''} overlaps [${time.start ?? '-∞'}, ${time.end ?? '+∞'})`,
+    },
+  };
+}
+
+/**
  * Prune row groups by a time column's min/max statistics against a
  * `TimeFilter` window. Stats that are missing or non-comparable leave the
  * row group selected (honest "can't prune" rather than a silent drop).
+ *
+ * With `interval` (a table whose rows carry start/end columns) a group is
+ * dropped only when no row's span can overlap the window.
  * @param {import('./parquet-io.js').RowGroupInfo[]} rowGroups @param {string|null} timeColumn
  * @param {import('./types.js').TimeFilter|undefined} time
+ * @param {{ start: string, end: string }|null} [interval]
  */
-export function pruneRowGroupsByTime(rowGroups, timeColumn, time) {
+export function pruneRowGroupsByTime(rowGroups, timeColumn, time, interval) {
   const before = rowGroups.length;
+  if (time && (time.start || time.end) && interval) return pruneRowGroupsByTimeSpan(rowGroups, timeColumn, time, interval);
   if (!time || !timeColumn) {
     return { selected: rowGroups, stage: { stage: 'row-group-stats', before, after: before, basis: 'no time filter' } };
   }

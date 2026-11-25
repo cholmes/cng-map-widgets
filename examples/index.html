@@ -277,6 +277,30 @@
   </div>
 
   <div class="card">
+    <img class="shot" src="imagery-search/screenshot.png" alt="A map of Nairobi showing a Sentinel-2 image, with a search panel listing scenes by cloud cover, each with a thumbnail and an Add to map button." loading="lazy" />
+    <div class="body">
+      <h3><a href="imagery-search/index.html">imagery-search</a></h3>
+      <p>
+        Find satellite and aerial scenes with no search server: the collection's published
+        STAC-GeoParquet index is read straight from object storage, pruned by the map view, a date
+        range and properties such as cloud cover. Footprints appear on the map; one click adds a
+        scene as a layer. The same page searches Sentinel-2, NAIP and OpenAerialMap, which agree on
+        almost nothing about how they are published.
+      </p>
+      <div class="links">
+        <a href="imagery-search/index.html">Open demo &rarr;</a>
+        <button class="srcbtn" data-src="imagery-search/index.html">View source</button>
+      </div>
+      <div class="pkgs">
+        <span class="pkg">@cngeo/maplibre</span>
+        <span class="pkg">@cngeo/stac</span>
+        <span class="pkg">@cngeo/extract-core</span>
+        <span class="pkg">@cngeo/spec</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
     <img class="shot" src="layers-demo/screenshot.png" alt="A map of Jamaica with a satellite image, parish boundaries and a drawn box, and a layer panel listing all three." loading="lazy" />
     <div class="body">
       <h3><a href="layers-demo/index.html">layers-demo</a></h3>

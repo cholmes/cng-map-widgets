@@ -50,12 +50,18 @@ export function resolveOutputColumns(projection, allColumns, geometryColumn, bbo
  * @param {string[]} bboxColumns
  * @param {string} geometryColumn
  * @param {boolean} [needsGeometryForFilter]
+ * @param {{ start: string, end: string }|null} [timeInterval] Start/end columns of an interval table;
+ *   read, with the instant column, whenever a time filter is set.
  */
-export function resolveReadColumns(outputColumns, filter, timeColumn, bboxColumns, geometryColumn, needsGeometryForFilter = true) {
+export function resolveReadColumns(outputColumns, filter, timeColumn, bboxColumns, geometryColumn, needsGeometryForFilter = true, timeInterval = null) {
   const set = new Set(outputColumns);
   if (outputColumns.includes(geometryColumn) || needsGeometryForFilter) set.add(geometryColumn);
   for (const c of columnsUsedByWhere(filter.where)) set.add(c);
   if (timeColumn && filter.time) set.add(timeColumn);
+  if (timeInterval && filter.time) {
+    set.add(timeInterval.start);
+    set.add(timeInterval.end);
+  }
   for (const c of bboxColumns) set.add(c);
   return [...set];
 }

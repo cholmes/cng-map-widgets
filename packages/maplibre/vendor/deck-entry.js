@@ -28,8 +28,13 @@ export { RasterLayer, RasterTileLayer } from '@developmentseed/deck.gl-raster';
 export * as gpuModules from '@developmentseed/deck.gl-raster/gpu-modules';
 export { DecoderPool, defaultDecoderPool } from '@developmentseed/geotiff';
 
-// CRS definitions for COGs outside the built-in set are registered here.
+// CRS definitions. deck.gl-raster resolves a COG's EPSG code through
+// `epsgResolver`, which answers from this `proj4`'s definitions when it can
+// and asks epsg.io otherwise -- so `../src/projections.js` adds the UTM
+// families to `proj4` up front. `registerProjection` takes WKT or PROJJSON,
+// for a host with a CRS outside them.
 export { default as proj4 } from 'proj4';
+export { registerProjection, PROJECTION_REGISTRY, epsgResolver } from '@developmentseed/proj';
 
 /** Versions baked in at build time: `{ deck, luma, raster, geotiff, loaders, proj4 }`. */
 // eslint-disable-next-line no-undef

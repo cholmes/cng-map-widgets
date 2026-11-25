@@ -158,8 +158,10 @@ Skip: `@geoarrow/deck.gl-layers` (pulls a second deck.gl 9.3), `maplibre-gl-rast
 - *Raster stretch handling* (`renders`, `portolan:render_order`, named above under
   `layersFromCollection`) was **not** ported. A `cog` layer draws with deck.gl-raster's default pipeline,
   which covers display-ready 8-bit imagery; a COG that needs a stretch (single-band Float32, 16-bit
-  reflectance) is reported as an error, not drawn wrong. The port belongs with Phase 2's scene renderer,
-  which needs the same machinery. `LayerSpec.style` is reserved for it.
+  reflectance) is reported as an error, not drawn wrong. `LayerSpec.style` is reserved for it.
+  *(Revised when Phase 2 was planned: Phase 2 adds a scene as an ordinary `cog` layer, so it has no scene
+  renderer to carry this. Stretches and band composites are proposed as their own later piece of work,
+  "imagery rendering". This is the implementer's call, flagged for Chris.)*
 - *The upstream contributions* to `maplibre-gl-layer-control` (theming, keyboard access) have **not been
   drafted**. The wrapper does both jobs from outside. Drafting them is outstanding and opening them
   still needs Chris's go-ahead.
@@ -228,6 +230,33 @@ Skip: `@geoarrow/deck.gl-layers` (pulls a second deck.gl 9.3), `maplibre-gl-rast
   falling back to `new DecoderPool({})`, since otherwise no COG draws at all.
 - Example `examples/imagery-search/` with a collection picker preset to Sentinel-2, NAIP and OpenAerialMap,
   and one `verify.mjs` run per collection.
+
+**Phase 2 as built, 2026-11-25 — where it differs from the above:**
+- *No scene renderer, no stretches.* A found scene is added as an ordinary `cog` layer of its display
+  asset, so none of the `cog.js` ideas listed above (staleness protocol, percentile stretch,
+  thumbnail-first preview, the `cogProjection.js` port) were needed or built. Band composites and 16-bit
+  rasters remain errors. Still proposed as later "imagery rendering" work; still the implementer's call.
+- *A Sentinel-2 scene's files come from its own STAC item* (one request to Earth Search, from the row's
+  `links`), not from the thumbnail-directory convention. `profile.assetHref` remains for a collection
+  that wants a convention. The single-row read with offset indexes was not built: E14 showed none of the
+  three collections needs it.
+- *The cache holds part listings as well as footers*, has a time limit per load, and checks a file's size
+  and `Last-Modified` on every read made against a kept footer.
+- *The reader retries a failed row-group read* (once for a download, twice for a search, after a short
+  wait). This was not planned; live runs lost whole searches to one dropped request or one HTTP 520.
+- *Downloads changed in four places*, against the plan's own constraint, each recorded in the pull
+  request: that retry; `dropGeometry` with no area returning rows instead of none; a bare file's
+  `datetime` filter being applied instead of skipped; a mirror-only collection resolving to its item file.
+- *"Null means unknown" is in* (a numeric filter keeps a scene with no value). *`whyFiltered` is not*: it
+  explained client-side filtering of scenes already loaded, and here filters are pushed into the read, so
+  a filtered scene never arrives to be explained. For Chris to accept or reject.
+- *The panel defaults a partitioned archive to its last 30 days*; a single-file collection has no default.
+- *Local projections are `proj4.defs()`*, not an `epsgResolver` prop: the bundle's registry answers from
+  proj4. `loadOptions: { worker: false }` on `MVTLayer` waits for Phase 4, where the first one is built.
+- *`LayerManager.setTopLayers()`* was added so the footprints stay above an added image: deck.gl puts its
+  layer group directly under whatever it is slotted beneath.
+- *The control has no unit tests* — the suite has no DOM. Its decisions live in a tested model; its DOM is
+  checked in a real browser by the example's verifier (20 checks per collection).
 
 ## Phase 3 — catalog search and the render-column experiment
 

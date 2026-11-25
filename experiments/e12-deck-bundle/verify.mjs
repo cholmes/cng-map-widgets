@@ -41,14 +41,19 @@ async function open(query) {
     if (msg.type() === 'error') errors.push(msg.text());
   });
   page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
+  const requests = [];
+  page.on('request', (req) => requests.push(req.url()));
   const started = Date.now();
   await page.goto(`${base}?${query}`, { waitUntil: 'load' });
   await page.waitForFunction(() => /^(ready|error):/.test(document.getElementById('status')?.textContent ?? ''), undefined, {
     timeout: READY_TIMEOUT,
   });
   const status = await page.textContent('#status');
-  return { page, errors, status, ms: Date.now() - started };
+  return { page, errors, status, ms: Date.now() - started, requests };
 }
+
+const hostsOf = (urls) => [...new Set(urls.filter((u) => /^https?:/.test(u)).map((u) => new URL(u).host))].sort();
+const asksEpsgIo = (urls) => urls.filter((u) => /^https?:\/\/([^/]*\.)?epsg\.io\//.test(u));
 
 /** Sample a layer's own screen area with it visible, then hidden. */
 async function visibilityDiff(page, key) {
@@ -86,6 +91,27 @@ for (const key of ['s2', 'naip', 'oam', 'mvt']) {
   }
   record(key, changed > DRAWS && errors.length === 0, `ready in ${ms} ms, ${(changed * 100).toFixed(1)}% of pixels change when hidden, ${errors.length} console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
   await page.close();
+}
+
+// --- 1b. A NAIP scene's projection is resolved locally (Phase 2) -------------
+// NAIP is EPSG:26910, NAD83 / UTM zone 10N: not one of the WGS84 zones proj4
+// ships, so deck.gl-raster's registry used to fetch https://epsg.io/26910.json
+// before the first pixel. `registerKnownProjections` defines it up front.
+// The second run turns that off, to show this check can see the request.
+{
+  const on = await open('case=naip');
+  const info = await on.page.evaluate(() => ({ added: window.E12.projectionsAdded, workerPool: window.E12.workerPool }));
+  const asked = asksEpsgIo(on.requests);
+  record(
+    'naip: no request to epsg.io',
+    on.status.startsWith('ready:') && asked.length === 0 && info.added > 0,
+    `${info.added} definitions registered, ${asked.length} requests to epsg.io, decode pool uses workers: ${info.workerPool}; hosts: ${hostsOf(on.requests).join(', ')}`,
+  );
+  await on.page.close();
+  const off = await open('case=naip&projections=off');
+  const askedOff = asksEpsgIo(off.requests);
+  record('naip: without them, epsg.io is asked (the check has teeth)', askedOff.length > 0, `${askedOff.length} request(s): ${askedOff.join(', ') || 'none'}`);
+  await off.page.close();
 }
 
 // --- 2. The bundle served from ANOTHER origin (Review Focus 4) --------------

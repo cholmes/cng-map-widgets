@@ -428,6 +428,9 @@ export function download(dataset, area, filter, output, options = {}) {
             // `undefined` when the caller said nothing, so the engine's own
             // default (12, see engine-hyparquet.js) applies.
             maxConcurrentRequests: options.maxConcurrentRequests,
+            // Likewise: `undefined` leaves the engine's default (one retry
+            // of a failed row-group read; `0` is the old fail-at-once).
+            readRetries: options.readRetries,
             async onProgress(p) {
               emitter.emit('progress', p);
               progressStream.push(p);

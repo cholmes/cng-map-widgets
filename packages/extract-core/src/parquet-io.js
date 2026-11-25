@@ -6,6 +6,7 @@
 
 import { CngError, CancelledError } from '@cngeo/spec';
 import { loadHyparquet } from './cdn.js';
+import { raceAbort } from './plan-cache.js';
 
 /**
  * Map a thrown error to `CancelledError` when the operation's own signal is
@@ -58,12 +59,13 @@ function cancellationOf(cause, signal, what) {
  * @param {{ initialFetchSize?: number, signal?: AbortSignal }} [opts]
  */
 export async function openParquetFile(url, fetchImpl, opts = {}) {
+  if (opts.cache) return openCachedParquetFile(url, fetchImpl, opts);
   const { hyparquet } = await loadHyparquet();
   let file;
   try {
     file = await hyparquet.asyncBufferFromUrl({
       url,
-      fetch: fetchImpl,
+      fetch: withRequestTimeout(fetchImpl, opts.requestTimeoutMs),
       requestInit: { cache: 'no-store', signal: opts.signal },
     });
   } catch (cause) {
@@ -107,6 +109,140 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
   // `fetch`/`signal` of its own, because the AsyncBuffer on `file` already
   // has both bound in -- can still tell a cancelled read from a failed one.
   return { url, file, metadata, rowGroups, byteLength: file.byteLength, signal: opts.signal };
+}
+
+/**
+ * `openParquetFile` through a `PlanCache` (`opts.cache`). The footer -- the
+ * expensive part -- is read once per file and shared; on a hit there is NO
+ * request at all, not even hyparquet's HEAD, because the cached byte length
+ * is handed to `asyncBufferFromUrl`.
+ *
+ * The buffer is always new. It is what carries this call's abort signal into
+ * every later read, so two callers sharing one footer can still be cancelled
+ * independently. The footer load itself runs with no signal (see
+ * plan-cache.js): a superseded search leaves its footers for the next one.
+ *
+ * `fromCache` on the handle says whether this call paid for the footer, so a
+ * planner can report an honest request count.
+ */
+async function openCachedParquetFile(url, fetchImpl, opts) {
+  const { hyparquet } = await loadHyparquet();
+  let loadedHere = false;
+  const shared = opts.cache.footer(url, async (loadSignal) => {
+    loadedHere = true;
+    // What the host says about the file while its footer is read, kept with
+    // the footer: a later read can then tell it is looking at another file.
+    let lastModified = null;
+    const noting = async (input, init) => {
+      const res = await fetchImpl(input, init);
+      lastModified = res.headers?.get?.('last-modified') ?? lastModified;
+      return res;
+    };
+    const handle = await openParquetFile(url, noting, { initialFetchSize: opts.initialFetchSize, signal: loadSignal });
+    return { metadata: handle.metadata, rowGroups: handle.rowGroups, byteLength: handle.byteLength, lastModified };
+  });
+  const footer = await raceAbort(shared, opts.signal, `reading the parquet footer of ${url}`);
+  const file = await hyparquet.asyncBufferFromUrl({
+    url,
+    byteLength: footer.byteLength,
+    fetch: sizeCheckedFetch(withRequestTimeout(fetchImpl, opts.requestTimeoutMs), url, footer, opts.cache),
+    requestInit: { cache: 'no-store', signal: opts.signal },
+  });
+  return { url, file, metadata: footer.metadata, rowGroups: footer.rowGroups, byteLength: footer.byteLength, signal: opts.signal, fromCache: !loadedHere };
+}
+
+/** `context.reason` on the error a read raises when its file is not the one that was planned. */
+export const FILE_CHANGED = 'file-changed';
+
+/** @param {unknown} err */
+export function isFileChanged(err) {
+  return /** @type {any} */ (err)?.code === 'DATASET_UNRESOLVED' && /** @type {any} */ (err)?.context?.reason === FILE_CHANGED;
+}
+
+/**
+ * A `fetch` for reads made against a KEPT footer. A footer is a map of byte
+ * offsets, and it is only right for the file it was read from: published
+ * files are rewritten (Sentinel-2's "live" parts, as scenes arrive), and a
+ * read at old offsets into a new file decodes garbage, or decodes plausibly
+ * wrong rows.
+ *
+ * Two things a range response says can show it:
+ *   - the file's current total size (`Content-Range: bytes a-b/TOTAL`), when
+ *     that is not the size the footer was read at, or the range no longer
+ *     exists (416);
+ *   - its `Last-Modified`, when that differs from the one seen while the
+ *     footer was read. A browser script can always read `Last-Modified`; it
+ *     can read `Content-Range` only where the host exposes it
+ *     (`Access-Control-Expose-Headers`), which GitHub Pages, for one, does not.
+ *
+ * Then the footer is evicted and the read fails as retryable,
+ * `context.reason: 'file-changed'`, before a byte is decoded. A host that
+ * shows neither is covered only by `queryRows` dropping the footers of a
+ * query that failed, and by the cache's `maxAgeMs`.
+ */
+function sizeCheckedFetch(fetchImpl, url, footer, cache) {
+  const plannedBytes = footer.byteLength;
+  return async (input, init) => {
+    const res = await fetchImpl(input, init);
+    const total = /\/(\d+)\s*$/.exec(res.headers?.get?.('content-range') ?? '')?.[1];
+    const actualBytes = total === undefined ? null : Number(total);
+    const modified = res.headers?.get?.('last-modified') ?? null;
+    const resized = res.status === 416 || (actualBytes !== null && actualBytes !== plannedBytes);
+    const rewritten = Boolean(footer.lastModified && modified && modified !== footer.lastModified);
+    if (resized || rewritten) {
+      cache.evict(url);
+      throw new CngError(`${url} changed after it was planned; its footer has been dropped from the cache.`, 'DATASET_UNRESOLVED', {
+        retryable: true,
+        context: { url, reason: FILE_CHANGED, plannedBytes, actualBytes, plannedLastModified: footer.lastModified ?? null, lastModified: modified },
+      });
+    }
+    return res;
+  };
+}
+
+/**
+ * A `fetch` that gives up on a request -- headers AND body -- after `ms`.
+ *
+ * Opt-in (`requestTimeoutMs`), and meant for reads known to be small, such as
+ * the row groups of a search: the limit covers the whole response, so a
+ * legitimately large read on a slow connection would trip it. That is why a
+ * download does not set one by default.
+ *
+ * The body is read here, inside the limit, and handed on as a new Response:
+ * a connection that stalls half-way through a body is the case seen live,
+ * and it stalls after `fetch()` has already resolved.
+ */
+function withRequestTimeout(fetchImpl, ms) {
+  if (!(ms > 0) || !Number.isFinite(ms)) return fetchImpl;
+  return async (input, init = {}) => {
+    const controller = new AbortController();
+    const outer = init.signal;
+    const onOuterAbort = () => controller.abort(outer.reason);
+    if (outer?.aborted) controller.abort(outer.reason);
+    else outer?.addEventListener('abort', onOuterAbort, { once: true });
+    const timeout = new Error(`The request timed out after ${ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`}: ${String(input).slice(0, 200)}`);
+    timeout.name = 'TimeoutError';
+    let timer;
+    const limit = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort(timeout);
+        reject(timeout);
+      }, ms);
+    });
+    const work = (async () => {
+      const res = await fetchImpl(input, { ...init, signal: controller.signal });
+      if (init.method === 'HEAD' || res.body === null) return res;
+      const body = await res.arrayBuffer();
+      return new Response(res.status === 204 || res.status === 304 ? null : body, { status: res.status, statusText: res.statusText, headers: res.headers });
+    })();
+    work.catch(() => {});
+    try {
+      return await Promise.race([work, limit]);
+    } finally {
+      clearTimeout(timer);
+      outer?.removeEventListener('abort', onOuterAbort);
+    }
+  };
 }
 
 /** @param {any} metadata @returns {RowGroupInfo[]} */
@@ -187,9 +323,11 @@ export async function readRows(handle, range) {
       utf8: false,
     });
   } catch (cause) {
-    throw (
-      cancellationOf(cause, handle.signal, 'reading parquet row data') ??
-      new CngError('Failed to read parquet row data.', 'DATASET_UNRESOLVED', { cause })
-    );
+    const cancelled = cancellationOf(cause, handle.signal, 'reading parquet row data');
+    if (cancelled) throw cancelled;
+    // Already the right error, raised by `sizeCheckedFetch`: keep its
+    // `retryable` and its context rather than burying them in a `cause`.
+    if (isFileChanged(cause)) throw cause;
+    throw new CngError('Failed to read parquet row data.', 'DATASET_UNRESOLVED', { cause });
   }
 }
