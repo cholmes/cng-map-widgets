@@ -16,7 +16,20 @@ and acting on it:
 - **Or clip a raster to it** — read a COG's overviews, pick bands, see the
   output size before committing.
 
-Those four are what exists today, not the boundary of the idea: anything that
+And, since 0.4.0, for **showing** published data rather than extracting it:
+
+- **A layer stack** — styled vector tiles, COGs and GeoJSON in one ordered
+  list with a panel to drive it; a STAC collection becomes a layer in one
+  call.
+- **Imagery search** — scenes by area, date and properties over any
+  STAC-GeoParquet collection (Sentinel-2, NAIP, OpenAerialMap), drawn from
+  their COGs.
+- **Catalog search** — a `collections.parquet` index of thousands of
+  collections, searched in the browser, each result one click from the map.
+- **A timeline** — a histogram of time under the map with a selection and
+  play / pause, over data published as chunks of any size.
+
+Those are what exists today, not the boundary of the idea: anything that
 can consume an `Area` is a widget this library can grow.
 
 > **This is place-name and boundary lookup, not address geocoding.** You ask
@@ -275,8 +288,10 @@ Three ideas carry the design:
 | [`@cngeo/geocoder-core`](packages/geocoder-core/README.md) | Manifest + index load (full or HTTP-range), prefix search, ranking with result diversity, geometry resolution → `Area`. No DOM. | 11.0 KiB |
 | [`@cngeo/upload-core`](packages/upload-core/README.md) | GeoJSON file/drop/paste → the same `Area`, with every repair reported. | 4.3 KiB |
 | [`@cngeo/extract-core`](packages/extract-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 19.8 KiB |
-| [`@cngeo/maplibre`](packages/maplibre/README.md) | MapLibre adapter: search combobox control, `Area` outline layer, viewport provider, antimeridian-aware fitBounds. | 4.3 KiB |
-| [`@cngeo/openlayers`](packages/openlayers/README.md) | The same five things in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. | 5.1 KiB |
+| [`@cngeo/maplibre`](packages/maplibre/README.md) | MapLibre adapter: search combobox control, `Area` outline layer, draw and edit tools, viewport provider, antimeridian-aware fitBounds — and the widgets that show data: `LayerManager` and its panel, the imagery-search, catalog-search and timeline controls, and the renderers behind them. | 60.3 KiB, + a 0.43 MiB (gz) deck.gl bundle the first time a COG or a timeline is drawn |
+| [`@cngeo/openlayers`](packages/openlayers/README.md) | The geocoder control, outline layer and fit in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. (The 0.4.0 widgets are MapLibre only.) | 5.1 KiB |
+| [`@cngeo/stac`](packages/stac/README.md) | STAC for the map, headless: a collection → layer specs; imagery search over STAC-GeoParquet; search of a `collections.parquet` index; timeline chunks from a collection's items. | 15.5 KiB |
+| [`@cngeo/timeline`](packages/timeline/README.md) | A timeline over chunked data, with no map library: bucket keys and axis arithmetic, the rules for which chunks a view needs, the orchestrator, a playback clock and the canvas track. Any chunk format plugs in. | 16.3 KiB |
 
 Output-format plugins. Each registers itself with its **weight declared up
 front**, and only fetches its implementation if a user actually picks that
@@ -308,7 +323,7 @@ under `packages/` is work in flight and gets a row here once it has one.
 
 ## Examples
 
-Seven working demos, every one driven by a Playwright script against live
+Eleven working demos, every one driven by a Playwright script against live
 data. Open [`examples/index.html`](examples/index.html) for the gallery with
 screenshots and readable source.
 
@@ -321,6 +336,10 @@ screenshots and readable source.
 | [`firms-explorer`](examples/firms-explorer/) | NASA FIRMS: 632M rows across 27 `year=` partitions, resolved from the collection JSON, with the pruning cascade narrated stage by stage. |
 | [`s2-footprints`](examples/s2-footprints/) | "Type a country, download every Sentinel-2 footprint over it." 30M STAC-GeoParquet rows, the ceiling path, default column projection. |
 | [`raster-demo`](examples/raster-demo/) | The same `Area`, pointed at pixels: open a remote Sentinel-2 COG or STAC item, see its size/dtype/CRS/overviews/bands from one header read, pick bands, and save a clipped GeoTIFF. |
+| [`layers-demo`](examples/layers-demo/) | The layer stack: a STAC collection drawn with its own style, a COG and a GeoJSON layer in one ordered list, with a panel to toggle, fade, reorder, remove and add by URL. |
+| [`imagery-search`](examples/imagery-search/) | One search panel over three collections that agree on almost nothing — Sentinel-2, NAIP, OpenAerialMap — with footprints, thumbnails and "Add to map". |
+| [`catalog-search`](examples/catalog-search/) | The Portolan registry's 6,941 collections, searched as you type by text, map area and licence; a result becomes a layer. |
+| [`timeline-firms`](examples/timeline-firms/) | Twenty-six years of fire detections as 29 chunks (yearly, a rolling week, a monthly overview): a histogram, a selection, play / pause. |
 
 The quickstart and geocoder-demo carry a ⚙ **gazetteer picker** (top
 right): pick geoBoundaries, Overture or Who's On First — or paste any
@@ -362,9 +381,11 @@ pass its URL as `indexUrl`.
 [**AGENTS.md**](AGENTS.md) is written for you: terse, complete, verified
 recipes — instantiate a geocoder against a live catalog, consume an `Area`,
 build a `DownloadRequest` for each dataset kind, run a download with
-estimate/ceiling handling, the manifest contract, and the pitfalls that cause
-silent wrong answers. Every snippet in it is executed by
-`node docs/verify-snippets.mjs`.
+estimate/ceiling handling, a layer stack from a STAC collection, an imagery
+search, a catalog search, a timeline over chunks, the manifest contract, and
+the pitfalls that cause silent wrong answers. Every snippet in it is executed
+by `node docs/verify-snippets.mjs`, bar the few lines that need a map in a
+browser, which name the Playwright script that covers them.
 
 ## Documentation
 
@@ -444,10 +465,27 @@ Also landed and documented in their own READMEs: the four output-format
 plugins (GeoPackage, Shapefile, FlatGeobuf, CSV/Esri JSON) and
 `@cngeo/raster-core`'s COG clip-and-download.
 
+Added in 0.4.0, verified against live data on 2026-11-25 (MapLibre only):
+
+- **Layers** — `LayerManager` and its panel over styled PMTiles, COGs
+  (reprojected in the browser by deck.gl-raster) and GeoJSON;
+  `layersFromCollection` for a STAC collection.
+- **Imagery search** — Sentinel-2, NAIP and OpenAerialMap through one
+  profile and one search; scenes drawn from their COGs.
+- **Catalog search** — the Portolan registry's `collections.parquet`
+  (6,941 collections): text with typo tolerance, area, time, licence, kind.
+- **Timeline** — yearly FIRMS chunks plus a rolling week and a monthly
+  overview, live; monthly, weekly and mixed chunk sets in unit tests. PMTiles
+  is the one chunk format built; the interface takes others.
+
 Not built: exact `clip`, a DuckDB engine, multi-source search, the published
-JSON Schemas, and any build step at all (no `dist/`, no minification, no
-`.d.ts`). Each is a documented default in
+JSON Schemas, and any build step for a consumer (no `dist/`, no minification,
+no `.d.ts`; the one build in the repository makes the deck.gl bundle, and its
+output is committed). Each is a documented default in
 [design doc §7](docs/design/widgets-architecture.md#7-open-items).
+Of the widgets: a GeoParquet chunk format for the timeline, drawing untiled
+GeoParquet as a layer, an "add all" mosaic of search results, saving and
+restoring a layer stack, and OpenLayers versions.
 
 ### Known issues
 

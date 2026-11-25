@@ -9,6 +9,12 @@ const control = new GeocoderControl({ geocoder });
 map.on('load', () => map.addControl(control, 'top-left'));
 ```
 
+Since 0.4.0 it is also where data is **shown**: a [layer stack](#layers)
+with its panel, and the imagery-search, catalog-search and timeline controls,
+each DOM and event wiring over a headless object from
+[`@cngeo/stac`](../stac/README.md) or
+[`@cngeo/timeline`](../timeline/README.md).
+
 **What this adapter deliberately does not do** (design doc §5.1): fetch an
 index, rank results, simplify geometry, construct an `Area` from raw
 coordinates, or hold dataset/filter state. All of that lives in
@@ -689,7 +695,9 @@ layers). `pmtilesChunkFormat()` is exported as the example.
 
 Three third-party modules load lazily, each from an exact pinned URL, each
 with an injection seam for a bundled host: `setDeckModules()`,
-`setPmtilesModules()`, `setLayerControlModules()`.
+`setPmtilesModules()`, `setLayerControlModules()`. `@cngeo/timeline` loads
+the same way, the first time a timeline layer is added, by the bare
+specifier the page's import map resolves: `setTimelineModules()`.
 
 ---
 

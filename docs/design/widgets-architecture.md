@@ -1204,6 +1204,23 @@ packages, which are not map widgets.
 | `@cngeo/engine-duckdb` | DuckDB-WASM engine plugin + benchmark harness. Opt-in, heavy. Design call #2: never in core. | `@cngeo/spec`; **peer**: `@duckdb/duckdb-wasm` |
 | `@cngeo/stac` | `stacToDescriptor(stacObject)` — the §2.4 derivation as a standalone function over a plain STAC JSON. Extracted so `portolan-browser` and a future `stac-browser` widget share it. | `@cngeo/spec` |
 
+> **Amendment (2026-11-25, the map widgets, 0.4.0).** Three rows above are
+> not what was built. Full account:
+> [`docs/superpowers/specs/2026-11-25-map-widgets-design.md`](../superpowers/specs/2026-11-25-map-widgets-design.md).
+>
+> | package | contents, as built | depends on |
+> |---|---|---|
+> | `@cngeo/stac` | **Not** `stacToDescriptor` alone. STAC for the map, headless: `layersFromCollection` (a collection → `LayerSpec[]`), `imageryProfile` + `ImagerySearch` (scenes over STAC-GeoParquet), `CatalogIndex` (search of a `collections.parquet`), `chunksFromStac`. The §2.4 derivation (`descriptorFromCollection`) **stays in `extract-core`**, which `stac` imports. | `@cngeo/spec`, `@cngeo/extract-core`; lazy: `minisearch` |
+> | `@cngeo/timeline` | **New.** A timeline over time-chunked data with no map library: bucket keys, axis arithmetic, the rules for a set of chunks, the orchestrator, a playback clock, the canvas track, and the `ChunkFormat` interface. | `@cngeo/spec` |
+> | `@cngeo/maplibre` | Also `LayerManager`, `LayerControl`, `ImagerySearchControl`, `CatalogSearchControl`, `TimelineControl`, the renderers (`pmtiles-vector`, `cog`, `geojson`, `timeline`), and the loaders for deck.gl, PMTiles and the layer panel. | `@cngeo/spec`; lazy: `@cngeo/timeline`, a prebuilt deck.gl bundle, `pmtiles`, `maplibre-gl-layer-control`; **peer**: `maplibre-gl` |
+>
+> `@cngeo/spec` gains the `LayerSpec` contract (`cng-layer/1.0`). Two new
+> packages, not one per widget: a package costs a publisher entry, an
+> import-map line and a version to keep in step, so new code grows an
+> existing package unless it has no map library *and* no parquet (timeline)
+> or is the STAC half that two widgets share (stac). There is no
+> `@cngeo/openlayers` version of any of this.
+
 Why `@cngeo/spec` exists as its own package rather than living in
 `geocoder-core`: all five runtime packages need the `Area` contract, and a page
 that loads `geocoder-core` and `extract-core` from a CDN must get **one**
@@ -3869,6 +3886,21 @@ is what crosses the wire.** Our packages are budgets to hold, not measurements
 | `@cngeo/openlayers` | — | **≤ 9 KB** | budget | `ol` is a peer, not counted |
 | `@cngeo/stac` | — | **≤ 6 KB** | budget | pure JSON traversal |
 
+> **Amendment (2026-11-25, the map widgets).** Three budgets above no longer
+> describe these packages; these are measurements (`src/**/*.js`
+> concatenated, comments stripped, `gzip -9`, 2026-11-25):
+>
+> | artifact | gz | replaces | why |
+> |---|---|---|---|
+> | `@cngeo/stac` | **15.5 KiB** | "≤ 6 KB, pure JSON traversal" | It is four things, two of which read parquet (through `extract-core`). The 6 KB charter was for one function. |
+> | `@cngeo/timeline` | **16.3 KiB** | — (new) | Includes the canvas track, about half of it. |
+> | `@cngeo/maplibre` | **60.3 KiB** | "≤ 8 KB" | Five controls, a layer manager and four renderers, where there was one control. A page that uses only `GeocoderControl` still downloads all of it: the price of fewer packages, accepted (§3.1 amendment). |
+> | deck.gl bundle (`packages/maplibre/vendor/deck-stack.js`) | **0.43 MiB** (1.43 MiB raw) | — | deck.gl core, layers, `MVTLayer`, `DataFilterExtension`, the MapLibre overlay, deck.gl-raster and its decode worker, as ONE module. Fetched the first time a COG or a timeline is drawn; never by a page that draws neither. |
+>
+> A page that shows a timeline or imagery therefore costs about two map
+> libraries more than one that does not. It is paid on first use of such a
+> layer, and stated here so nobody finds it by measuring.
+
 **Realistic page totals** (min+gz, excluding the map library):
 
 | page | packages | total |
@@ -3966,6 +3998,32 @@ An adapter must **not**: fetch an index, rank results, simplify geometry,
 construct an `Area` from raw coordinates without going through
 `@cngeo/spec`'s normalizer, or hold dataset/filter state. Each of those is a
 behaviour that would then differ between MapLibre and OpenLayers.
+
+> **Amendment (2026-11-25, the map widgets).** "Exactly five things" and
+> "must not hold dataset/filter state" were written for an adapter that
+> draws one outline. `@cngeo/maplibre` now also adds:
+>
+> 6. **A layer stack** — `LayerManager`: one bottom-first array of
+>    `LayerSpec`s is the truth and the map is made to agree with it. This
+>    *is* state held in an adapter, on purpose: the order of layers on a map
+>    is a fact about that map. What a layer *is* stays plain data
+>    (`@cngeo/spec`).
+> 7. **Three more controls** — imagery search, catalog search, timeline —
+>    each DOM and event wiring over a headless object (`ImagerySearch`,
+>    `CatalogIndex`, a timeline session) that does the work and is tested
+>    without a browser.
+> 8. **Renderers**, one per `LayerSpec.kind`, behind a registry
+>    (`registerLayerRenderer`, and `registerChunkFormat` for the timeline).
+>
+> The rule that survives unchanged: an adapter does not fetch an index, rank,
+> search, prune or decide which chunks a view needs. Those live in
+> `@cngeo/stac` and `@cngeo/timeline`, so an OpenLayers adapter could be
+> written without re-deriving any of them.
+>
+> One line of the core rule is bent: `@cngeo/timeline` "touches no DOM"
+> except through a `<canvas>` it is handed (`TimelineCanvas`). It imports no
+> map library, and everything that decides anything is pure and tested in
+> Node; the canvas is there because the track is the same on any map.
 
 ### 5.2 Signatures
 
@@ -4216,6 +4274,18 @@ codegen systems verbatim, so a stac-browser widget is the same
 
 Keeping `@cngeo/stac` a separate package is what makes this a 20-line diff
 rather than a fork.
+
+> **Amendment (2026-11-25).** `@cngeo/stac` shipped with a broader charter
+> than this section assumes (§3.1 amendment), and the derivation this
+> section calls "`@cngeo/stac`'s" is `descriptorFromCollection` in
+> `@cngeo/extract-core`. The point stands — it degrades to a plain STAC
+> collection with one GeoParquet asset — but a stac-browser widget that only
+> downloads imports `extract-core`, not `stac`. `stac` is for a host that
+> wants to *show* a collection, and `layersFromCollection` needs nothing
+> Portolan-specific either: a PMTiles asset or `rel: "pmtiles"` link, a COG
+> asset, or item assets are enough, and a style asset is used when there is
+> one. (It does not read `renders` or `portolan:render_order`: a COG is
+> drawn with deck.gl-raster's default pipeline.)
 
 ---
 
@@ -4589,6 +4659,19 @@ implementation.
 | **O12** | Whether `estimate()` should ever read data pages. Metadata-only is cheap and honest; it makes row estimates wide (`Bounded.exact: false`) when predicate selectivity is unknown. | E5 measuring how wide "wide" is on real requests | **Metadata-only, with an opt-in `sample: { rowGroups: 1 }`** that reads one admitted row group to calibrate selectivity. Report `estimate-wide` when `max/estimate > 10` so the UI can say "between 2,000 and 400,000 rows" instead of pretending to know. |
 | **O13** | deck.gl adapter. `PLAN.md` leaves it open; `portolan-browser` has deck.gl. | E7 finding MapLibre's GeoJSON source insufficient for a large outline | **Not now.** `addAreaLayer` on a MapLibre GeoJSON source handles one outline at the display vertex ceiling. A `@cngeo/deckgl` adapter is additive and needs no core change. |
 
+> **Amendment (2026-11-25): O13 is resolved, differently.** deck.gl is
+> adopted — not as a `@cngeo/deckgl` adapter, and not for the outline. It
+> draws rasters (Development Seed's deck.gl-raster: `COGLayer`) and the
+> timeline's tiles (`MVTLayer`), inside `@cngeo/maplibre`, interleaved with
+> the style's own layers through `MapLibreOverlay`. It arrives as one
+> prebuilt bundle (§4.5 amendment) because deck.gl-raster needs exactly one
+> copy of `@deck.gl/core` and `@luma.gl/core` on the page, which an import
+> map in a consumer's page cannot be made to guarantee from inside a
+> package; this is the repository's only build step, its output is
+> committed, and CI fails when the committed copy differs from a fresh
+> build. A host with a bundler injects its own copy (`setDeckModules`).
+> `addAreaLayer` is unchanged: a MapLibre GeoJSON source.
+
 ---
 
 ## 8. Specified here, not implemented
@@ -4623,6 +4706,23 @@ handle's `result` now rejects (§3.4 amendment); cancellation now reports
 `DEFAULT_INDEX_URL` is now the published manifest; `rank.viewportRank`,
 the two `UPLOAD_*` codes and the `deduped-points` repair kind are now
 named correctly here.
+
+**The map widgets (added 2026-11-25).** Their design is a separate
+document
+([`2026-11-25-map-widgets-design.md`](../superpowers/specs/2026-11-25-map-widgets-design.md)),
+which records, phase by phase, what was built differently from what it
+planned. Not implemented, of what it or this document names:
+
+| what | what happens today | what to do instead |
+|---|---|---|
+| A GeoParquet chunk format for the timeline | Not built, by decision. `registerChunkFormat()` is the place for one. | PMTiles chunks. |
+| A renderer for `LayerSpec.kind: 'scenes'` | `LayerManager.add()` rejects it with `LAYER_UNSUPPORTED`. | Search it (`ImagerySearch`) and add the `cog` layer of a scene. |
+| Drawing untiled GeoParquet as a layer | `layersFromCollection` gives it `kind: 'unsupported'` with the reason ("Spatial GeoParquet with no vector tiles to draw it from"); `CatalogIndex.resolve()` lists it under `undrawable`. | Publish PMTiles beside it. |
+| Raster stretch from STAC `renders` / `portolan:render_order` | Not read. A COG is drawn with deck.gl-raster's default pipeline. | — |
+| An "add all" mosaic of search results | Scenes are added one at a time. | — |
+| Saving and restoring a layer stack; `view=`/`sel=` in the URL for a timeline | Not built. | `manager.list()` returns specs, which are plain JSON. |
+| OpenLayers versions of the four widgets | Not built. | MapLibre. |
+| A `render` column in the Portolan registry's `collections.parquet` | `CatalogIndex` reads one when present; the live index has none, so `resolve()` fetches the collection's JSON. | Nothing: it works, one fetch slower. `experiments/e13-render-column/` has the measurement and a draft for upstream. |
 
 ---
 

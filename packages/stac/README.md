@@ -4,9 +4,10 @@ STAC for the map: turn a collection into layer specs, search STAC-GeoParquet
 imagery, and search a `collections.parquet` index. Headless — no DOM and no
 map library; the controls that use it live in `@cngeo/maplibre`.
 
-**Status: under construction.** `layersFromCollection` is here; imagery
-search and catalog search are not yet. The design, and the order the pieces
-arrive in, is in
+Four things, each usable without the others: `layersFromCollection`,
+`imageryProfile` + `ImagerySearch`, `CatalogIndex`, and `chunksFromStac`.
+Recipes 6–9 of [`AGENTS.md`](../../AGENTS.md) run each against live data.
+How it came to be this shape is in
 [`docs/superpowers/specs/2026-11-25-map-widgets-design.md`](../../docs/superpowers/specs/2026-11-25-map-widgets-design.md).
 
 ## `layersFromCollection(collection, { baseUrl })`
