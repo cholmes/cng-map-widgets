@@ -1,8 +1,8 @@
 # @cngeo/openlayers
 
-The OpenLayers half of the widgets: the same five things
-[`@cngeo/maplibre`](../maplibre/README.md) provides — search control, `Area`
-outline layer, viewport provider, antimeridian-aware fit — **plus the one real
+The OpenLayers half of the place-search widgets: what
+[`@cngeo/maplibre`](../maplibre/README.md) provides for an `Area` — search
+control, outline layer, viewport provider, antimeridian-aware fit — **plus the one real
 asymmetry between the two adapters: a projection bridge.**
 
 Core is EPSG:4326-only. MapLibre's GeoJSON sources are 4326-native, so its
@@ -15,7 +15,7 @@ const control = new GeocoderControl({ geocoder });
 map.addControl(control);        // no 'load' event to wait for
 ```
 
-- **Status:** experimental, pre-npm. See the [root README](../../README.md).
+- **Status:** experimental; on npm. See the [root README](../../README.md).
 - **Normative design:** [`docs/design/widgets-architecture.md`](../../docs/design/widgets-architecture.md) §5, especially §5.1 item 5.
 - **Peer dependency:** `ol@^10`. `GeocoderControl` imports `ol/control/Control.js`; the layer and projection modules import `ol` modules too.
 - **License:** MIT.

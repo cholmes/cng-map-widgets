@@ -9,13 +9,19 @@ const control = new GeocoderControl({ geocoder });
 map.on('load', () => map.addControl(control, 'top-left'));
 ```
 
+Since 0.4.0 it is also where data is **shown**: a [layer stack](#layers)
+with its panel, and the imagery-search, catalog-search and timeline controls,
+each DOM and event wiring over a headless object from
+[`@cngeo/stac`](../stac/README.md) or
+[`@cngeo/timeline`](../timeline/README.md).
+
 **What this adapter deliberately does not do** (design doc §5.1): fetch an
 index, rank results, simplify geometry, construct an `Area` from raw
 coordinates, or hold dataset/filter state. All of that lives in
 `@cngeo/geocoder-core` and `@cngeo/spec`, so it cannot drift between the MapLibre
 and OpenLayers adapters. This file is DOM and event wiring.
 
-- **Status:** experimental, pre-npm. See the [root README](../../README.md).
+- **Status:** experimental; on npm. See the [root README](../../README.md).
 - **Normative design:** [`docs/design/widgets-architecture.md`](../../docs/design/widgets-architecture.md) §5.
 - **Peer dependency:** `maplibre-gl@^4 || ^5`. Not bundled, not imported by this package — `GeocoderControl` only touches the `map` object you hand it.
 - **License:** MIT.
@@ -47,18 +53,20 @@ The control's CSS is **inlined as a string** and injected once into
 build step to configure, and nothing to break a zero-build page. Override by
 targeting `.cng-geocoder` and its children.
 
-**Coming:** `npm i @cngeo/maplibre`.
+From npm: `npm i @cngeo/maplibre`.
 
 ## Size
 
 | | files | raw | gzip | gzip, comments stripped | design-doc budget (§4.5) |
 |---|---|---|---|---|---|
-| `@cngeo/maplibre` src | 5 | 18.9 KiB | 5.9 KiB | **4.3 KiB** | ≤ 8 KB min+gz |
+| `@cngeo/maplibre` src | 38 | 351.5 KiB | 106.2 KiB | **60.3 KiB** | was ≤ 8 KB min+gz |
+| `vendor/deck-stack.js` (deck.gl + deck.gl-raster) | 1 | 1.43 MiB | **0.43 MiB** | — | — |
 
-(Table above predates `draw-tool.js`/`edit-tool.js`, added 2026-11-13; not
-remeasured here — see the design doc amendment in §5.2 for what they add and
-`edit-tool.js`'s own header for the terra-draw weight comparison that went
-into not adding a dependency instead.)
+Measured 2026-11-25. The budget was set when this package was one control;
+it is now five controls, a layer manager and four renderers, and a page that
+uses only `GeocoderControl` still downloads all 60 KiB (the design doc's §4.5
+amendment says why that was accepted). The deck.gl bundle is fetched the
+first time a COG or a timeline layer is added, and never otherwise.
 
 `maplibre-gl` itself is ~200 KiB min+gz and is a peer — not counted here,
 because you already have it.
@@ -689,7 +697,9 @@ layers). `pmtilesChunkFormat()` is exported as the example.
 
 Three third-party modules load lazily, each from an exact pinned URL, each
 with an injection seam for a bundled host: `setDeckModules()`,
-`setPmtilesModules()`, `setLayerControlModules()`.
+`setPmtilesModules()`, `setLayerControlModules()`. `@cngeo/timeline` loads
+the same way, the first time a timeline layer is added, by the bare
+specifier the page's import map resolves: `setTimelineModules()`.
 
 ---
 

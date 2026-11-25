@@ -4,10 +4,34 @@ STAC for the map: turn a collection into layer specs, search STAC-GeoParquet
 imagery, and search a `collections.parquet` index. Headless — no DOM and no
 map library; the controls that use it live in `@cngeo/maplibre`.
 
-**Status: under construction.** `layersFromCollection` is here; imagery
-search and catalog search are not yet. The design, and the order the pieces
-arrive in, is in
+Four things, each usable without the others: `layersFromCollection`,
+`imageryProfile` + `ImagerySearch`, `CatalogIndex`, and `chunksFromStac`.
+Recipes 6–9 of [`AGENTS.md`](../../AGENTS.md) run each against live data.
+How it came to be this shape is in
 [`docs/superpowers/specs/2026-11-25-map-widgets-design.md`](../../docs/superpowers/specs/2026-11-25-map-widgets-design.md).
+
+## Install / import
+
+In a page with no build step, an import map. `@cngeo/stac` imports
+`@cngeo/spec` and `@cngeo/extract-core`, so all three need a line:
+
+```html
+<script type="importmap">
+{
+  "imports": {
+    "@cngeo/spec":          "https://cdn.jsdelivr.net/npm/@cngeo/spec@0.4.0/src/index.js",
+    "@cngeo/extract-core":  "https://cdn.jsdelivr.net/npm/@cngeo/extract-core@0.4.0/src/index.js",
+    "@cngeo/stac":          "https://cdn.jsdelivr.net/npm/@cngeo/stac@0.4.0/src/index.js"
+  }
+}
+</script>
+```
+
+hyparquet and MiniSearch are **not** lines in that map: each loads from a
+pinned URL the first time it is needed. From npm: `npm i @cngeo/stac`; in
+Node or a bundler inject them once (`setHyparquetModules` from
+`@cngeo/extract-core`, `setMinisearchModules` from here — see
+[`AGENTS.md`](../../AGENTS.md#in-node-or-inside-a-bundler)).
 
 ## `layersFromCollection(collection, { baseUrl })`
 

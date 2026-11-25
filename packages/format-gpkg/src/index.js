@@ -17,7 +17,7 @@
 //   import initSqlJs from 'sql.js'; // or your own bundler-resolved import
 //   registerFormat(createGpkgFormat(await initSqlJs()));
 
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 
 export { createGpkgFormat, estimateGpkgBytes } from './gpkg-writer.js';
 export { CDN, APPROX_BYTES, loadSqlJs, setSqlJsModule, clearSqlJsModule } from './cdn.js';

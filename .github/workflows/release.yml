@@ -16,11 +16,33 @@
 #
 # Every field is case-sensitive. The workflow filename is the file name
 # alone, not a path. A configuration expires if it does not publish inside 2
-# days, so add the 11 entries just before a release, not in advance.
+# days, so add the 13 entries just before a release, not in advance.
 #
 # npm cannot attach a trusted publisher to a package that does not exist, so
-# a package's FIRST version goes up with a short-lived granular token. Later
-# versions use this workflow.
+# a package's FIRST version cannot go up from here. As of 0.4.0 that is two
+# of the thirteen: @cngeo/timeline and @cngeo/stac. For that release:
+#
+#   1. Add the trusted publisher for the eleven packages that exist.
+#   2. Run this workflow. It publishes spec, geocoder-core, upload-core and
+#      extract-core, then stops at `timeline`, which it cannot publish.
+#      Nothing is left broken: the four that went up do not depend on the
+#      two that did not.
+#   3. Publish the two by hand, with a short-lived granular token:
+#      `npm publish --access public` in packages/timeline, then packages/stac.
+#      Everything they depend on (@cngeo/spec and, for stac,
+#      @cngeo/extract-core, at this version) is on the registry by now.
+#   4. Add the trusted publisher for those two, and run this workflow again.
+#      It skips what is there and publishes the rest, maplibre among them.
+#
+# Do NOT publish the two by hand FIRST. They would be `latest` on npm while
+# naming versions of @cngeo/spec and @cngeo/extract-core that do not exist
+# yet -- uninstallable -- until this workflow got through its gates, and
+# those gates read live data from four hosts: one HTTP 520 and the two stay
+# broken until someone re-runs it.
+#
+# (Another way: publish a placeholder version of a new package first --
+# @cngeo/spec has a `0.0.0-stage` on the registry from doing so -- attach its
+# publisher, and let this workflow publish all thirteen in order.)
 #
 # The run publishes nothing when a version is already on the registry, so a
 # re-run after a partial failure is safe.
@@ -80,13 +102,22 @@ jobs:
 
       - run: npm ci
 
+      # The deck.gl bundle is committed, and packed into @cngeo/maplibre as it
+      # is. A release must not ship one that differs from its own source.
+      - name: Check the committed deck.gl bundle against a fresh build
+        run: npm run check:deck
+
       - run: npm test
 
       - name: Verify the documentation snippets against live catalogs
         run: npm run verify:docs
 
-      # @cngeo/spec first. The other ten declare it as a dependency, so it has
-      # to resolve from the registry before they go up.
+      # @cngeo/spec first. The other twelve declare it as a dependency, so it
+      # has to resolve from the registry before they go up. The same goes for
+      # extract-core before stac, and timeline before maplibre. A unit test
+      # (packages/spec/test/release-order.test.js) reads this list and every
+      # package.json, and fails when a package is missing from it or comes
+      # before something it depends on.
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ''
@@ -95,9 +126,9 @@ jobs:
           set -euo pipefail
           unset NODE_AUTH_TOKEN
 
-          order="spec geocoder-core upload-core extract-core maplibre openlayers
-                 raster-core format-gpkg format-shapefile format-flatgeobuf
-                 format-extras"
+          order="spec geocoder-core upload-core extract-core timeline stac
+                 maplibre openlayers raster-core format-gpkg format-shapefile
+                 format-flatgeobuf format-extras"
 
           for pkg in $order; do
             dir="packages/$pkg"

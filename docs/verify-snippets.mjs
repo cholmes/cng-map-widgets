@@ -8,17 +8,20 @@
  * Run it:   node docs/verify-snippets.mjs            (all groups)
  *           node docs/verify-snippets.mjs spec       (one or more groups)
  *
- * Groups: spec, geocoder, upload, download, openlayers, agents
+ * Groups: spec, geocoder, upload, download, openlayers, agents, widgets
  *
- * Network: the geocoder, download and agents groups hit real published
+ * Network: the geocoder, download, agents and widgets groups hit real published
  * data at data.source.coop -- the published geoBoundaries gazetteer, the
  * Fields of The World Liechtenstein GeoParquet, the FIRMS detections
- * collection and the Sentinel-2 STAC-GeoParquet collection. There are no
+ * collection and the Sentinel-2 STAC-GeoParquet collection -- and, for the
+ * widgets group, the Portolan registry's collections.parquet (GitHub Pages)
+ * and one CARTO-hosted collection. There are no
  * fixtures and no mocks; a snippet that passes here is a snippet that
  * works against the live catalogs. Expect ~1-2 minutes.
  *
  * Browser-only snippets (the quickstart HTML, GeocoderControl, addAreaLayer,
- * attachDropTarget, the File System Access sinks) cannot run here. Those
+ * attachDropTarget, the File System Access sinks, the layer, imagery, catalog
+ * and timeline controls) cannot run here. Those
  * are verified by the Playwright scripts under examples/: see
  * examples/index.html's "Verifying them yourself" table.
  *
@@ -120,7 +123,7 @@ async function groupSpec() {
   } = await import('@cngeo/spec');
 
   await snippet('spec/README', 'VERSION', async () => {
-    assert.equal(VERSION, '0.3.1');
+    assert.equal(VERSION, '0.4.0');
     return VERSION;
   });
 
@@ -295,7 +298,7 @@ async function groupGeocoder() {
   setHyparquetModules({ hyparquet, compressors });
 
   await snippet('geocoder-core/README', 'VERSION', async () => {
-    assert.equal(VERSION, '0.3.1');
+    assert.equal(VERSION, '0.4.0');
   });
 
   await snippet('geocoder-core/README', 'DEFAULT_INDEX_URL is the published geoBoundaries manifest, and it serves', async () => {
@@ -523,7 +526,7 @@ async function groupUpload() {
   const { areaFromGeoJson, areaFromFile, registerReader, repairFeatures, VERSION } = await import('@cngeo/upload-core');
 
   await snippet('upload-core/README', 'VERSION', async () => {
-    assert.equal(VERSION, '0.3.1');
+    assert.equal(VERSION, '0.4.0');
   });
 
   await snippet('upload-core/README', 'areaFromFile() -> { area, warnings }', async () => {
@@ -689,7 +692,7 @@ async function groupDownload() {
   setHyparquetModules({ hyparquet, compressors, writer: hyparquetWriter });
 
   await snippet('extract-core/README', 'VERSION + the built-in registries', async () => {
-    assert.equal(VERSION, '0.3.1');
+    assert.equal(VERSION, '0.4.0');
     // `parquet-raw` (recipe 3e / the raw-passthrough format) is registered
     // as a side effect of this package's index.js alongside geojson and
     // geoparquet -- listed by `formats()` for a picker, but never resolved
@@ -1283,7 +1286,7 @@ async function groupAgents() {
     return 'same estimate() call, different Area source';
   });
 
-  await snippet('AGENTS.md', 'recipe 6: the manifest contract, read directly', async () => {
+  await snippet('AGENTS.md', 'the manifest contract, read directly', async () => {
     const manifest = await fetch(GB_INDEX_URL).then((r) => r.json());
     assert.equal(manifest.spec, 'cnmw-index/1.0');
     // Required top level.
@@ -1327,6 +1330,196 @@ async function groupAgents() {
 }
 
 // ===========================================================================
+// AGENTS.md, recipes 6-9: the four map widgets (their headless halves)
+// ===========================================================================
+const JAMAICA_PARISHES_URL = 'https://storage.googleapis.com/carto-open-catalogs/ocha-cod-jamaica/main/parishes/collection.json';
+const REGISTRY_INDEX_URL = 'https://registry.portolan-sdi.org/v0.1/collections.parquet';
+
+async function groupWidgets() {
+  console.log('\nAGENTS.md, the map widgets (live: source.coop, the Portolan registry, a CARTO catalog)');
+  const { setHyparquetModules: setDownloadModules } = await import('@cngeo/extract-core');
+  const { layersFromCollection, imageryProfile, ImagerySearch, CatalogIndex, chunksFromStac, setMinisearchModules } = await import('@cngeo/stac');
+  const { validateLayerSpec } = await import('@cngeo/spec');
+  const { chunksFromTemplate, forView, forSelection, createChunkSet } = await import('@cngeo/timeline');
+  const { default: MiniSearch } = await import('minisearch');
+
+  setDownloadModules({ hyparquet, compressors, writer: hyparquetWriter });
+  setMinisearchModules({ MiniSearch });
+
+  await snippet('AGENTS.md', 'recipe 6: a collection becomes layer specs, with no fetch of its own', async () => {
+    const collection = await fetch(JAMAICA_PARISHES_URL).then((r) => r.json());
+    const layers = layersFromCollection(collection, { baseUrl: JAMAICA_PARISHES_URL });
+    const [layer] = layers;
+
+    assert.equal(layer.spec, 'cng-layer/1.0');
+    assert.equal(layer.kind, 'pmtiles-vector');
+    assert.match(layer.source.url, /^https:\/\/.+\.pmtiles$/, 'made absolute against baseUrl');
+    assert.ok(Array.isArray(layer.attribution) && layer.attribution.length > 0, 'what the UI must display');
+    validateLayerSpec(layer); // throws a CngError with a code when a spec is not one
+    return `${layers.length} layer(s); "${layer.title}" is ${layer.kind}${layer.source.style?.url ? ' with its own style' : ''}`;
+  });
+
+  await snippet('AGENTS.md', 'recipe 7: search imagery by area and time, and get a layer for a scene', async () => {
+    const area = await liechtensteinBoxArea();
+    const collection = await fetch(S2_COLLECTION_URL).then((r) => r.json());
+    const profile = imageryProfile(collection, { baseUrl: S2_COLLECTION_URL });
+    const search = new ImagerySearch(profile);
+
+    const batches = [];
+    const { scenes, truncated, plan } = await search.search({
+      area,
+      time: { start: '2025-06-01T00:00:00Z', end: '2025-06-08T00:00:00Z' },
+      where: [{ col: 'eo:cloud_cover', op: '<=', value: 60 }],
+      limit: 20,
+      onScenes: (batch) => batches.push(batch.length),
+    });
+
+    assert.ok(scenes.length > 0, 'a week over Liechtenstein has scenes');
+    assert.ok(scenes.length <= 20);
+    assert.equal(typeof truncated, 'boolean');
+    assert.ok(plan, 'the estimate that was run: files, row groups, requests');
+    for (const scene of scenes) {
+      assert.ok(scene.datetime >= '2025-06-01' && scene.datetime < '2025-06-08', `inside the window: ${scene.datetime}`);
+      assert.equal(scene.bbox.length, 4);
+    }
+    const times = scenes.map((s) => s.datetime);
+    assert.deepEqual(times, [...times].sort().reverse(), 'newest first');
+    assert.ok(profile.filters.some((f) => f.column === 'eo:cloud_cover'), 'the filters a panel can offer');
+
+    // Without baseUrl there is nothing to resolve a relative href against: it is refused.
+    assert.throws(() => imageryProfile(collection), (err) => err.code === 'LAYER_INVALID');
+
+    const layer = await search.layerSpecFor(scenes[0]);
+    assert.equal(layer.kind, 'cog');
+    assert.match(layer.source.url, /^https?:\/\//);
+    search.close?.();
+    return `${scenes.length} scenes in ${batches.length} batch(es); "${scenes[0].id}" draws from ${new URL(layer.source.url).host}`;
+  });
+
+  await snippet('AGENTS.md', 'recipe 8: search a collections.parquet index, and resolve a result to layers', async () => {
+    const index = new CatalogIndex(REGISTRY_INDEX_URL);
+    await index.load();
+    assert.ok(index.entries.length > 1000, `${index.entries.length} collections`);
+
+    const { results, total, facets } = await index.search({ text: 'buildings', limit: 10 });
+    assert.ok(results.length > 0 && results.length <= 10);
+    assert.ok(total >= results.length);
+    assert.ok(Array.isArray(facets.license));
+    for (const key of ['key', 'id', 'title', 'href', 'kinds']) assert.ok(key in results[0], `a result has ${key}`);
+
+    // A typo still finds it.
+    const typo = await index.search({ text: 'buildngs', limit: 5 });
+    assert.ok(typo.results.length > 0, 'one edit away');
+
+    // Narrowed to one catalog. The option is `catalog`: an option the search
+    // does not know (`within`, say) is ignored, and everything comes back.
+    const one = facets.catalog[0];
+    const narrowed = await index.search({ text: 'buildings', catalog: one.value });
+    assert.ok(narrowed.total > 0 && narrowed.total < total, `${narrowed.total} of ${total} are in ${one.value}`);
+    assert.equal(narrowed.total, one.count, 'the facet said how many');
+
+    // What each result can be drawn AS is known only to an index with a
+    // `render` column. The live registry has none: no kinds, so no kind filter.
+    assert.equal(index.hasRender, false);
+    assert.deepEqual(results[0].kinds, []);
+    assert.deepEqual(facets.kinds, []);
+
+    const drawableResult = results[0];
+    const { drawable, undrawable, source } = await index.resolve(drawableResult);
+    assert.ok(Array.isArray(drawable) && Array.isArray(undrawable));
+    assert.ok(source === 'collection' || source === 'render');
+    for (const spec of drawable) validateLayerSpec(spec);
+    return `${index.entries.length.toLocaleString('en-US')} collections; "buildings" finds ${total}; "${drawableResult.title}" resolves to ${drawable.length} drawable layer(s) from its ${source}`;
+  });
+
+  await snippet('AGENTS.md', 'recipe 9: chunks of any size, and which of them a view needs', async () => {
+    const BASE = 'https://data.source.coop/portolan-mirrors/firms-catalog/detections';
+    const years = chunksFromTemplate({ template: `${BASE}/year={YYYY}/fire-{YYYY}.pmtiles`, period: 'year', start: '20001101', end: '20261125' });
+    assert.equal(years.length, 27);
+    assert.deepEqual(
+      { id: years[0].id, start: years[0].start, end: years[0].end, unit: years[0].unit, format: years[0].format },
+      { id: '2000', start: '20001101', end: '20001231', unit: 'day', format: 'pmtiles' },
+    );
+    assert.equal(years.at(-1).end, '20261125', 'the last chunk stops where the record does');
+
+    // Monthly files are the same thing with a different period.
+    const months = chunksFromTemplate({ template: 'https://example.org/{YYYY}/{MM}.pmtiles', period: 'month', start: '20240101', end: '20241231' });
+    assert.equal(months.length, 12);
+    assert.equal(months[1].url, 'https://example.org/2024/02.pmtiles');
+    assert.deepEqual([months[1].start, months[1].end], ['20240201', '20240229']);
+
+    // A selection across three monthly chunks draws from all three.
+    assert.deepEqual(forSelection(months, { from: '20240120', to: '20240310' }, 'day').map((c) => c.id), [months[0].id, months[1].id, months[2].id]);
+
+    // With a monthly overview beside the years: a narrow view is days, a wide one months.
+    const overview = { id: 'alltime', start: '20001101', end: '20261130', unit: 'month', format: 'pmtiles', url: `${BASE}/alltime.pmtiles` };
+    const set = [...years, overview];
+    const narrow = forView(set, { from: '20260818', to: '20261125' });
+    assert.equal(narrow.unit, 'day');
+    assert.deepEqual(narrow.load.map((c) => c.id), ['2026']);
+    const wide = forView(set, { from: '20150101', to: '20261125' });
+    assert.equal(wide.unit, 'month');
+    assert.deepEqual(wide.load.map((c) => c.id), ['alltime']);
+    return `27 yearly chunks; 100 days -> ${narrow.unit}s from ${narrow.load.map((c) => c.id)}; 12 years -> ${wide.unit}s from ${wide.load.map((c) => c.id)}`;
+  });
+
+  await snippet('AGENTS.md', 'recipe 9: chunksFromStac() on the live FIRMS collection', async () => {
+    const collection = await fetch(FIRMS_COLLECTION_URL).then((r) => r.json());
+    const { chunks, skipped } = await chunksFromStac(collection, { baseUrl: FIRMS_COLLECTION_URL });
+    assert.ok(chunks.length >= 27, `${chunks.length} chunks`);
+    assert.deepEqual(skipped, []);
+    assert.deepEqual(
+      { id: chunks[0].id, start: chunks[0].start, unit: chunks[0].unit, format: chunks[0].format },
+      { id: '2000', start: '20001101', unit: 'day', format: 'pmtiles' },
+    );
+    assert.match(chunks[0].url, /^https:\/\/.+\/year=2000\/fire-2000\.pmtiles$/);
+    return `${chunks.length} chunks, ${chunks[0].start}..${chunks.at(-1).end} (a chunk's end is what its ITEM says, which can lag its file)`;
+  });
+
+  await snippet('AGENTS.md', 'recipe 9: a chunk format of your own drives the same orchestrator', async () => {
+    // Any source of counts-by-day can be a format: this one is an object in memory.
+    const counts = { 20240105: 3, 20240106: 5, 20240210: 2 };
+    const windows = [];
+    const memoryFormat = {
+      async open(chunk) {
+        return { unit: chunk.unit };                 // whatever mount() needs: here, nothing
+      },
+      mount({ chunk, settled }) {
+        const mine = Object.fromEntries(Object.entries(counts).filter(([day]) => day >= chunk.start && day <= chunk.end));
+        settled(true);                               // "what I have for this view is complete"
+        return {
+          setWindow(window) { windows.push({ chunk: chunk.id, window }); },   // what to draw; null = nothing
+          histogram() { return mine; },              // { bucketKey: count } for what is in view
+          freeze() {},
+          destroy() {},
+        };
+      },
+    };
+
+    const set = createChunkSet({
+      chunks: chunksFromTemplate({ template: 'https://example.org/{YYYY}-{MM}.bin', period: 'month', start: '20240101', end: '20240229', format: 'memory' }),
+      formats: { memory: memoryFormat },
+    });
+    set.setViewport({ bbox: [-180, -85, 180, 85], zoom: 2 });
+    set.setView({ from: '20240101', to: '20240229' });
+    set.setSelection({ from: '20240105', to: '20240210' });
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    const state = set.state;
+    assert.equal(state.unit, 'day');
+    assert.equal(state.loaded.length, 2);
+    assert.equal(state.drawing.length, 2, 'the selection spans both chunks, so both draw');
+    assert.deepEqual(state.histogram, { 20240105: 3, 20240106: 5, 20240210: 2 });
+    assert.deepEqual(state.gaps, [], 'nothing on the axis is unloaded');
+    const drawn = windows.filter((w) => w.window).at(-1);
+    assert.equal(drawn.window.unit, 'day');
+    assert.ok(Array.isArray(drawn.window.ranges[0]), 'a window is the day ranges this chunk OWNS of the selection');
+    set.destroy();
+    return `2 monthly chunks loaded, both drawing; histogram ${JSON.stringify(state.histogram)}`;
+  });
+}
+
+// ===========================================================================
 
 const GROUPS = {
   spec: groupSpec,
@@ -1335,6 +1528,7 @@ const GROUPS = {
   download: groupDownload,
   openlayers: groupOpenLayers,
   agents: groupAgents,
+  widgets: groupWidgets,
 };
 
 const requested = process.argv.slice(2).filter((a) => !a.startsWith('-'));

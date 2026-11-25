@@ -1,6 +1,6 @@
 {
   "name": "@cngeo/stac",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "STAC for the map: turn a collection into layer specs, search STAC-GeoParquet imagery, and search a collections.parquet index. Headless; no DOM, no map library.",
   "keywords": [
     "stac",
@@ -26,8 +26,8 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cngeo/extract-core": "0.3.1",
-    "@cngeo/spec": "0.3.1"
+    "@cngeo/extract-core": "0.4.0",
+    "@cngeo/spec": "0.4.0"
   },
   "publishConfig": {
     "access": "public"

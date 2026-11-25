@@ -5,7 +5,7 @@
 //   registerLazyFormat(flatGeobufFormatDescriptor);
 //   // ~10KB (min+gz) fetches only on first download() for format: 'flatgeobuf'.
 
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 
 export { createFlatGeobufFormat, estimateFlatGeobufBytes } from './flatgeobuf-writer.js';
 export { CDN, APPROX_BYTES, loadFlatGeobuf, setFlatGeobufModule, clearFlatGeobufModule } from './cdn.js';

@@ -1,6 +1,6 @@
 {
   "name": "@cngeo/format-gpkg",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "GeoPackage output for @cngeo/extract-core: a hand-written SQLite 'vector features' profile (gpkg_contents/gpkg_spatial_ref_sys/gpkg_geometry_columns + the feature table), built with sql.js. The ~340KB (min+gz) path O5 chose over gdal3.js's 2-8MB wasm build -- see README.md and experiments/e10-heavy-formats/RESULTS.md.",
   "keywords": [
     "geopackage",
@@ -28,11 +28,11 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@cngeo/spec": "0.3.1"
+    "@cngeo/spec": "0.4.0"
   },
   "devDependencies": {
     "sql.js": "1.13.0",
-    "@cngeo/extract-core": "0.3.1",
+    "@cngeo/extract-core": "0.4.0",
     "hyparquet": "1.33.0",
     "hyparquet-compressors": "1.1.3"
   },

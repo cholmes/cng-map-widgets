@@ -13,7 +13,7 @@
 // @cngeo/extract-core (`descriptorFromCollection`); this package imports it
 // rather than duplicating it.
 
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 
 export { layersFromCollection } from './layers-from-collection.js';
 export { imageryProfile } from './imagery-profile.js';

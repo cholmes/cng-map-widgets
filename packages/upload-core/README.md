@@ -14,7 +14,7 @@ every single change** so a UI can tell the user what happened to their file.
 const { area, warnings } = await areaFromFile(file);
 ```
 
-- **Status:** experimental, pre-npm. GeoJSON only. See the [root README](../../README.md).
+- **Status:** experimental; on npm. GeoJSON only. See the [root README](../../README.md).
 - **Normative design:** [`docs/design/widgets-architecture.md`](../../docs/design/widgets-architecture.md) §3.3, plus §1.4 (multi-feature) and §1.2 (`AreaRepair`).
 - **License:** MIT (code). No data, no data license.
 
@@ -199,7 +199,7 @@ repairs;           // [{ kind: 'dropped-non-areal', count: 1, types: ['Point'] }
 | `geoJsonReader` | The built-in reader, in case you want to wrap or inspect it. |
 | `extractRawFeatures(json)` | Any top-level GeoJSON value → a flat `{ geometry, properties }[]`. |
 | `detectDeclaredCrs(json)` | The legacy pre-RFC-7946 top-level `crs` member, or `null`. |
-| `VERSION` | `'0.3.1'`. |
+| `VERSION` | `'0.4.0'`. |
 
 ### `UploadOptions`
 

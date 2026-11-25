@@ -23,7 +23,7 @@ Three things make this more than a parquet reader:
   (DuckDB-WASM would be 3–9 MB, 15–45× the whole widget). Formats and engines
   are *registered*, never lazily imported.
 
-- **Status:** experimental, pre-npm. See the [root README](../../README.md).
+- **Status:** experimental; on npm. See the [root README](../../README.md).
 - **Normative design:** [`docs/design/widgets-architecture.md`](../../docs/design/widgets-architecture.md) §2 (descriptor + filter + worked examples), §3.4 (API), §3.5 (errors).
 - **License:** MIT (code). **Downloaded data keeps its own license** — `estimate()` raises a `share-alike` warning and `DownloadResult.attribution` carries what you must pass on.
 

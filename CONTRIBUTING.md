@@ -1,7 +1,7 @@
 # Contributing
 
-Thanks for looking. This is an experimental repo — the APIs are not frozen
-and nothing is on npm yet — so the most useful contributions right now are
+Thanks for looking. This is an experimental repo — the APIs are not frozen —
+so the most useful contributions right now are
 bug reports from real use, and fixes with a test that failed first.
 
 ## Running it
@@ -24,7 +24,8 @@ python3 serve.py     # then open http://localhost:8000/examples/
 ## Verifying
 
 ```bash
-npm test                              # 711 unit tests, no network
+npm test                              # 1,400+ unit tests; offline but for two integration tests that read source.coop
+npm run check:deck                    # the committed deck.gl bundle equals a fresh build (CI runs this)
 node docs/verify-snippets.mjs         # every snippet in every doc, live data
 node docs/verify-snippets.mjs agents  # just AGENTS.md's recipes
 

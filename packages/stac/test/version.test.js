@@ -6,5 +6,5 @@ import { VERSION } from '../src/index.js';
 test('VERSION matches package.json', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(VERSION, pkg.version);
-  assert.equal(pkg.version, '0.3.1');
+  assert.equal(pkg.version, '0.4.0');
 });

@@ -1,6 +1,6 @@
 {
   "name": "@cngeo/maplibre",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "MapLibre GL adapter for the @cngeo widgets: an accessible search combobox control, an Area outline layer (with a dashed ghost of the filter geometry), a viewport provider for the ranking boost, and antimeridian-aware fitBounds.",
   "keywords": [
     "maplibre",
@@ -32,8 +32,8 @@
     "maplibre-gl": "^4.0.0 || ^5.0.0"
   },
   "dependencies": {
-    "@cngeo/spec": "0.3.1",
-    "@cngeo/timeline": "0.3.1"
+    "@cngeo/spec": "0.4.0",
+    "@cngeo/timeline": "0.4.0"
   },
   "publishConfig": {
     "access": "public"
