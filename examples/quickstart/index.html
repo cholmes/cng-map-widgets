@@ -67,9 +67,9 @@ const map = new maplibregl.Map({
 // below is the whole scheme ('overture' | 'wof' | a manifest URL | the
 // geoBoundaries default).
 const INDEXES = {
-  default: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json',
-  overture: 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.json',
-  wof: 'https://data.source.coop/portolan-mirrors/whosonfirst-catalog/names/index.json',
+  default: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/collection.json',
+  overture: 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/collection.json',
+  wof: 'https://data.source.coop/portolan-mirrors/whosonfirst-catalog/names/collection.json',
 };
 const indexParam = new URLSearchParams(location.search).get('index');
 const indexUrl = indexParam && indexParam.includes('/') ? indexParam : (INDEXES[indexParam] ?? INDEXES.default);

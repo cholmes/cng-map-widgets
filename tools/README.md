@@ -82,8 +82,8 @@ Tested live against all three published catalogs (2026-11-20):
 | catalog | index size | rows | row groups | runtime |
 |---|---|---|---|---|
 | geoBoundaries | 3.9 MB | 52,398 | 35 | ~8s (every row group checked, none skipped) |
-| Overture divisions | 409 MB | 5,604,413 | 876 | ~27s (300/876 row groups sampled) |
-| Who's On First | 604 MB | 9,478,779 | 741 | ~30s (300/741 row groups sampled) |
+| Overture divisions | 409 MB | 5,604,021 | 876 | ~27s (300/876 row groups sampled) |
+| Who's On First | 604 MB | 9,478,998 | 741 | ~30s (300/741 row groups sampled) |
 
 Metadata (the footer) is always read in full -- that's what makes the
 sampling possible. Row data is only ever range-read for the sampled groups.

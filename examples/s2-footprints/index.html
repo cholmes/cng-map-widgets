@@ -171,7 +171,7 @@ const map = new maplibregl.Map({
 // names, ADM0/1/2, CC-BY-4.0) -- so this page works from a fresh clone.
 // `?index=local` falls back to examples/geocoder-demo/data/index.json,
 // the provisional offline build, which is gitignored.
-const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/collection.json';
 const indexUrl = new URLSearchParams(location.search).get('index') === 'local'
   ? '../geocoder-demo/data/index.json'
   : LIVE_INDEX_URL;

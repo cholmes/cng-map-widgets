@@ -55,9 +55,9 @@ const map = new Map({
 
 // Same LIVE/overture/local switch as the MapLibre demo -- see its
 // comments for the full rationale.
-const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json';
+const LIVE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/collection.json';
 const LOCAL_INDEX_URL = './data/index.json';
-const OVERTURE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.json';
+const OVERTURE_INDEX_URL = 'https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/collection.json';
 const indexParam = new URLSearchParams(location.search).get('index');
 const indexUrl = indexParam === 'local' ? LOCAL_INDEX_URL
   : indexParam === 'overture' ? OVERTURE_INDEX_URL
