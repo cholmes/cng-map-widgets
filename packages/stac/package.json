@@ -1,0 +1,44 @@
+{
+  "name": "@cngeo/stac",
+  "version": "0.3.1",
+  "description": "STAC for the map: turn a collection into layer specs, search STAC-GeoParquet imagery, and search a collections.parquet index. Headless; no DOM, no map library.",
+  "keywords": [
+    "stac",
+    "stac-geoparquet",
+    "geoparquet",
+    "imagery-search",
+    "catalog-search",
+    "portolan",
+    "cloud-native",
+    "cng"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@cngeo/spec": "0.3.1",
+    "@cngeo/extract-core": "0.3.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cholmes/cng-map-widgets.git",
+    "directory": "packages/stac"
+  },
+  "homepage": "https://github.com/cholmes/cng-map-widgets#readme",
+  "bugs": {
+    "url": "https://github.com/cholmes/cng-map-widgets/issues"
+  }
+}

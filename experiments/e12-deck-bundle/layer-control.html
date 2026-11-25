@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>E12 Gate B — evaluating maplibre-gl-layer-control</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl-layer-control@0.18.3/dist/maplibre-gl-layer-control.css" />
+<script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px/1.4 system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #status { position: absolute; left: 10px; bottom: 10px; z-index: 5; padding: 6px 10px; border-radius: 6px; background: rgba(255,255,255,.95); box-shadow: 0 1px 6px rgba(0,0,0,.3); }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/maplibre": "../../packages/maplibre/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+<div id="status">loading…</div>
+
+<script type="module">
+// Gate B: is opengeos' maplibre-gl-layer-control a fit for the layer manager
+// (toggle, opacity, reorder, add/remove, deck.gl layers, our theming,
+// keyboard)? This page wires it to two user layers of different kinds:
+//   - a MapLibre style layer (a GeoJSON polygon), which the control handles natively
+//   - a deck.gl COGLayer, through the control's CustomLayerAdapter
+// and exposes hooks (`window.GB`) for layer-control.verify.mjs.
+import { loadDeck } from '@cngeo/maplibre';
+// No import-map entry and no bundler: the published ESM has no bare imports.
+import { LayerControl } from 'https://cdn.jsdelivr.net/npm/maplibre-gl-layer-control@0.18.3/dist/index.mjs';
+
+const statusEl = document.getElementById('status');
+const BASEMAP = 'https://tiles.openfreemap.org/styles/liberty';
+const COGS = {
+  naip: { name: 'NAIP quad', url: 'https://data.source.coop/nthh/naip/ca/2024/60cm/rgb/37122/m_3712213_se_10_060_20240520.tif', bounds: [-122.44025, 37.74788, -122.3722, 37.81463] },
+  naip2: { name: 'NAIP quad (east)', url: 'https://data.source.coop/nthh/naip/ca/2024/60cm/rgb/37122/m_3712214_sw_10_060_20240520.tif', bounds: [-122.3778, 37.74781, -122.30962, 37.81469] },
+};
+
+try {
+  const map = new maplibregl.Map({
+    container: 'map', style: BASEMAP, center: [-122.385, 37.7813], zoom: 12.2,
+    canvasContextAttributes: { preserveDrawingBuffer: true }, fadeDuration: 0,
+  });
+  const { MapLibreOverlay, COGLayer } = await loadDeck();
+  await new Promise((resolve) => (map.loaded() ? resolve() : map.once('load', resolve)));
+
+  // A user style layer.
+  map.addSource('user-poly', {
+    type: 'geojson',
+    data: { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[-122.43, 37.76], [-122.39, 37.76], [-122.39, 37.80], [-122.43, 37.80], [-122.43, 37.76]]] } },
+  });
+  map.addLayer({ id: 'user-poly', type: 'fill', source: 'user-poly', paint: { 'fill-color': '#1a73e8', 'fill-opacity': 0.5 } });
+
+  const overlay = new MapLibreOverlay({ interleaved: true, layers: [] });
+  map.addControl(overlay);
+
+  // deck layers, described from state on every change (deck.gl's idiom).
+  const deckState = new Map(); // id -> { key, visible, opacity }
+  const listeners = new Set();
+  const log = { reorder: [], remove: [], adapterCalls: [] };
+  let cogReady = false;
+  const apply = () => overlay.setProps({
+    layers: [...deckState].map(([id, s]) => new COGLayer({
+      id, source: COGS[s.key].url, visible: s.visible, opacity: s.opacity,
+      onViewportLoad: () => { cogReady = true; },
+    })),
+  });
+
+  /** @type {import('maplibre-gl-layer-control').CustomLayerAdapter} */
+  const deckAdapter = {
+    type: 'deck',
+    getLayerIds: () => [...deckState.keys()],
+    getLayerState: (id) => {
+      const s = deckState.get(id);
+      return s ? { visible: s.visible, opacity: s.opacity, name: COGS[s.key].name } : null;
+    },
+    setVisibility: (id, visible) => { log.adapterCalls.push(['setVisibility', id, visible]); deckState.get(id).visible = visible; apply(); },
+    setOpacity: (id, opacity) => { log.adapterCalls.push(['setOpacity', id, opacity]); deckState.get(id).opacity = opacity; apply(); },
+    getName: (id) => COGS[deckState.get(id).key].name,
+    getSymbolType: () => 'raster',
+    getBounds: (id) => COGS[deckState.get(id).key].bounds,
+    removeLayer: (id) => { log.adapterCalls.push(['removeLayer', id]); deckState.delete(id); apply(); listeners.forEach((cb) => cb('remove', id)); },
+    onLayerChange: (cb) => { listeners.add(cb); return () => listeners.delete(cb); },
+  };
+  const addCog = (key) => { const id = `cog-${key}`; deckState.set(id, { key, visible: true, opacity: 1 }); apply(); listeners.forEach((cb) => cb('add', id)); return id; };
+  const removeCog = (key) => deckAdapter.removeLayer(`cog-${key}`);
+
+  addCog('naip');
+
+  const control = new LayerControl({
+    collapsed: false,
+    basemapStyleUrl: BASEMAP,
+    customLayerAdapters: [deckAdapter],
+    onLayerReorder: (order) => log.reorder.push(order),
+    onLayerRemove: (id) => log.remove.push(id),
+  });
+  map.addControl(control, 'top-right');
+
+  const grab = (bbox) => {
+    const a = map.project([bbox[0], bbox[3]]), b = map.project([bbox[2], bbox[1]]);
+    const w = b.x - a.x, h = b.y - a.y;
+    const rect = { x: a.x + w * 0.3, y: a.y + h * 0.3, w: w * 0.4, h: h * 0.4 };
+    const canvas = map.getCanvas(), scale = canvas.width / canvas.getBoundingClientRect().width;
+    const out = document.createElement('canvas'); out.width = 48; out.height = 48;
+    const ctx = out.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(canvas, rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale, 0, 0, 48, 48);
+    return Array.from(ctx.getImageData(0, 0, 48, 48).data);
+  };
+  const settle = () => new Promise((resolve) => {
+    map.triggerRepaint();
+    const done = () => requestAnimationFrame(() => requestAnimationFrame(resolve));
+    const timer = setTimeout(done, 1500);
+    map.once('idle', () => { clearTimeout(timer); done(); });
+  });
+
+  window.GB = { map, control, overlay, deckState, log, COGS, addCog, removeCog, grab, settle, container: () => control._container ?? document.querySelector('.maplibregl-ctrl-top-right') };
+
+  const started = performance.now();
+  const wait = () => {
+    if (cogReady) statusEl.textContent = 'ready: layer-control';
+    else if (performance.now() - started > 60_000) statusEl.textContent = 'error: TIMEOUT waiting for the COG layer';
+    else setTimeout(wait, 100);
+  };
+  wait();
+} catch (err) {
+  statusEl.textContent = `error: ${err?.code ?? 'UNEXPECTED'} ${err?.message ?? err}`;
+  throw err;
+}
+</script>
+</body>
+</html>

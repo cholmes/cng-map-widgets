@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>E12 — the esm.sh import-map alternative (host-only option)</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
+<style>html, body { margin: 0; height: 100%; } #map { position: absolute; inset: 0; } #status { position: absolute; left: 10px; bottom: 10px; z-index: 5; background: #fff; padding: 6px 10px; font: 13px system-ui; }</style>
+<!--
+  NOT how @cngeo/maplibre loads deck.gl. This page records whether the
+  alternative works at all: every deck/luma package fetched from esm.sh with
+  the SAME `?external=` list, so each leaves its siblings as bare specifiers
+  for this page's import map to resolve to one URL apiece. It needs these
+  entries in the consumer's page, which a package cannot provide -- so it is
+  an option for a host that wants CDN loading, nothing more.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@deck.gl/core": "https://esm.sh/@deck.gl/core@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@deck.gl/layers": "https://esm.sh/@deck.gl/layers@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@deck.gl/geo-layers": "https://esm.sh/@deck.gl/geo-layers@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@deck.gl/mesh-layers": "https://esm.sh/@deck.gl/mesh-layers@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@deck.gl/extensions": "https://esm.sh/@deck.gl/extensions@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@deck.gl/maplibre": "https://esm.sh/@deck.gl/maplibre@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@luma.gl/core": "https://esm.sh/@luma.gl/core@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@luma.gl/engine": "https://esm.sh/@luma.gl/engine@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@luma.gl/shadertools": "https://esm.sh/@luma.gl/shadertools@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@luma.gl/webgl": "https://esm.sh/@luma.gl/webgl@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@math.gl/core": "https://esm.sh/@math.gl/core@4.1.1",
+    "@probe.gl/log": "https://esm.sh/@probe.gl/log@4.1.2",
+    "@developmentseed/deck.gl-raster": "https://esm.sh/@developmentseed/deck.gl-raster@0.10.0?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@developmentseed/deck.gl-raster/gpu-modules": "https://esm.sh/@developmentseed/deck.gl-raster@0.10.0/gpu-modules?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log",
+    "@developmentseed/deck.gl-geotiff": "https://esm.sh/@developmentseed/deck.gl-geotiff@0.10.0?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+<div id="status">loading…</div>
+<script type="module">
+const statusEl = document.getElementById('status');
+try {
+  const [{ MapLibreOverlay }, { COGLayer }, core, coreAgain] = await Promise.all([
+    import('@deck.gl/maplibre'),
+    import('@developmentseed/deck.gl-geotiff'),
+    import('@deck.gl/core'),
+    import('https://esm.sh/@deck.gl/core@9.4.2?external=@deck.gl/core,@deck.gl/layers,@deck.gl/geo-layers,@deck.gl/mesh-layers,@deck.gl/extensions,@luma.gl/core,@luma.gl/engine,@luma.gl/shadertools,@luma.gl/webgl,@math.gl/core,@probe.gl/log'),
+  ]);
+  window.SAME_CORE = core.WebMercatorViewport === coreAgain.WebMercatorViewport;
+  const map = new maplibregl.Map({
+    container: 'map', style: 'https://tiles.openfreemap.org/styles/liberty', center: [-122.4062, 37.7813], zoom: 12.6,
+  });
+  await new Promise((resolve) => map.once('load', resolve));
+  const overlay = new MapLibreOverlay({ interleaved: true, layers: [] });
+  map.addControl(overlay);
+  overlay.setProps({
+    layers: [new COGLayer({
+      id: 'cog',
+      source: 'https://data.source.coop/nthh/naip/ca/2024/60cm/rgb/37122/m_3712213_se_10_060_20240520.tif',
+      onViewportLoad: () => { statusEl.textContent = 'ready: import map'; },
+      onTileError: (err) => { statusEl.textContent = `error: TILE ${err?.message ?? err}`; },
+    })],
+  });
+} catch (err) {
+  statusEl.textContent = `error: LOAD ${err?.message ?? err}`;
+  throw err;
+}
+</script>
+</body>
+</html>
