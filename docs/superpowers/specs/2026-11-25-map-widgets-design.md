@@ -158,8 +158,10 @@ Skip: `@geoarrow/deck.gl-layers` (pulls a second deck.gl 9.3), `maplibre-gl-rast
 - *Raster stretch handling* (`renders`, `portolan:render_order`, named above under
   `layersFromCollection`) was **not** ported. A `cog` layer draws with deck.gl-raster's default pipeline,
   which covers display-ready 8-bit imagery; a COG that needs a stretch (single-band Float32, 16-bit
-  reflectance) is reported as an error, not drawn wrong. The port belongs with Phase 2's scene renderer,
-  which needs the same machinery. `LayerSpec.style` is reserved for it.
+  reflectance) is reported as an error, not drawn wrong. `LayerSpec.style` is reserved for it.
+  *(Revised when Phase 2 was planned: Phase 2 adds a scene as an ordinary `cog` layer, so it has no scene
+  renderer to carry this. Stretches and band composites are proposed as their own later piece of work,
+  "imagery rendering". This is the implementer's call, flagged for Chris.)*
 - *The upstream contributions* to `maplibre-gl-layer-control` (theming, keyboard access) have **not been
   drafted**. The wrapper does both jobs from outside. Drafting them is outstanding and opening them
   still needs Chris's go-ahead.
