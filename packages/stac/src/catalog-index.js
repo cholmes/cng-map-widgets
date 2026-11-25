@@ -12,6 +12,7 @@
 
 import { CngError } from '@cngeo/spec';
 import { queryRows, describeDataset, createPlanCache } from '@cngeo/extract-core';
+import { loadMinisearch } from './minisearch-loader.js';
 
 /**
  * @typedef {Object} CatalogEntry
@@ -206,11 +207,175 @@ export class CatalogIndex {
     return href;
   }
 
+  /**
+   * Find collections. Every filter is optional; with none, everything matches.
+   *
+   * - `text`: every word must be found (in the title, keywords, id or
+   *   description); the last may be unfinished, and a small misspelling is
+   *   forgiven. A title match counts for more than a description match.
+   * - `area`: an `Area`. Keeps collections whose extent intersects it; one
+   *   with no extent is not in any area.
+   * - `time`: `{ start?, end? }`. Keeps collections whose own span overlaps;
+   *   a collection with a start and no end is ongoing; one with no dates is
+   *   in no window.
+   * - `license`, `catalog`, `kinds`: a value or a list. `kinds` is known only
+   *   for an index with a `render` column.
+   *
+   * **Order.** By how well the text matches -- and, when an area is given,
+   * by how much of the collection lies inside it (`fit`, 0..1): a city's own
+   * buildings come before a global buildings layer for the same words. Ties
+   * by title.
+   *
+   * **Facets** say what each filter could be set to and how many collections
+   * that would leave. Each is counted over the matches of all the OTHER
+   * filters, so choosing a licence does not empty the list of licences.
+   *
+   * One search at a time: a new call supersedes the one in flight, which
+   * resolves `{ results: [], total: 0, superseded: true }`.
+   *
+   * @param {{ text?: string, area?: object|null, time?: { start?: string, end?: string }, license?: string|string[],
+   *   catalog?: string|string[], kinds?: string|string[], limit?: number }} [query]
+   * @returns {Promise<{ results: (CatalogEntry & { score: number, fit: number|null })[], total: number,
+   *   facets: { license: Facet[], catalog: Facet[], kinds: Facet[] }, superseded?: true }>}
+   * @typedef {{ value: string, count: number }} Facet
+   */
+  async search(query = {}) {
+    const generation = (this._generation = (this._generation ?? 0) + 1);
+    const superseded = () => ({ results: [], total: 0, facets: { license: [], catalog: [], kinds: [] }, superseded: true });
+    await this.load();
+    if (generation !== this._generation) return superseded();
+
+    const words = typeof query.text === 'string' ? query.text.trim() : '';
+    /** @type {Map<number, number>|null} entry position -> text score; null when there are no words */
+    let textScores = null;
+    if (words) {
+      const mini = await this._textIndex();
+      if (generation !== this._generation) return superseded();
+      textScores = new Map();
+      const hits = mini.search(words, { boost: { title: 3, keywords: 2, id: 2 }, prefix: (term, i, terms) => i === terms.length - 1, fuzzy: 0.2, combineWith: 'AND' });
+      for (const hit of hits) textScores.set(hit.id, hit.score);
+    }
+
+    const viewBoxes = Array.isArray(query.area?.bboxes) && query.area.bboxes.length ? query.area.bboxes : null;
+    const from = query.time?.start ? Date.parse(query.time.start) : null;
+    const to = query.time?.end ? Date.parse(query.time.end) : null;
+    const timed = Number.isFinite(from) || Number.isFinite(to);
+    const chosen = { license: asSet(query.license), catalog: asSet(query.catalog), kinds: asSet(query.kinds) };
+    const facetOk = {
+      license: (e) => !chosen.license || chosen.license.has(e.license),
+      catalog: (e) => !chosen.catalog || chosen.catalog.has(e.catalog),
+      kinds: (e) => !chosen.kinds || e.kinds.some((k) => chosen.kinds.has(k)),
+    };
+
+    const counts = { license: new Map(), catalog: new Map(), kinds: new Map() };
+    const bump = (map, value) => {
+      if (value !== null && value !== undefined && value !== '') map.set(value, (map.get(value) ?? 0) + 1);
+    };
+    const matched = [];
+    this.entries.forEach((entry, position) => {
+      if (textScores && !textScores.has(position)) return;
+      let fit = null;
+      if (viewBoxes) {
+        fit = fitOf(entry.bbox, viewBoxes);
+        if (fit === null) return;
+      }
+      if (timed && !overlaps(entry, from, to)) return;
+      // Past the text, the area and the time. Each facet now counts this
+      // entry if every OTHER facet's choice allows it.
+      const ok = { license: facetOk.license(entry), catalog: facetOk.catalog(entry), kinds: facetOk.kinds(entry) };
+      if (ok.catalog && ok.kinds) bump(counts.license, entry.license);
+      if (ok.license && ok.kinds) bump(counts.catalog, entry.catalog);
+      if (ok.license && ok.catalog) for (const kind of entry.kinds) bump(counts.kinds, kind);
+      if (!ok.license || !ok.catalog || !ok.kinds) return;
+      const text = textScores ? textScores.get(position) : 1;
+      matched.push({ ...entry, score: fit === null ? text : text * (0.25 + 0.75 * fit), fit });
+    });
+    matched.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+    const limit = Number.isFinite(query.limit) && query.limit > 0 ? Math.trunc(query.limit) : 50;
+    const facet = (map) => [...map].map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
+    return { results: matched.slice(0, limit), total: matched.length, facets: { license: facet(counts.license), catalog: facet(counts.catalog), kinds: facet(counts.kinds) } };
+  }
+
+  /** The text index over the loaded entries, built on first use. */
+  _textIndex() {
+    if (!this._mini || this._miniFor !== this.entries) {
+      const entries = this.entries;
+      this._miniFor = entries;
+      this._mini = loadMinisearch().then((MiniSearch) => {
+        const mini = new MiniSearch({
+          idField: 'n',
+          fields: ['title', 'keywords', 'id', 'description'],
+          storeFields: [],
+          extractField: (doc, field) => (field === 'keywords' ? doc.keywords.join(' ') : doc[field]),
+        });
+        mini.addAll(entries.map((e, n) => ({ n, title: e.title, keywords: e.keywords, id: e.id, description: e.description })));
+        return mini;
+      });
+      this._mini.catch(() => {
+        this._mini = null;
+      });
+    }
+    return this._mini;
+  }
+
   /** Forget what was read. The object can be loaded again. */
   close() {
+    this._generation = (this._generation ?? 0) + 1;
     this._loading = null;
+    this._mini = null;
     this.entries = [];
     this.catalogs = [];
     if (this._ownsCache) this._cache.clear();
   }
+}
+
+/** A filter value -- one, or a list -- as a Set; null for "not filtered". */
+function asSet(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const list = (Array.isArray(value) ? value : [value]).filter((v) => v !== undefined && v !== null && v !== '');
+  return list.length ? new Set(list) : null;
+}
+
+/** A `[w, s, e, n]` box as one or two boxes with `w <= e`: two when it crosses the antimeridian. */
+function unwrap(box) {
+  const [w, s, e, n] = box;
+  return w > e ? [[w, s, 180, n], [-180, s, e, n]] : [box];
+}
+
+const areaOfBox = ([w, s, e, n]) => Math.max(0, e - w) * Math.max(0, n - s);
+
+/**
+ * How much of a collection's extent lies inside the view, 0..1 -- or `null`
+ * when it does not touch the view at all (or has no extent).
+ *
+ * The extent's share, not an intersection-over-union: a small local dataset
+ * wholly inside the view is as "here" as one the size of the view, while a
+ * global layer, of which the view is a sliver, is barely here at all.
+ */
+function fitOf(bbox, viewBoxes) {
+  if (!bbox) return null;
+  const extent = unwrap(bbox);
+  let touches = false;
+  let inside = 0;
+  for (const a of extent) {
+    for (const v of viewBoxes) {
+      if (a[0] > v[2] || v[0] > a[2] || a[1] > v[3] || v[1] > a[3]) continue;
+      touches = true;
+      inside += areaOfBox([Math.max(a[0], v[0]), Math.max(a[1], v[1]), Math.min(a[2], v[2]), Math.min(a[3], v[3])]);
+    }
+  }
+  if (!touches) return null;
+  const whole = extent.reduce((sum, b) => sum + areaOfBox(b), 0);
+  // A point or a line has no area to take a share of: it is simply in the view.
+  return whole > 0 ? Math.min(1, inside / whole) : 1;
+}
+
+/** Does the entry's own span overlap `[from, to]` (either may be null for open)? */
+function overlaps(entry, from, to) {
+  const start = entry.start ? Date.parse(entry.start) : null;
+  const end = entry.end ? Date.parse(entry.end) : null;
+  if (start === null && end === null) return false;
+  const lo = start ?? -Infinity;
+  const hi = end ?? Infinity;
+  return (to === null || !Number.isFinite(to) || lo <= to) && (from === null || !Number.isFinite(from) || hi >= from);
 }

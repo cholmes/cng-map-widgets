@@ -210,3 +210,83 @@ dataset is still being prepared.
 order)` reorders scenes already found without reading anything (right only
 when the list is every match — see `truncated`). `close()` stops the search
 and forgets what was cached, unless the cache is one you passed in.
+
+## `CatalogIndex`
+
+Search a catalog of collections, in the browser. A Portolan catalog publishes
+an index of everything in it as one parquet file, `collections.parquet`: a
+row per catalog and per collection.
+
+```js
+import { CatalogIndex } from '@cngeo/stac';
+
+const index = new CatalogIndex('https://registry.portolan-sdi.org/v0.1/collections.parquet');
+await index.load();              // or let the first search do it
+index.entries.length;            // 6,941 collections (2026-11-25)
+
+const { results, total, facets } = await index.search({
+  text: 'buildings',
+  area,                          // an Area: the map view, say
+  time: { start: '2024-01-01T00:00:00Z' },
+  license: 'CC-BY-4.0',
+  limit: 50,
+});
+results[0];      // { key, id, title, description, href, license, keywords, catalog, bbox, start, end, kinds, thumbnail, score, fit }
+facets.license;  // [{ value: 'CC-BY-4.0', count: 87 }, …]
+```
+
+The URL may also be a `catalog.json` that links to its index with
+`rel: "data"`.
+
+**What it reads.** The registry's index is 20 MB, of which 12.5 MB is each
+collection's whole JSON (`original`) and 5.6 MB its `links`. Neither is ever
+read. Titles, descriptions, keywords, extents and licences are 2.1 MB in six
+requests (measured), and the rows are then searched in memory.
+
+**Search.**
+
+- `text`: every word must be found, in the title, keywords, id or
+  description; the last may be unfinished, as it is while typing, and a small
+  misspelling is forgiven. A title match counts for more.
+- `area`: keeps collections whose extent intersects it, on either side of the
+  antimeridian. A collection with no extent is in no area.
+- `time`: keeps collections whose own span overlaps the window. A start with
+  no end means ongoing. A collection with no dates is in no window.
+- `license`, `catalog`, `kinds`: a value or a list.
+- **Order**: by how well the text matches and, when an area is given, by how
+  much of the collection lies inside it (`fit`, 0..1). A city's own buildings
+  come before a global buildings layer for the same words; with no area the
+  two rank by text alone.
+- **Facets** say what each filter could be set to and how many collections
+  that would leave. Each is counted over the matches of all the *other*
+  filters, so choosing a licence does not empty the list of licences.
+- One search at a time: a new call supersedes the one in flight, which
+  resolves `{ results: [], total: 0, superseded: true }`. Safe on every
+  keystroke.
+
+**Things the live index taught it.**
+
+- `id` is not unique across catalogs; `key` (the collection's URL) is.
+- 108 of 7,049 collection rows repeat another row's URL. One collection is
+  one entry; `index.duplicates` says how many were left out.
+- Its host, GitHub Pages, misreports the file's size to a `HEAD` request;
+  `@cngeo/extract-core` no longer asks that way.
+
+**Text search is [MiniSearch](https://github.com/lucaong/minisearch)** (MIT),
+loaded from a pinned URL (`MINISEARCH_URL`) the first time a search has words
+in it — about 0.8 s to index the registry, then 1–3 ms a search. In Node, or
+inside a bundler, hand it in:
+
+```js
+import MiniSearch from 'minisearch';
+import { setMinisearchModules } from '@cngeo/stac';
+setMinisearchModules({ MiniSearch });
+```
+
+`kinds` — whether a collection draws as vector tiles, a COG, imagery scenes
+or not at all — is known only when the index has a `render` column, which the
+registry's does not yet (`index.hasRender`). See
+[`experiments/e13-render-column`](../../experiments/e13-render-column/).
+
+Rejects `CATALOG_INDEX_INVALID` for something that is not a collections
+index. `close()` forgets what was read.
