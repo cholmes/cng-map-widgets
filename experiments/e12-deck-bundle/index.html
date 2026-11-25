@@ -32,7 +32,7 @@
 <div id="status">loading…</div>
 
 <script type="module">
-import { loadDeck, deckSupport, DECK_BUNDLE_URL } from '@cngeo/maplibre';
+import { loadDeck, deckSupport, DECK_BUNDLE_URL, registerKnownProjections, decodePoolFor } from '@cngeo/maplibre';
 import { PMTiles, FetchSource } from 'https://cdn.jsdelivr.net/npm/pmtiles@4.5.0/+esm';
 
 const params = new URLSearchParams(location.search);
@@ -80,6 +80,12 @@ try {
   const bundleOverride = params.get('bundle');
   const deck = await loadDeck(bundleOverride ? { importer: () => import(bundleOverride) } : undefined);
   const { MapLibreOverlay, COGLayer, MVTLayer, MVTLoader, VERSIONS } = deck;
+  // What the `cog` renderer does before its first layer (Phase 2): the UTM
+  // definitions are local, so a NAIP scene (EPSG:26910) asks epsg.io nothing,
+  // and the decode pool is one this page can run. `?projections=off` shows
+  // the request this replaces.
+  const projectionsAdded = params.get('projections') === 'off' ? 0 : registerKnownProjections(deck);
+  const pool = await decodePoolFor(deck);
 
   await new Promise((resolve) => (map.loaded() ? resolve() : map.once('load', resolve)));
 
@@ -140,6 +146,7 @@ try {
         source: COGS[key].url,
         visible: state.visible,
         beforeId: state.beforeId,
+        ...(pool ? { pool } : {}),
         onSourceLoad: (source) => {
           const { west, south, east, north } = source.geographicBounds;
           state.bounds[key] = [west, south, east, north];
@@ -184,6 +191,8 @@ try {
 
   window.E12 = {
     map, overlay, state, VERSIONS,
+    projectionsAdded,
+    workerPool: pool ? Boolean(pool.hasWorkers) : null,
     bundleUrl: bundleOverride ?? DECK_BUNDLE_URL,
     support: deckSupport(),
     interleaved,

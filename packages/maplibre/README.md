@@ -407,6 +407,26 @@ never loads it. `registerLayerRenderer(kind, factory)` adds or replaces a render
 After `map.setStyle()`, which drops every added layer, the stack is put back
 in the same order and state.
 
+**Projections are local.** A COG is reprojected on the GPU from whatever CRS
+it declares, and deck.gl-raster looks that CRS up by EPSG code: from proj4's
+own definitions when it has one (4326, 3857, the WGS84 UTM zones), and from
+`https://epsg.io/<code>.json` otherwise. Before its first layer the `cog`
+renderer therefore calls `registerKnownProjections(deck)`, which defines the
+UTM families imagery is published in — NAD83 (269xx), NAD83(2011)
+(6328–6348), ETRS89 (258xx), SIRGAS 2000 (31965–31985), GDA94 (283xx),
+GDA2020 (78xx) — so a NAIP or OpenAerialMap scene opens without that request
+(measured: one request to epsg.io before, none after). `utmDefinition(epsg)`
+gives the proj4 string, or `null`. A CRS outside those families still goes to
+epsg.io; to avoid that, define it yourself before adding the layer —
+`deck.proj4.defs('EPSG:2154', '…')`, or `deck.registerProjection(2154, wktOrProjjson)`.
+
+**Decoding survives a strict CSP.** Tiles are decompressed in web workers,
+which the prebuilt bundle starts from a Blob URL. A page whose
+Content-Security-Policy does not allow `blob:` in `worker-src` cannot start
+one. That is probed once per page (`canStartBlobWorker()`); where it fails,
+layers decode on the main thread instead — slower, and drawn, rather than
+"ready" and blank.
+
 ### `new LayerControl({ manager, addProviders?, basemapStyleUrl?, collapsed? })`
 
 The panel: toggle, opacity, drag to reorder, and a menu per row (right-click,

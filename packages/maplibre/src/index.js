@@ -43,6 +43,8 @@ export {
   clearDeckModules,
   deckSupport,
 } from './deck-loader.js';
+export { utmDefinition, registerKnownProjections, KNOWN_UTM_CODES } from './projections.js';
+export { decodePoolFor, canStartBlobWorker } from './decode-pool.js';
 export {
   createDrawTool,
   rectangleRingFromCorners,

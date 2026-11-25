@@ -82,3 +82,99 @@ test('a tile error is recorded as a note on the layer, not thrown', async () => 
   overlayLayers(map)[0].props.onTileError(new Error('403 Forbidden'));
   assert.match(manager.get('img').note, /403 Forbidden/);
 });
+
+// --- projections and the decode pool ------------------------------------------------
+
+// E12: the first NAIP scene (EPSG:26910) made a request to epsg.io for its
+// projection. The definitions have to be in place before a layer opens a file.
+test('the cog renderer registers projections before building its first layer', async () => {
+  const mods = fakeDeckModules(DECK_REQUIRED_EXPORTS);
+  const knownWhenBuilt = [];
+  mods.COGLayer = class COGLayer {
+    constructor(props) {
+      this.props = props;
+      this.id = props.id;
+      knownWhenBuilt.push(mods.proj4.defs('EPSG:26910'));
+    }
+  };
+  clearDeckModules();
+  setDeckModules(mods);
+  const manager = new LayerManager(createFakeMap(), { renderers: { cog: cogRenderer } });
+  await manager.add(cog());
+  assert.ok(knownWhenBuilt.length > 0);
+  assert.equal(knownWhenBuilt[0], '+proj=utm +zone=10 +datum=NAD83 +units=m +no_defs');
+});
+
+/** Run `body` with a `Worker` global whose instances behave as `behaviour` says. */
+async function withWorker(behaviour, body) {
+  const had = 'Worker' in globalThis;
+  const before = globalThis.Worker;
+  const started = [];
+  globalThis.Worker = class FakeWorker {
+    constructor(url, options) {
+      if (behaviour === 'throws') throw new DOMException('Refused to create a worker from blob:', 'SecurityError');
+      started.push({ url: String(url), options });
+      this.terminated = false;
+      queueMicrotask(() => (behaviour === 'starts' ? this.onmessage?.({ data: 1 }) : this.onerror?.(new Event('error'))));
+    }
+    terminate() {
+      this.terminated = true;
+    }
+  };
+  try {
+    return await body(started);
+  } finally {
+    if (had) globalThis.Worker = before;
+    else delete globalThis.Worker;
+  }
+}
+
+test('where a module worker starts from a Blob URL, every layer shares the default worker pool', async () => {
+  await withWorker('starts', async (started) => {
+    const map = createFakeMap();
+    const manager = new LayerManager(map, { renderers: { cog: cogRenderer } });
+    await manager.add(cog('a'));
+    await manager.add(cog('b', 'https://example.org/b.tif'));
+    const [a, b] = overlayLayers(map);
+    assert.equal(a.props.pool.kind, 'default-worker-pool');
+    assert.equal(b.props.pool, a.props.pool, 'one pool for the page');
+    assert.equal(started.length, 1, 'probed once, not per layer');
+    assert.match(started[0].url, /^blob:/);
+    assert.equal(started[0].options.type, 'module');
+  });
+});
+
+// A page whose Content-Security-Policy forbids `blob:` workers: some browsers
+// throw from the constructor, others fire `error` on the worker.
+test('where a Blob worker cannot start, layers decode on the main thread instead of drawing nothing', async () => {
+  for (const behaviour of ['throws', 'errors']) {
+    await withWorker(behaviour, async () => {
+      clearDeckModules();
+      setDeckModules(fakeDeckModules(DECK_REQUIRED_EXPORTS));
+      const map = createFakeMap();
+      const manager = new LayerManager(map, { renderers: { cog: cogRenderer } });
+      const entry = await manager.add(cog());
+      assert.equal(entry.status, 'ready');
+      const { pool } = overlayLayers(map)[0].props;
+      assert.equal(pool.kind, 'decoder-pool', behaviour);
+      assert.deepEqual(pool.options, {}, 'no createWorker: DecoderPool then decodes on the main thread');
+    });
+  }
+});
+
+test('with no Worker at all (Node, an old webview) the main-thread pool is used', async () => {
+  assert.equal(typeof globalThis.Worker, 'undefined');
+  const map = createFakeMap();
+  const manager = new LayerManager(map, { renderers: { cog: cogRenderer } });
+  await manager.add(cog());
+  assert.equal(overlayLayers(map)[0].props.pool.kind, 'decoder-pool');
+});
+
+test('the pool is the same object on every rebuild, so deck.gl does not see a changed prop', async () => {
+  const map = createFakeMap();
+  const manager = new LayerManager(map, { renderers: { cog: cogRenderer } });
+  await manager.add(cog());
+  const first = overlayLayers(map)[0].props.pool;
+  manager.setOpacity('img', 0.3);
+  assert.equal(overlayLayers(map)[0].props.pool, first);
+});

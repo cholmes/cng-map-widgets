@@ -169,6 +169,17 @@ export function fakeDeckModules(required) {
       this.id = props.id;
     }
   }
+  /** `new DecoderPool({})` -- no `createWorker` -- is the real class's main-thread mode. */
+  class DecoderPool {
+    constructor(options) {
+      this.kind = 'decoder-pool';
+      this.options = options;
+    }
+  }
+  const defaultDecoderPool = () => ({ kind: 'default-worker-pool' });
+  // proj4's `defs(name)` / `defs(name, definition)`.
+  const definitions = new Map();
+  const proj4 = { defs: (name, def) => (def === undefined ? definitions.get(name) : void definitions.set(name, def)) };
   const mods = Object.fromEntries(required.map((name) => [name, {}]));
-  return { ...mods, MapLibreOverlay, COGLayer, VERSIONS: { deck: 'fake', raster: 'fake' } };
+  return { ...mods, MapLibreOverlay, COGLayer, DecoderPool, defaultDecoderPool, proj4, VERSIONS: { deck: 'fake', raster: 'fake' } };
 }

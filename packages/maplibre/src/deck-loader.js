@@ -47,6 +47,9 @@ export const DECK_REQUIRED_EXPORTS = Object.freeze([
   'DataFilterExtension',
   'MVTLoader',
   'DecoderPool',
+  'defaultDecoderPool',
+  'proj4',
+  'epsgResolver',
   'gpuModules',
   'VERSIONS',
 ]);
@@ -54,9 +57,10 @@ export const DECK_REQUIRED_EXPORTS = Object.freeze([
 /**
  * Transferred weight (gzip) a UI can show before loading anything -- the
  * deferred-plugin contract `@cngeo/raster-core`'s APPROX_BYTES established.
- * Measured: `gzip -9` of the committed bundle is 446,204 bytes (1,495,266
- * raw), 2026-11-25 -- experiments/e12-deck-bundle/RESULTS.md. Re-measure
- * when the bundle is rebuilt.
+ * Measured: `gzip -9` of the committed bundle is 446,265 bytes (1,495,398
+ * raw), 2026-11-25, after Phase 2 added the projection exports (it was
+ * 446,204 / 1,495,266 in experiments/e12-deck-bundle/RESULTS.md).
+ * Re-measure when the bundle is rebuilt.
  */
 export const APPROX_BYTES = { deck: 446_000 };
 
