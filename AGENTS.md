@@ -33,8 +33,8 @@ Live catalogs you can use right now:
 GB  https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json
     52,398 names, ADM0/1/2, CC-BY-4.0, 3.9 MB index (full-load)
 OV  https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.json
-    5,604,413 names, 5 levels, multilingual, ODbL-1.0 SHARE-ALIKE, 409 MB index
-    (range path) + an 8.6 MB eager "prominent" subset
+    5,604,021 names, 5 levels, multilingual, ODbL-1.0 SHARE-ALIKE, 409 MB index
+    (range path) + a 12.9 MB eager "prominent" subset
 ```
 
 ---

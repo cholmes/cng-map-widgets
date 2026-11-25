@@ -339,9 +339,9 @@ Two live catalogs, both published as Portolan catalogs on
 | | geoBoundaries | Overture |
 |---|---|---|
 | manifest | [`geoboundaries-catalog/names/index.json`](https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json) | [`cn-gazetteer-overture/names/index.json`](https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.json) |
-| names | 52,398 | 5,604,413 (3.57M primary + 2.03M alternate-language) |
+| names | 52,398 | 5,604,021 (3.57M primary + 2.03M alternate-language) |
 | levels | ADM0–2 | country/dependency, region, county, localadmin, locality |
-| index size | 3.9 MB (full-load) | 409 MB (range path) + an 8.6 MB eager "prominent" subset |
+| index size | 3.9 MB (full-load) | 409 MB (range path) + a 12.9 MB eager "prominent" subset |
 | multilingual | no | yes |
 | **license** | **CC-BY-4.0** — clean | **ODbL-1.0, share-alike** + CC-BY components |
 

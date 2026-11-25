@@ -23,12 +23,12 @@ export const GAZETTEERS = [
   {
     param: 'overture',
     name: 'Overture',
-    blurb: '5,604,413 names · 5 levels · multilingual · ODbL (share-alike)',
+    blurb: '5,604,021 names · 5 levels · multilingual · ODbL (share-alike)',
   },
   {
     param: 'wof',
     name: "Who's On First",
-    blurb: '9,478,779 names · levels 0–5 · mixed open licenses',
+    blurb: '9,478,998 names · levels 0–5 · mixed open licenses',
   },
 ];
 
