@@ -278,6 +278,35 @@ Skip: `@geoarrow/deck.gl-layers` (pulls a second deck.gl 9.3), `maplibre-gl-rast
   add-provider. `indexUrl` defaults to `https://registry.portolan-sdi.org/v0.1/collections.parquet`.
 - Example `examples/catalog-search/`.
 
+**Phase 3 as built, 2026-11-25 — where it differs from the above:**
+- *The registry index could not be opened at all* until the reader stopped trusting `HEAD`: GitHub Pages
+  answers it with the gzip-encoded length and hides `Content-Range`. `remoteByteLength()` in
+  `@cngeo/extract-core` asks with a ranged request instead, for every parquet file opened. The index is
+  20.4 MB (not 19.2), of which a search reads 2.2 MB.
+- *17,585 rows, not ~7,000*: 10,536 are catalogs. 108 collection rows repeat another's `href` — the same
+  collection under a second catalog — so an entry's identity is its `href` and it lists every catalog it
+  is under. Collection ids are not unique either (23 are shared by drawable collections), so the panel
+  tells two layers apart by their source, not their id.
+- *Three columns, not two*: `attribution` beside `render` and `thumbnail`. A layer added from the index
+  alone has no other way to be credited. The `render` struct is
+  `kind, id, title, url, style, layers, display_asset, items, reason`, not the one sketched above.
+- *E13's numbers*: the three columns are 454 KB as zstd parquet (about 0.5 MB from the registry's own
+  writer) against the 2.1 MB a search loads; 4,842 of 7,049 collections draw as one layer and 2,047 are
+  tables; rebuilt from the columns, 6,940 of 6,941 collections give identical layers. The spec draft
+  does NOT slot into the incubating document as it stands — that document says Portolan defines no
+  variant of the catalog index — and says so. Nothing was proposed or uploaded.
+- *`fit` is the share of a collection's extent inside the view*, not an intersection-over-union: the
+  latter scores a small local dataset near zero, like a global one.
+- *Text search* folds accents and gives one letter only on words of six or more; `within` was not built
+  (the `catalog` filter covers the registry's case).
+- *Facets are menus, not chips* (100 catalogs, 21 licences). *The control takes an `index`*, so it has no
+  URL default; the example supplies the registry's. *`catalogAddProvider(control)`* opens the panel
+  already on the map rather than building a second one in the layer panel's popover.
+- *`kinds` filtering and request-free adding exist only for an index with a `render` column.* Against the
+  registry today, what a collection draws as is known only once it is opened.
+- *A Phase 1 bug surfaced*: a published style whose tiles are `pmtiles://https://…/{z}/{x}/{y}` had its
+  address mangled. Fixed in `style-plan.js`.
+
 ## Phase 4 — timeline
 
 Source: `~/repos/firms-catalog/apps/firms-explorer/`. `timeline.js`, `mounted.js` and `deck-cells.js` are
