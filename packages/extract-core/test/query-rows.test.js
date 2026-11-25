@@ -11,7 +11,9 @@ import { createHash } from 'node:crypto';
 import './helpers/hyparquet-setup.js';
 import { buildArea } from '@cngeo/spec';
 import { queryRows, createPlanCache, download, memorySink } from '../src/index.js';
+import { parquetWriteBuffer } from 'hyparquet-writer';
 import { buildScenes, scenesDataset, scenesHost, SCENES_URL } from './helpers/scenes-fixture.js';
+import { squareWkb } from './helpers/fake-parquet-host.js';
 
 const ALL = { spec: 'cng-filter/1.0', spatial: { mode: 'intersects' } };
 const ids = (rows) => rows.map((r) => r.id);
@@ -132,6 +134,34 @@ test("geometry: 'none' with no area and no covering still returns every row", as
   const result = await queryRows(scenesDataset({ covering: false }), null, ALL, { fetch: host.fetch, geometry: 'none' });
   assert.equal(result.rows.length, 12);
   assert.equal('geometry' in result.rows[0], false);
+});
+
+// Phase 2 review, I8: the same zero-rows failure, by another door. A
+// STAC-GeoParquet `bbox` is often a LIST `[w, s, e, n]` (Sentinel-2's is). A
+// group named `bbox` is inferred as a struct covering, read, and yields no
+// box for any row -- and with the geometry not read either, every row was
+// dropped as "has no geometry".
+test("geometry: 'none' on a table whose bbox is a list, with no area, returns every row", async () => {
+  const str = (name) => ({ name, type: 'BYTE_ARRAY', converted_type: 'UTF8', repetition_type: 'OPTIONAL' });
+  const columns = [
+    str('id'),
+    [{ name: 'bbox', repetition_type: 'OPTIONAL', converted_type: 'LIST', num_children: 1 }, { name: 'list', repetition_type: 'REPEATED', num_children: 1 }, { name: 'element', type: 'DOUBLE', repetition_type: 'OPTIONAL' }],
+    { name: 'geometry', type: 'BYTE_ARRAY', repetition_type: 'OPTIONAL' },
+  ];
+  const rows = [0, 1, 2, 3, 4, 5].map((i) => ({ id: `s${i}`, bbox: [i, 0, i + 1, 1], geometry: squareWkb(i, 0, 1) }));
+  const bytes = new Uint8Array(parquetWriteBuffer({
+    columnData: ['id', 'bbox', 'geometry'].map((name) => ({ name, data: rows.map((r) => r[name]) })),
+    schema: [{ name: 'schema', num_children: columns.length }, ...columns.flat()],
+    rowGroupSize: 3,
+  }));
+  const host = scenesHost(bytes);
+  const dataset = { spec: 'cng-dataset/1.0', id: 'list-bbox', source: { kind: 'parquet', url: SCENES_URL } };
+  const none = await queryRows(dataset, null, ALL, { fetch: host.fetch, geometry: 'none' });
+  assert.deepEqual(ids(none.rows), ['s0', 's1', 's2', 's3', 's4', 's5']);
+  // ...and with the geometry, nothing changed.
+  const full = await queryRows(dataset, null, ALL, { fetch: host.fetch });
+  assert.equal(full.rows.length, 6);
+  assert.equal(full.rows[0].geometry.type, 'Polygon');
 });
 
 test('limit truncates and reports it', async () => {

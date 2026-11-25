@@ -26,23 +26,27 @@
 //   and a footer that no longer describes its file reads garbage. `evict(url)`
 //   drops one file for a caller that has noticed exactly that.
 
-import { CancelledError } from '@cngeo/spec';
+import { CngError, CancelledError } from '@cngeo/spec';
 
 /**
  * @typedef {Object} PlanCache
- * @property {(key: string, load: () => Promise<any>) => Promise<any>} parts   A part listing, by enumeration identity.
- * @property {(url: string, load: () => Promise<any>) => Promise<any>} footer  A file's footer, by URL.
+ * @property {(key: string, load: (signal?: AbortSignal) => Promise<any>) => Promise<any>} parts   A part listing, by enumeration identity.
+ * @property {(url: string, load: (signal?: AbortSignal) => Promise<any>) => Promise<any>} footer  A file's footer, by URL.
+ *   `load` is given the signal of the load's own time limit; pass it to every request it makes.
  * @property {(url: string) => void} evict   Forget one file's footer.
  * @property {() => void} clear              Forget everything.
  * @property {() => { partListings: number, footers: number, hits: number, misses: number }} stats
  */
 
 /**
- * @param {{ maxAgeMs?: number, now?: () => number }} [options]
+ * @param {{ maxAgeMs?: number, loadTimeoutMs?: number, now?: () => number }} [options]
+ *   `maxAgeMs` (10 minutes): how long an entry is used. `loadTimeoutMs` (2 minutes): how long one
+ *   listing or footer read may take before it is abandoned; `0` for no limit.
  * @returns {PlanCache}
  */
 export function createPlanCache(options = {}) {
   const maxAgeMs = options.maxAgeMs ?? 600_000;
+  const loadTimeoutMs = options.loadTimeoutMs ?? 120_000;
   const now = options.now ?? Date.now;
   /** @type {Map<string, { at: number, promise: Promise<any>, settled: boolean }>} */
   const partListings = new Map();
@@ -50,7 +54,7 @@ export function createPlanCache(options = {}) {
   let hits = 0;
   let misses = 0;
 
-  function get(map, key, load) {
+  function get(map, key, load, what) {
     const held = map.get(key);
     if (held && now() - held.at <= maxAgeMs) {
       hits++;
@@ -58,7 +62,7 @@ export function createPlanCache(options = {}) {
     }
     misses++;
     const entry = { at: now(), promise: null, settled: false };
-    entry.promise = Promise.resolve().then(load);
+    entry.promise = Promise.resolve().then(() => withTimeout(load, loadTimeoutMs, what));
     entry.promise.then(
       () => {
         entry.settled = true;
@@ -72,8 +76,8 @@ export function createPlanCache(options = {}) {
   }
 
   return {
-    parts: (key, load) => get(partListings, key, load),
-    footer: (url, load) => get(footers, url, load),
+    parts: (key, load) => get(partListings, key, load, "the list of the dataset's files"),
+    footer: (url, load) => get(footers, url, load, `the footer of ${url}`),
     evict(url) {
       footers.delete(url);
     },
@@ -88,6 +92,47 @@ export function createPlanCache(options = {}) {
       misses,
     }),
   };
+}
+
+/**
+ * Run a shared load under a time limit.
+ *
+ * A shared load runs without any caller's signal, so nothing a caller does can
+ * stop it -- and a request that never answers would otherwise sit in the cache
+ * as a promise that never settles, handed to every later caller until the
+ * entry expired. The limit is that load's own: when it passes, the load's
+ * signal aborts (so its requests are dropped), the load rejects as a
+ * retryable `NETWORK` error with `context.reason: 'timeout'`, and -- being a
+ * failure -- it is not kept.
+ * @param {(signal: AbortSignal|undefined) => Promise<any>} load
+ * @param {number} ms `0` (or anything not a positive finite number) means no limit.
+ * @param {string} what For the message: "the footer of <url>".
+ */
+async function withTimeout(load, ms, what) {
+  if (!(ms > 0) || !Number.isFinite(ms)) return load(undefined);
+  const controller = new AbortController();
+  const timedOut = () =>
+    new CngError(`Timed out after ${ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`} waiting for ${what}.`, 'NETWORK', {
+      retryable: true,
+      context: { reason: 'timeout', timeoutMs: ms },
+    });
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(timedOut());
+    }, ms);
+  });
+  const work = Promise.resolve().then(() => load(controller.signal));
+  work.catch(() => {}); // once the limit has won, the load's own failure is nobody's to handle
+  try {
+    return await Promise.race([work, limit]);
+  } catch (err) {
+    // The abort itself surfaces from the load as a cancellation; say what it was.
+    throw controller.signal.aborted ? timedOut() : err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

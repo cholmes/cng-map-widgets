@@ -181,7 +181,12 @@ try {
     const data = typeof source.getData === 'function' ? await source.getData() : (source._data?.geojson ?? source._data);
     return data?.features ?? null;
   };
-  window.DEMO = { map, manager, search, model: control.model, profile, control, settle, grab, grabWithCoords, viewBox, footprints };
+  window.DEMO = {
+    map, manager, search, profile, control, settle, grab, grabWithCoords, viewBox, footprints,
+    styleUrl: STYLE_URL,
+    /** The control's CURRENT model: it makes a new one if it is removed and added again. */
+    get model() { return control.model; },
+  };
 } catch (err) {
   setStatus(`error: ${err?.code ?? 'UNEXPECTED'} — ${err?.message ?? err}`);
   throw err;

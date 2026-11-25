@@ -68,8 +68,13 @@ async function runCase(key, expect, page) {
   // A request the browser never got a response to: these are the data host's
   // or the network's, and are reported apart from the page's own errors.
   const dropped = [];
+  /** Requests the PAGE cancelled (a superseded search stopping its reads). */
+  const aborted = [];
   page.on('requestfailed', (req) => {
-    if (!req.url().startsWith(`http://localhost:${port}/`)) dropped.push(`${req.failure()?.errorText ?? 'failed'} ${req.url().slice(0, 90)}`);
+    if (req.url().startsWith(`http://localhost:${port}/`)) return;
+    const why = req.failure()?.errorText ?? 'failed';
+    if (/ERR_ABORTED/.test(why)) aborted.push(req.url());
+    else dropped.push(`${why} ${req.url().slice(0, 90)}`);
   });
   page.on('response', (res) => {
     const req = res.request();
@@ -149,26 +154,38 @@ async function runCase(key, expect, page) {
   }
 
   // --- 4. A second search, started while the first is in flight, wins outright --------
+  // "In flight" has to be true. The first version started the second search
+  // in the same tick, before the first had sent anything, and so tested
+  // nothing about a real network. Now the first search is left to announce
+  // its plan -- its row reads go out at that moment -- and the browser's own
+  // log must then show requests of its that were ABORTED.
+  const abortedBefore = aborted.length;
   const race = await page.evaluate(async (narrow) => {
     const D = window.DEMO;
     const [from, to] = document.querySelectorAll('.cng-is-form input[type="date"]');
-    const delivered = [];
-    const off = D.model.on('change', (s) => delivered.push(s.scenes.length));
     const wide = D.control.search();
+    const reading = await new Promise((resolve) => {
+      const off = D.model.on('change', (s) => {
+        if (!s.plan && s.status === 'searching') return;
+        off();
+        resolve(s.status === 'searching');
+      });
+    });
+    await new Promise((r) => setTimeout(r, 0)); // let the reads actually leave
     from.value = narrow.start;
     to.value = narrow.end;
     const second = D.control.search();
     await Promise.all([wide, second]);
-    off();
     const s = D.model.state;
-    return { status: s.status, time: s.time, scenes: s.scenes.map((x) => ({ id: x.id, at: x.datetime ?? x.start, end: x.end ?? x.datetime })) };
+    return { reading, status: s.status, time: s.time, scenes: s.scenes.map((x) => ({ id: x.id, at: x.datetime ?? x.start, end: x.end ?? x.datetime })) };
   }, expect.narrow);
   {
     const lo = Date.parse(`${expect.narrow.start}T00:00:00Z`);
     const hi = Date.parse(`${expect.narrow.end}T00:00:00Z`) + 86_400_000;
     const stray = race.scenes.filter((s) => !(Date.parse(s.end) >= lo && Date.parse(s.at) < hi));
-    check(key, "a superseding search leaves only its own scenes", race.status === 'done' && race.scenes.length > 0 && stray.length === 0,
-      `${race.scenes.length} scenes, all within ${expect.narrow.start}..${expect.narrow.end}: ${stray.length === 0}${stray.length ? ` (stray: ${stray.map((s) => `${s.id} ${s.at}`).join(', ')})` : ''}`);
+    const stopped = aborted.length - abortedBefore;
+    check(key, 'a search superseded while it is reading stops, and leaves only the new one\'s scenes', race.reading && stopped > 0 && race.status === 'done' && race.scenes.length > 0 && stray.length === 0,
+      `the first search was reading: ${race.reading}; ${stopped} of its requests were aborted by the browser; ${race.scenes.length} scenes, all within ${expect.narrow.start}..${expect.narrow.end}: ${stray.length === 0}${stray.length ? ` (stray: ${stray.map((s) => `${s.id} ${s.at}`).join(', ')})` : ''}`);
   }
 
   // --- 5. The same search again pays for rows only -------------------------------------
@@ -248,11 +265,15 @@ async function runCase(key, expect, page) {
     await park();
   }
 
-  // --- 6b. The Order menu orders ---------------------------------------------------------
+  // --- 6b. The Order menu orders, at once ---------------------------------------------------
   // Oldest first for every collection; then, where the collection has cloud
   // cover, least cloudy first -- which is also the scene worth adding below
   // (a deck of white cloud over a pale basemap is a poor test of "it drew").
+  // Choosing an order has to change the list THEN, not at the next Search
+  // (Phase 2 review, M2) -- and, since every match is already here, without
+  // asking the network again.
   {
+    const before = network.length;
     const sortBy = async (label) => page.evaluate(async (text) => {
       const D = window.DEMO;
       const select = [...document.querySelectorAll('.cng-is-form select')].at(-1);
@@ -260,16 +281,24 @@ async function runCase(key, expect, page) {
       if (!option) return null;
       select.value = option.value;
       select.dispatchEvent(new Event('change', { bubbles: true }));
-      await D.control.search();
-      return D.model.state.scenes.map((s) => ({ at: Date.parse(s.datetime ?? s.start), cloud: s.properties['eo:cloud_cover'] ?? null }));
+      await new Promise((r) => setTimeout(r, 0));
+      const s = D.model.state;
+      return {
+        status: s.status,
+        error: s.error?.message ?? null,
+        scenes: s.scenes.map((x) => ({ at: Date.parse(x.datetime ?? x.start), cloud: x.properties['eo:cloud_cover'] ?? null })),
+        cards: [...document.querySelectorAll('.cng-is-card')].map((c) => c.dataset.sceneId).join('|') === s.scenes.map((x) => x.id).join('|'),
+      };
     }, label);
     const ascending = (values) => values.every((v, i) => i === 0 || values[i - 1] <= v);
     const oldest = await sortBy('Oldest first');
     const cloud = await sortBy('Lowest cloud cover (%)');
-    const cloudOk = cloud === null || (cloud.length > 0 && ascending(cloud.map((s) => s.cloud)));
+    const oldestOk = oldest?.status === 'done' && oldest.scenes.length > 0 && oldest.cards && ascending(oldest.scenes.map((s) => s.at));
+    const cloudOk = cloud === null || (cloud.status === 'done' && cloud.scenes.length > 0 && cloud.cards && ascending(cloud.scenes.map((s) => s.cloud)));
     if (cloud === null) await sortBy('Newest first');
-    check(key, 'the Order menu orders the results', Boolean(oldest?.length) && ascending(oldest.map((s) => s.at)) && cloudOk,
-      `oldest first: ${oldest?.length} scenes in date order: ${Boolean(oldest) && ascending(oldest.map((s) => s.at))}; ${cloud === null ? 'no cloud cover to order by' : `least cloudy first: ${cloud.slice(0, 4).map((s) => s.cloud?.toFixed(1)).join(', ')}…`}`);
+    const asked = network.length - before;
+    check(key, 'the Order menu reorders the list at once, with no new request', oldestOk && cloudOk && asked === 0,
+      `oldest first: ${oldest?.scenes.length} scenes, ${oldest?.status}${oldest?.error ? ` (${oldest.error})` : ''}, in date order: ${oldestOk}; ${cloud === null ? 'no cloud cover to order by' : `least cloudy first: ${cloud.scenes.slice(0, 4).map((s) => s.cloud?.toFixed(1)).join(', ')}… (${cloud.status}${cloud.error ? `: ${cloud.error}` : ''})`}; ${asked} requests made`);
   }
 
   // --- 7. "Add to map" ends in a ready layer and in pixels --------------------------------
@@ -374,6 +403,90 @@ async function runCase(key, expect, page) {
     }));
     check(key, "the collection's credit is displayed, on the map and in the panel", Boolean(info.credit) && credit.map.includes(info.credit) && credit.panel.includes(info.credit),
       `"${info.credit}" — panel: "${credit.panel}"`);
+  }
+
+  // --- 9b. The panel's words stay put (Phase 2 review, I5) -------------------------------------
+  // Hovering a card used to rebuild the whole status: an opened narration
+  // snapped shut, and the announced line was re-inserted for a screen reader
+  // on every pointer move.
+  {
+    await park();
+    const out = await page.evaluate(async () => {
+      const details = document.querySelector('.cng-is-plan');
+      const live = document.querySelector('.cng-is-status-line');
+      details.open = true;
+      let mutations = 0;
+      const observer = new MutationObserver((records) => { mutations += records.length; });
+      observer.observe(live, { childList: true, characterData: true, subtree: true });
+      const cards = [...document.querySelectorAll('.cng-is-card')];
+      for (const card of cards.slice(0, 3)) {
+        card.dispatchEvent(new MouseEvent('mouseenter'));
+        card.dispatchEvent(new MouseEvent('mouseleave'));
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      observer.disconnect();
+      return { open: details.open, mutations, hidden: details.hidden, stages: details.querySelectorAll('li').length, live: live.getAttribute('aria-live'), text: live.textContent };
+    });
+    check(key, 'hovering does not close the plan narration or re-announce the status', out.open && !out.hidden && out.stages > 0 && out.mutations === 0 && out.live === 'polite',
+      `narration open after three hovers: ${out.open} (${out.stages} stages); ${out.mutations} changes to the live region ("${out.text}")`);
+  }
+
+  // --- 9c. `map.setStyle()` (Phase 2 review, I3) -------------------------------------------------
+  // The footprints are style layers, and a new style drops them. They have to
+  // come back by themselves -- above the image, which the manager restores.
+  {
+    const out = await page.evaluate(async () => {
+      const D = window.DEMO;
+      const before = (await D.footprints())?.length ?? 0;
+      const loaded = new Promise((resolve) => D.map.once('style.load', resolve));
+      D.map.setStyle(D.styleUrl, { diff: false });
+      await loaded;
+      await new Promise((resolve) => D.map.once('idle', resolve));
+      await D.settle();
+      const all = D.map.getLayersOrder();
+      const label = all.find((id) => !id.startsWith('cng-layer-') && !id.startsWith('deck-maplibre-layer-group') && D.map.getLayer(id)?.type === 'symbol');
+      return {
+        before,
+        after: (await D.footprints())?.length ?? null,
+        fill: all.indexOf('cng-layer-imagery-footprints--fill'),
+        line: all.indexOf('cng-layer-imagery-footprints--line'),
+        label: all.indexOf(label),
+        deck: all.map((id, i) => (id.startsWith('deck-maplibre-layer-group') ? i : -1)).filter((i) => i >= 0),
+        layers: D.manager.list().map((e) => e.status),
+      };
+    });
+    check(key, 'after map.setStyle() the footprints are back, above the image and below the labels',
+      out.before > 0 && out.after === out.before && out.fill >= 0 && out.line === out.fill + 1 && out.label === out.line + 1 && out.deck.length > 0 && out.deck.every((i) => i < out.fill),
+      `${out.after} of ${out.before} footprints; deck.gl group at ${JSON.stringify(out.deck)}, fill ${out.fill}, line ${out.line}, first label at ${out.label}; layers ${out.layers.join(', ')}`);
+  }
+
+  // --- 9d. Remove the control and add it again (Phase 2 review, I4) --------------------------------
+  // What a React wrapper does to one instance: mount, unmount, mount.
+  {
+    const out = await page.evaluate(async () => {
+      const D = window.DEMO;
+      D.map.removeControl(D.control);
+      const gone = {
+        panels: document.querySelectorAll('.cng-imagery-search').length,
+        source: Boolean(D.map.getSource('cng-layer-imagery-footprints')),
+        layers: D.map.getLayersOrder().filter((id) => id.startsWith('cng-layer-imagery-footprints')).length,
+      };
+      D.map.addControl(D.control, 'top-left');
+      await D.control.ready;
+      await D.control.search();
+      const s = D.model.state;
+      return {
+        gone,
+        panels: document.querySelectorAll('.cng-imagery-search').length,
+        title: document.querySelector('.cng-is-header h3')?.textContent ?? '',
+        status: s.status,
+        scenes: s.scenes.length,
+        cards: document.querySelectorAll('.cng-is-card').length,
+        footprints: (await D.footprints())?.length ?? null,
+      };
+    });
+    check(key, 'the control can be removed and added again', out.gone.panels === 0 && !out.gone.source && out.gone.layers === 0 && out.panels === 1 && Boolean(out.title) && out.status === 'done' && out.scenes > 0 && out.cards === out.scenes && out.footprints === out.scenes,
+      `removed: ${out.gone.panels} panels, source left: ${out.gone.source}, ${out.gone.layers} layers left; added again: "${out.title}", ${out.status}, ${out.scenes} scenes, ${out.cards} cards, ${out.footprints} footprints`);
   }
 
   // --- 10. Thumbnails are lazy and http(s); nothing went to epsg.io; no console errors -----

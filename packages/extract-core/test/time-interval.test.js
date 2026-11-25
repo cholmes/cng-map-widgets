@@ -133,7 +133,31 @@ test('with no interval, row-group pruning is exactly what it was', () => {
 
 // --- discovery -----------------------------------------------------------------
 
-const schema = (...names) => ({ schema: [{ name: 'root', num_children: names.length }, ...names.map((name) => ({ name }))] });
+// Time columns here are timestamps, as STAC-GeoParquet writes them; anything else is a string.
+const TIMESTAMP = { type: 'INT64', logical_type: { type: 'TIMESTAMP', isAdjustedToUTC: true, unit: 'MICROS' } };
+const STRING = { type: 'BYTE_ARRAY', converted_type: 'UTF8' };
+const schemaOf = (columns) => ({ schema: [{ name: 'root', num_children: columns.length }, ...columns] });
+const schema = (...names) => schemaOf(names.map((name) => ({ name, ...(name.endsWith('datetime') ? TIMESTAMP : STRING) })));
+
+// Phase 2 review, M1: the name alone is not enough. A bare file whose
+// `datetime` is epoch SECONDS in an INT64 was given a time column, compared
+// as milliseconds, and returned nothing -- where before its filter was at
+// least skipped with a warning.
+test('inferTableFromSchema takes a time column by name only when its type can hold a time', () => {
+  const timeColumnOf = (el) => inferTableFromSchema(schemaOf([{ name: 'id', ...STRING }, { name: 'datetime', ...el }, { name: 'geometry', type: 'BYTE_ARRAY' }])).timeColumn;
+  assert.equal(timeColumnOf(TIMESTAMP), 'datetime');
+  assert.equal(timeColumnOf(STRING), 'datetime', 'ISO strings');
+  assert.equal(timeColumnOf({ type: 'BYTE_ARRAY', logical_type: { type: 'STRING' } }), 'datetime');
+  assert.equal(timeColumnOf({ type: 'INT64', converted_type: 'TIMESTAMP_MILLIS' }), 'datetime');
+  assert.equal(timeColumnOf({ type: 'INT32', logical_type: { type: 'DATE' } }), 'datetime');
+  assert.equal(timeColumnOf({ type: 'INT96' }), 'datetime', 'the legacy timestamp');
+  assert.equal(timeColumnOf({ type: 'INT64' }), undefined, 'a bare integer: seconds? milliseconds? not ours to guess');
+  assert.equal(timeColumnOf({ type: 'DOUBLE' }), undefined);
+  // The pair needs both to qualify.
+  const pair = (endType) => inferTableFromSchema(schemaOf([{ name: 'start_datetime', ...TIMESTAMP }, { name: 'end_datetime', ...endType }, { name: 'geometry', type: 'BYTE_ARRAY' }])).timeInterval;
+  assert.deepEqual(pair(TIMESTAMP), { start: 'start_datetime', end: 'end_datetime' });
+  assert.equal(pair({ type: 'INT64' }), undefined);
+});
 
 test('inferTableFromSchema finds datetime, and the interval pair, by their STAC names', () => {
   assert.equal(inferTableFromSchema(schema('id', 'datetime', 'geometry')).timeColumn, 'datetime');
@@ -181,6 +205,35 @@ test('a non-partitioned collection-mirror asset resolves to that one parquet fil
     { baseUrl: 'https://example.org/oam/collection.json' },
   );
   assert.deepEqual(descriptor.source, { kind: 'parquet', url: 'https://example.org/oam/items.parquet' });
+});
+
+// Phase 2 review, I2: the first version tested the mirror BEFORE the data
+// asset, so a collection publishing both had its downloads silently switched
+// from its data to its STAC item index.
+test('a data parquet still wins over a collection-mirror; the mirror is only the fallback', () => {
+  const descriptor = descriptorFromCollection(
+    {
+      type: 'Collection',
+      id: 'both',
+      assets: {
+        'geoparquet-items': { href: './items.parquet', type: 'application/vnd.apache.parquet', roles: ['collection-mirror'] },
+        data: { href: './buildings.parquet', type: 'application/vnd.apache.parquet', roles: ['data'] },
+      },
+    },
+    { baseUrl: 'https://example.org/c/collection.json' },
+  );
+  assert.deepEqual(descriptor.source, { kind: 'parquet', url: 'https://example.org/c/buildings.parquet' });
+});
+
+test('with no data parquet and no mirror, a raster collection is still unsupported', () => {
+  assert.throws(
+    () =>
+      descriptorFromCollection(
+        { type: 'Collection', id: 'raster', assets: { data: { href: './dem.tif', type: 'image/tiff; application=geotiff; profile=cloud-optimized', roles: ['data'] } } },
+        { baseUrl: 'https://example.org/c/collection.json' },
+      ),
+    (e) => e.code === 'DATASET_UNSUPPORTED',
+  );
 });
 
 // --- end to end, through the real reader ----------------------------------------

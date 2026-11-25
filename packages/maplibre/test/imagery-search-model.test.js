@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createImagerySearchModel, footprintsGeoJson, areaFromBounds, whereFromFilters } from '../src/imagery-search-model.js';
+import { createImagerySearchModel, footprintsGeoJson, areaFromBounds, whereFromFilters, statusOf, defaultTimeWindow } from '../src/imagery-search-model.js';
+
+/** A bound that also lets through a row with no value in that column. */
+const orUnknown = (predicate) => ({ op: 'or', args: [{ col: predicate.col, op: 'is_null' }, predicate] });
 
 // The model is the control's state with no DOM: what is being searched for,
 // what came back, what is hovered, what has been added. The search itself is
@@ -100,11 +103,11 @@ test('run() searches with the current area, time, filters and sort', async () =>
   assert.equal(query.area, AREA);
   assert.deepEqual(query.time, { start: '2025-06-01T00:00:00Z', end: '2025-07-01T00:00:00Z', closed: '[)' });
   assert.deepEqual(query.where, [
-    { col: 'eo:cloud_cover', op: '<=', value: 20 },
+    orUnknown({ col: 'eo:cloud_cover', op: '<=', value: 20 }),
     { col: 'platform', op: '=', value: 'sentinel-2b' },
-    { col: 'naip:year', op: '>=', value: 2022 },
-    { col: 'naip:year', op: '<=', value: 2024 },
-    { col: 'sun', op: '>=', value: 30 },
+    orUnknown({ col: 'naip:year', op: '>=', value: 2022 }),
+    orUnknown({ col: 'naip:year', op: '<=', value: 2024 }),
+    orUnknown({ col: 'sun', op: '>=', value: 30 }),
   ]);
   assert.deepEqual(query.sort, { by: 'eo:cloud_cover', order: 'asc' });
   assert.equal(query.limit, 50);
@@ -126,7 +129,7 @@ test('a filter set to its empty value is not sent', async () => {
   model.setTime({ start: '', end: null });
   model.run();
   const { query } = search.calls[0];
-  assert.deepEqual(query.where, [{ col: 'naip:year', op: '<=', value: 2024 }]);
+  assert.deepEqual(query.where, [orUnknown({ col: 'naip:year', op: '<=', value: 2024 })]);
   assert.equal(query.time, undefined);
   assert.equal(query.area, null);
   assert.deepEqual(model.state.filters, { 'naip:year': { min: undefined, max: 2024 } });
@@ -134,10 +137,75 @@ test('a filter set to its empty value is not sent', async () => {
 
 test('whereFromFilters: numbers typed as text are numbers; a column the profile does not offer is ignored', () => {
   assert.deepEqual(whereFromFilters(PROFILE.filters, { 'eo:cloud_cover': '15', platform: ['a', 'b'], unknown: 3 }), [
-    { col: 'eo:cloud_cover', op: '<=', value: 15 },
+    orUnknown({ col: 'eo:cloud_cover', op: '<=', value: 15 }),
     { col: 'platform', op: 'in', values: ['a', 'b'] },
   ]);
   assert.deepEqual(whereFromFilters(PROFILE.filters, { 'eo:cloud_cover': 'abc', platform: [] }), []);
+});
+
+// The design asks for "null means unknown" (Phase 2 review, I6): a scene whose
+// cloud cover was never recorded is not a cloudy scene, and "at most 20%"
+// must not hide it. Checked against the real predicate evaluator.
+test('a numeric filter keeps a scene whose value is unknown; choosing a category does not', async () => {
+  const { evaluateWhere } = await import('@cngeo/extract-core');
+  const where = whereFromFilters(PROFILE.filters, { 'eo:cloud_cover': 20, platform: 'sentinel-2b' });
+  const keeps = (row) => evaluateWhere(where, row);
+  assert.equal(keeps({ 'eo:cloud_cover': 5, platform: 'sentinel-2b' }), true);
+  assert.equal(keeps({ 'eo:cloud_cover': 60, platform: 'sentinel-2b' }), false);
+  assert.equal(keeps({ 'eo:cloud_cover': null, platform: 'sentinel-2b' }), true, 'unknown cloud cover is kept');
+  assert.equal(keeps({ platform: 'sentinel-2b' }), true, 'so is a missing one');
+  assert.equal(keeps({ 'eo:cloud_cover': 5, platform: null }), false, 'an unknown platform is not the platform asked for');
+});
+
+// --- what the panel says -------------------------------------------------------------------
+
+test('statusOf: what the panel says in each state', () => {
+  const base = { status: 'idle', scenes: [], truncated: false, partial: false, matched: 0, plan: null, progress: null, error: undefined };
+  const plan = { files: { total: 12, selected: 1 }, rowGroups: { total: 825, selected: 21 }, prune: [{ stage: 'part-time', before: 12, after: 1, basis: 'time window' }], requests: 22, warnings: [] };
+  assert.equal(statusOf(base).line, 'Search for scenes in this view.');
+  assert.equal(statusOf(base, 'No area is selected.').line, 'No area is selected.');
+  assert.equal(statusOf({ ...base, status: 'searching' }).line, 'Searching…');
+  assert.equal(statusOf({ ...base, status: 'searching' }).progress, 'Planning the search…');
+  assert.equal(statusOf({ ...base, status: 'searching', plan, progress: { rowGroupsDone: 3, rowGroupsTotal: 21 }, scenes: [scene('a')] }).progress, 'Read 3 of 21 row groups; 1 scene so far.');
+  assert.equal(statusOf({ ...base, status: 'done' }).line, 'No scenes match.');
+  assert.equal(statusOf({ ...base, status: 'done', scenes: [scene('a'), scene('b')], matched: 2 }).line, '2 scenes.');
+  assert.equal(statusOf({ ...base, status: 'done', scenes: [scene('a')], matched: 1234, truncated: true }).line, 'Showing 1 of 1,234 matching scenes.');
+  assert.match(statusOf({ ...base, status: 'done', scenes: [scene('a')], matched: 5000, truncated: true, partial: true }).line, /from the first 5,000 that matched; there are more\. Narrow/);
+  const failed = statusOf({ ...base, status: 'error', error: Object.assign(new Error('Failed to read parquet row data.'), { cause: new Error('The request timed out after 60 s') }) });
+  assert.equal(failed.tone, 'error');
+  assert.equal(failed.line, 'The search failed: Failed to read parquet row data. (The request timed out after 60 s)');
+  // Stopped part-way: say so, rather than inviting a first search above a half-finished one.
+  assert.equal(statusOf({ ...base, status: 'idle', plan, scenes: [scene('a')] }).line, 'Stopped. 1 scene found so far.');
+  const withPlan = statusOf({ ...base, status: 'done', scenes: [scene('a')], matched: 1, plan });
+  assert.equal(withPlan.summary, 'Read 21 of 825 row groups in 1 of 12 files');
+  assert.deepEqual(withPlan.stages, ['part-time: 12 → 1 (time window)']);
+  assert.equal(withPlan.plan, plan);
+});
+
+// Phase 2 review, I5: the status was rebuilt on every change of the model, so
+// hovering a card closed the open narration and re-announced the same line.
+test('statusOf: hovering, adding and highlighting do not change what the panel says', () => {
+  const state = { status: 'done', scenes: [scene('a'), scene('b')], truncated: false, partial: false, matched: 2, plan: null, progress: null, error: undefined, hovered: null, added: new Set(), adding: new Set() };
+  const before = statusOf(state);
+  const after = statusOf({ ...state, hovered: 'a', added: new Set(['b']), adding: new Set(['a']), addError: { id: 'a', error: new Error('x') } });
+  assert.deepEqual(after, before);
+});
+
+// --- a sensible first date range ---------------------------------------------------------------
+
+test('defaultTimeWindow: the last 30 days of a partitioned archive; nothing for a single file', () => {
+  const partitioned = { dataset: { source: { kind: 'portolan-collection', url: 'https://example.org/c.json' } }, temporal: ['2015-10-22T10:16:59Z', '2026-11-25T01:46:18Z'] };
+  const now = Date.parse('2026-11-25T12:00:00Z');
+  assert.deepEqual(defaultTimeWindow(partitioned, { now }), { start: '2026-10-26', end: '2026-11-25' });
+  // An archive that ended: its own last 30 days, not today's.
+  assert.deepEqual(defaultTimeWindow({ ...partitioned, temporal: ['2015-01-01T00:00:00Z', '2020-03-10T00:00:00Z'] }, { now }), { start: '2020-02-09', end: '2020-03-10' });
+  // Open-ended, or a bad end: up to today.
+  assert.deepEqual(defaultTimeWindow({ ...partitioned, temporal: ['2015-01-01T00:00:00Z', null] }, { now }), { start: '2026-10-26', end: '2026-11-25' });
+  // Never before the archive begins.
+  assert.deepEqual(defaultTimeWindow({ ...partitioned, temporal: ['2026-11-20T00:00:00Z', null] }, { now }), { start: '2026-11-20', end: '2026-11-25' });
+  // One file is cheap to search whole, and a default would hide most of it.
+  assert.equal(defaultTimeWindow({ dataset: { source: { kind: 'parquet', url: 'https://example.org/items.parquet' } }, temporal: partitioned.temporal }, { now }), null);
+  assert.equal(defaultTimeWindow(null, { now }), null);
 });
 
 // --- one search at a time ---------------------------------------------------------------
@@ -247,6 +315,83 @@ test('a scene the manager already holds counts as added; one it removes can be a
   assert.equal(model.state.addError, undefined);
   manager.emit({ type: 'remove', id: 's2:a' });
   assert.equal(model.state.added.size, 0);
+});
+
+// Phase 2 review, M3. LayerManager keeps a layer that failed to load in its
+// list, in `error`. A second click on that scene then met "duplicate id" --
+// which the model read as "already added" and labelled the card "Added".
+test('a scene whose layer is in the stack in error is tried again, not called added', async () => {
+  const { manager, model } = await modelWith([scene('a')]);
+  const entries = new Map();
+  let attempts = 0;
+  manager.get = (id) => entries.get(id) ?? null;
+  manager.remove = (id) => entries.delete(id);
+  manager.add = async (spec) => {
+    attempts += 1;
+    if (entries.has(spec.id)) throw Object.assign(new Error('duplicate'), { code: 'LAYER_INVALID', context: { reason: 'duplicate', id: spec.id } });
+    if (attempts === 1) {
+      entries.set(spec.id, { id: spec.id, status: 'error', error: new Error('404') });
+      throw Object.assign(new Error('could not be drawn'), { code: 'LAYER_LOAD_FAILED' });
+    }
+    entries.set(spec.id, { id: spec.id, status: 'ready' });
+    return entries.get(spec.id);
+  };
+  await model.add('a');
+  assert.equal(model.state.added.size, 0);
+  assert.equal(model.state.addError.error.code, 'LAYER_LOAD_FAILED');
+  await model.add('a');
+  assert.deepEqual([...model.state.added], ['a'], 'the second try replaced the failed layer');
+  assert.equal(model.state.addError, undefined);
+  assert.equal(entries.get('s2:a').status, 'ready');
+});
+
+// A COG that cannot be opened is reported by the manager some time AFTER add() resolved.
+test('a layer that fails after it was added stops being "added", and its card says why', async () => {
+  const { manager, model } = await modelWith([scene('a')]);
+  await model.add('a');
+  assert.deepEqual([...model.state.added], ['a']);
+  const failure = Object.assign(new Error('"a" could not be drawn: 404'), { code: 'LAYER_LOAD_FAILED' });
+  manager.get = () => ({ id: 's2:a', status: 'error', error: failure });
+  manager.emit({ type: 'error', id: 's2:a' });
+  assert.equal(model.state.added.size, 0);
+  assert.deepEqual(model.state.addError, { id: 'a', error: failure });
+});
+
+// --- changing the order ----------------------------------------------------------------------------
+
+// Phase 2 review, M2: choosing an order did nothing until the next Search.
+test('setSort reorders what is shown at once, without another search, when everything that matched is shown', async () => {
+  const sorted = [];
+  const { search, model } = await modelWith([scene('a'), scene('b')], {
+    sort: (scenes, sort) => {
+      sorted.push(sort);
+      return [...scenes].reverse();
+    },
+  });
+  model.setSort({ by: 'eo:cloud_cover', order: 'asc' });
+  assert.deepEqual(model.state.scenes.map((s) => s.id), ['b', 'a']);
+  assert.deepEqual(sorted, [{ by: 'eo:cloud_cover', order: 'asc' }]);
+  assert.equal(search.calls.length, 1, 'no second search');
+});
+
+test('setSort searches again when only some of what matched is shown: the top N by another order are other scenes', async () => {
+  const search = stubSearch({ sort: (scenes) => scenes });
+  const model = createImagerySearchModel({ search, profile: PROFILE, manager: stubManager() });
+  const running = model.run();
+  search.calls[0].finish([scene('a')], { truncated: true, matched: 900 });
+  await running;
+  model.setSort({ by: 'eo:cloud_cover', order: 'asc' });
+  assert.equal(search.calls.length, 2);
+  assert.deepEqual(search.calls[1].query.sort, { by: 'eo:cloud_cover', order: 'asc' });
+  assert.equal(model.state.status, 'searching');
+});
+
+test('setSort before any search just records the choice', () => {
+  const search = stubSearch();
+  const model = createImagerySearchModel({ search, profile: PROFILE, manager: stubManager() });
+  model.setSort({ by: 'datetime', order: 'asc' });
+  assert.equal(search.calls.length, 0);
+  assert.deepEqual(model.state.sort, { by: 'datetime', order: 'asc' });
 });
 
 test('add() of an id that is not in the results does nothing', async () => {

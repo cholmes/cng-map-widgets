@@ -70,7 +70,9 @@ import { isFileChanged, openParquetFile } from './parquet-io.js';
  *   fetch?: typeof fetch,
  *   maxConcurrentRequests?: number,
  *   readRetries?: number,
- * }} [options]
+ *   requestTimeoutMs?: number,
+ * }} [options]  `requestTimeoutMs` abandons a row read that has not finished in that time (it is then made
+ *   again, see `readRetries`). Off by default; set it when the reads are known to be small.
  * @returns {Promise<{ rows: object[], truncated: boolean, plan: QueryPlan }>}
  */
 export async function queryRows(dataset, area, filter, options = {}) {
@@ -88,8 +90,12 @@ export async function queryRows(dataset, area, filter, options = {}) {
   const engine = createHyparquetEngine();
   const rows = [];
 
+  /** The files the attempt in progress was planned over, for the catch below. */
+  let plannedUrls = [];
   async function attempt() {
-    const enginePlan = await engine.plan(dataset, area, effective, { fetch: options.fetch, signal, cache: options.cache });
+    plannedUrls = [];
+    const enginePlan = await engine.plan(dataset, area, effective, { fetch: options.fetch, signal, cache: options.cache, requestTimeoutMs: options.requestTimeoutMs });
+    plannedUrls = enginePlan.plan.perPart.map((p) => p.handle.url);
     const { outputColumns, geometryColumn } = enginePlan.plan;
     const estimate = await finalizeEstimate(enginePlan.plan, area, effective, {});
     const plan = {
@@ -113,6 +119,18 @@ export async function queryRows(dataset, area, filter, options = {}) {
     return plan;
   }
 
+  /**
+   * A query that failed while READING may have been led astray by a kept
+   * footer: a file rewritten on a host that shows neither its size nor its
+   * `Last-Modified` to a script decodes as garbage, with nothing to say why.
+   * Forgetting the footers it used costs the next query one re-read, and
+   * without it every query fails the same way until the cache expires.
+   */
+  const forgetFooters = (err) => {
+    if (!options.cache || signal?.aborted || err?.code === 'CANCELLED') return;
+    for (const url of plannedUrls) options.cache.evict(url);
+  };
+
   let plan;
   try {
     plan = await attempt();
@@ -121,8 +139,16 @@ export async function queryRows(dataset, area, filter, options = {}) {
     // dropped from the cache, so planning again reads the real one. Only when
     // nothing was delivered: rows already handed to `onRows` cannot be taken
     // back, and the retry would deliver them a second time.
-    if (!isFileChanged(err) || rows.length > 0 || signal?.aborted) throw err;
-    plan = await attempt();
+    if (!isFileChanged(err) || rows.length > 0 || signal?.aborted) {
+      forgetFooters(err);
+      throw err;
+    }
+    try {
+      plan = await attempt();
+    } catch (again) {
+      forgetFooters(again);
+      throw again;
+    }
   }
   return { rows, truncated: effective.limit !== undefined && rows.length >= effective.limit, plan };
 }

@@ -470,11 +470,18 @@ that one. The host owns it: call `search.close()` when you are done with it.
   `area: () => Area | null` — the area your geocoder or draw tool holds — and
   the panel also offers "Selected area".
 - **When.** Two date inputs; "to" is inclusive. `time: { start, end }`
-  (`YYYY-MM-DD`) sets them initially — worth doing for a deep archive, where
-  a search with no dates has to plan every year of it.
+  (`YYYY-MM-DD`) sets them initially. With no `time`, a partitioned archive
+  starts on its last 30 days (`defaultTimeWindow(profile)`): a search with no
+  dates has to plan every part of it, which on Sentinel-2 is a footer of
+  about 8 MB per year. A single-file collection starts with no dates.
+  `time: null` means none, whatever the collection.
 - **Filters and order** are generated from `profile.filters`: a number input
   for a `max`/`min` filter, a menu for an `enum` whose values the collection
-  lists, two inputs for a `range`.
+  lists, two inputs for a `range`. **Null means unknown:** a numeric filter
+  keeps a scene that has no value in that column — a scene whose cloud cover
+  was never recorded is not a cloudy scene. Choosing a category does not.
+  Changing the order reorders the list at once (by searching again only when
+  some matches are not shown).
 - **Results** stream in as they are read, then settle into the sorted answer.
   The status line says what is shown out of what matched, and unfolds into
   how the search ran: the files and row groups read out of how many, and
@@ -489,7 +496,16 @@ that one. The host owns it: call `search.close()` when you are done with it.
   stacks into solid colour.
 
 `control.search()` runs a search programmatically; `control.model` is the
-state.
+state. The control survives `map.setStyle()` (its footprints are put back)
+and being removed and added again, as a React wrapper does to one instance;
+it makes a new model then, so read `control.model` rather than keeping a
+reference to it.
+
+Not tested in `npm test`: the panel's DOM. There is no DOM in the unit
+suite, so everything the panel decides lives in the model (`statusOf`,
+`whereFromFilters`, `defaultTimeWindow`, add, order), which is unit-tested,
+and the panel itself is checked in a real browser by
+`examples/imagery-search/verify.mjs`.
 
 Everything from a remote document reaches the panel as text; a thumbnail is
 shown only from an `http(s)` URL, lazily.

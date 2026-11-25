@@ -65,7 +65,7 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
   try {
     file = await hyparquet.asyncBufferFromUrl({
       url,
-      fetch: fetchImpl,
+      fetch: withRequestTimeout(fetchImpl, opts.requestTimeoutMs),
       requestInit: { cache: 'no-store', signal: opts.signal },
     });
   } catch (cause) {
@@ -128,16 +128,24 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
 async function openCachedParquetFile(url, fetchImpl, opts) {
   const { hyparquet } = await loadHyparquet();
   let loadedHere = false;
-  const shared = opts.cache.footer(url, async () => {
+  const shared = opts.cache.footer(url, async (loadSignal) => {
     loadedHere = true;
-    const handle = await openParquetFile(url, fetchImpl, { initialFetchSize: opts.initialFetchSize });
-    return { metadata: handle.metadata, rowGroups: handle.rowGroups, byteLength: handle.byteLength };
+    // What the host says about the file while its footer is read, kept with
+    // the footer: a later read can then tell it is looking at another file.
+    let lastModified = null;
+    const noting = async (input, init) => {
+      const res = await fetchImpl(input, init);
+      lastModified = res.headers?.get?.('last-modified') ?? lastModified;
+      return res;
+    };
+    const handle = await openParquetFile(url, noting, { initialFetchSize: opts.initialFetchSize, signal: loadSignal });
+    return { metadata: handle.metadata, rowGroups: handle.rowGroups, byteLength: handle.byteLength, lastModified };
   });
   const footer = await raceAbort(shared, opts.signal, `reading the parquet footer of ${url}`);
   const file = await hyparquet.asyncBufferFromUrl({
     url,
     byteLength: footer.byteLength,
-    fetch: sizeCheckedFetch(fetchImpl, url, footer.byteLength, opts.cache),
+    fetch: sizeCheckedFetch(withRequestTimeout(fetchImpl, opts.requestTimeoutMs), url, footer, opts.cache),
     requestInit: { cache: 'no-store', signal: opts.signal },
   });
   return { url, file, metadata: footer.metadata, rowGroups: footer.rowGroups, byteLength: footer.byteLength, signal: opts.signal, fromCache: !loadedHere };
@@ -158,26 +166,82 @@ export function isFileChanged(err) {
  * read at old offsets into a new file decodes garbage, or decodes plausibly
  * wrong rows.
  *
- * Every range response states the file's current total size
- * (`Content-Range: bytes a-b/TOTAL`). When that is not the size the footer
- * was read at -- or the range no longer exists (416) -- the footer is evicted
- * and the read fails as retryable, `context.reason: 'file-changed'`, before a
- * byte is decoded. A rewrite to exactly the same size is not caught here;
- * the cache's `maxAgeMs` is the bound on that.
+ * Two things a range response says can show it:
+ *   - the file's current total size (`Content-Range: bytes a-b/TOTAL`), when
+ *     that is not the size the footer was read at, or the range no longer
+ *     exists (416);
+ *   - its `Last-Modified`, when that differs from the one seen while the
+ *     footer was read. A browser script can always read `Last-Modified`; it
+ *     can read `Content-Range` only where the host exposes it
+ *     (`Access-Control-Expose-Headers`), which GitHub Pages, for one, does not.
+ *
+ * Then the footer is evicted and the read fails as retryable,
+ * `context.reason: 'file-changed'`, before a byte is decoded. A host that
+ * shows neither is covered only by `queryRows` dropping the footers of a
+ * query that failed, and by the cache's `maxAgeMs`.
  */
-function sizeCheckedFetch(fetchImpl, url, plannedBytes, cache) {
+function sizeCheckedFetch(fetchImpl, url, footer, cache) {
+  const plannedBytes = footer.byteLength;
   return async (input, init) => {
     const res = await fetchImpl(input, init);
     const total = /\/(\d+)\s*$/.exec(res.headers?.get?.('content-range') ?? '')?.[1];
     const actualBytes = total === undefined ? null : Number(total);
-    if (res.status === 416 || (actualBytes !== null && actualBytes !== plannedBytes)) {
+    const modified = res.headers?.get?.('last-modified') ?? null;
+    const resized = res.status === 416 || (actualBytes !== null && actualBytes !== plannedBytes);
+    const rewritten = Boolean(footer.lastModified && modified && modified !== footer.lastModified);
+    if (resized || rewritten) {
       cache.evict(url);
       throw new CngError(`${url} changed after it was planned; its footer has been dropped from the cache.`, 'DATASET_UNRESOLVED', {
         retryable: true,
-        context: { url, reason: FILE_CHANGED, plannedBytes, actualBytes },
+        context: { url, reason: FILE_CHANGED, plannedBytes, actualBytes, plannedLastModified: footer.lastModified ?? null, lastModified: modified },
       });
     }
     return res;
+  };
+}
+
+/**
+ * A `fetch` that gives up on a request -- headers AND body -- after `ms`.
+ *
+ * Opt-in (`requestTimeoutMs`), and meant for reads known to be small, such as
+ * the row groups of a search: the limit covers the whole response, so a
+ * legitimately large read on a slow connection would trip it. That is why a
+ * download does not set one by default.
+ *
+ * The body is read here, inside the limit, and handed on as a new Response:
+ * a connection that stalls half-way through a body is the case seen live,
+ * and it stalls after `fetch()` has already resolved.
+ */
+function withRequestTimeout(fetchImpl, ms) {
+  if (!(ms > 0) || !Number.isFinite(ms)) return fetchImpl;
+  return async (input, init = {}) => {
+    const controller = new AbortController();
+    const outer = init.signal;
+    const onOuterAbort = () => controller.abort(outer.reason);
+    if (outer?.aborted) controller.abort(outer.reason);
+    else outer?.addEventListener('abort', onOuterAbort, { once: true });
+    const timeout = new Error(`The request timed out after ${ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`}: ${String(input).slice(0, 200)}`);
+    timeout.name = 'TimeoutError';
+    let timer;
+    const limit = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort(timeout);
+        reject(timeout);
+      }, ms);
+    });
+    const work = (async () => {
+      const res = await fetchImpl(input, { ...init, signal: controller.signal });
+      if (init.method === 'HEAD' || res.body === null) return res;
+      const body = await res.arrayBuffer();
+      return new Response(res.status === 204 || res.status === 304 ? null : body, { status: res.status, statusText: res.statusText, headers: res.headers });
+    })();
+    work.catch(() => {});
+    try {
+      return await Promise.race([work, limit]);
+    } finally {
+      clearTimeout(timer);
+      outer?.removeEventListener('abort', onOuterAbort);
+    }
   };
 }
 

@@ -237,6 +237,54 @@ test('a failed warm is not remembered: the next search tries again', async () =>
   assert.equal((await search.search()).scenes.length, 8);
 });
 
+// Phase 2 review, I1: a request that never answers. `search()` awaited the
+// preparation without racing its own cancellation, so Stop did nothing, the
+// search never resolved, and neither did the next one.
+/** `allHost()` whose requests all hang while `stuck` is true; a hung request gives up only when aborted. */
+function hangableHost() {
+  const real = allHost();
+  const state = { stuck: true };
+  const fetch = (url, init = {}) =>
+    state.stuck
+      ? new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true }))
+      : real.fetch(url, init);
+  return { fetch, state };
+}
+
+test('cancelling while the dataset is being prepared over a hung network resolves at once', async () => {
+  const host = hangableHost();
+  const search = new ImagerySearch(naipProfile(), { fetch: host.fetch, timeoutMs: 60 });
+  const pending = search.search();
+  search.cancel();
+  assert.equal((await pending).superseded, true);
+  // The network comes back, and the stalled preparation times out rather than being waited on forever.
+  host.state.stuck = false;
+  await new Promise((r) => setTimeout(r, 90));
+  assert.equal((await search.search()).scenes.length, 8);
+});
+
+test('a preparation that never answers times out as a retryable error and is not remembered', async () => {
+  const host = hangableHost();
+  const search = new ImagerySearch(naipProfile(), { fetch: host.fetch, timeoutMs: 40 });
+  await assert.rejects(search.search(), (e) => {
+    assert.equal(e.code, 'NETWORK');
+    assert.equal(e.retryable, true);
+    assert.equal(e.context.reason, 'timeout');
+    return true;
+  });
+  host.state.stuck = false;
+  assert.equal((await search.search()).scenes.length, 8);
+});
+
+test('a superseding search is not held up by the one it replaced being stuck', async () => {
+  const host = hangableHost();
+  const search = new ImagerySearch(s2Profile(), { fetch: host.fetch, timeoutMs: 50 });
+  const first = search.search();
+  const second = search.search();
+  assert.equal((await first).superseded, true, 'released without waiting for the timeout');
+  await assert.rejects(second, (e) => e.code === 'NETWORK');
+});
+
 // --- the profile is checked against the real file ------------------------------------------
 
 test('a profile that assumed STAC defaults is settled from the file: struct assets are read, links are not', async () => {

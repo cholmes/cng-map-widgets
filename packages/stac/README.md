@@ -197,4 +197,16 @@ dropped, `assets` is known to be a struct or not, and the row's `links` and
 `title` are read when they exist. For a partitioned collection no footer is
 read up front and the collection's declared columns are trusted.
 
-`close()` stops the search in flight and forgets what was cached.
+**Nothing waits forever.** `options.timeoutMs` (60 s; `0` for none) bounds
+every request a search waits on: resolving the dataset, listing its files, a
+footer, a row read. A request that never answers used to hold the search, and
+every search after it. Past the limit, preparing fails as a retryable
+`NETWORK` error (`context.reason: 'timeout'`) and is not remembered; a row
+read is made again — a search retries a failed read twice, a moment apart.
+`cancel()` and a superseding search take effect at once even while the
+dataset is still being prepared.
+
+`cancel()` stops the search in flight and keeps the cache. `sort(scenes,
+order)` reorders scenes already found without reading anything (right only
+when the list is every match — see `truncated`). `close()` stops the search
+and forgets what was cached, unless the cache is one you passed in.

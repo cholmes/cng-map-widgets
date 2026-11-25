@@ -105,6 +105,16 @@ export const DEFAULT_THROUGHPUT_BYTES_PER_SECOND = 10_000_000;
 /** Seconds above which `finalizeEstimate` raises `slow-download`. */
 export const SLOW_DOWNLOAD_SECONDS = 120;
 
+/** Can a column of this parquet type be read as a point in time? @param {any} el A thrift `SchemaElement`. */
+function isTimeLike(el) {
+  if (!el) return false;
+  const logical = el.logical_type?.type;
+  const converted = el.converted_type;
+  if (logical === 'TIMESTAMP' || logical === 'DATE' || converted === 'TIMESTAMP_MILLIS' || converted === 'TIMESTAMP_MICROS' || converted === 'DATE') return true;
+  if (el.type === 'INT96') return true; // the legacy timestamp
+  return el.type === 'BYTE_ARRAY' && (logical === 'STRING' || converted === 'UTF8');
+}
+
 /** Guess a minimal `DatasetTable` from a parquet schema when the descriptor didn't declare one. @param {{ schema: readonly { name: string, num_children?: number }[] }} metadata */
 export function inferTableFromSchema(metadata) {
   const topLevel = topLevelSchemaColumns(metadata.schema);
@@ -115,8 +125,15 @@ export function inferTableFromSchema(metadata) {
   // STAC's own column names for time. Without this a bare item table (NAIP's,
   // OpenAerialMap's) had no time column at all, and a time filter on it was
   // silently not applied (E14, conclusion 5).
-  const timeColumn = names.includes('datetime') ? 'datetime' : undefined;
-  const timeInterval = names.includes('start_datetime') && names.includes('end_datetime') ? { start: 'start_datetime', end: 'end_datetime' } : undefined;
+  // By name AND type: a `datetime` that is a bare integer could be seconds,
+  // milliseconds or a year, and guessing wrong returns nothing with no
+  // warning. A timestamp, a date or a string (ISO 8601) can be compared.
+  const holdsTime = (name) => isTimeLike(metadata.schema.find((el, i) => i > 0 && el.name === name));
+  const timeColumn = names.includes('datetime') && holdsTime('datetime') ? 'datetime' : undefined;
+  const timeInterval =
+    names.includes('start_datetime') && names.includes('end_datetime') && holdsTime('start_datetime') && holdsTime('end_datetime')
+      ? { start: 'start_datetime', end: 'end_datetime' }
+      : undefined;
   return {
     geometryColumn,
     geometryEncoding: 'WKB',
@@ -150,11 +167,13 @@ export function inferTableFromSchema(metadata) {
 export async function listParts(src, options) {
   if (src.kind === 'parquet') return { parts: [{ url: src.url }], requests: 0 };
   if (src.kind === 'parquet-set') return { parts: src.parts ?? src.urls.map((url) => ({ url })), requests: 0 };
-  if (!options.cache) return enumeratePartitions(src, { fetch: options.fetch, signal: options.signal });
+  // A source that lists its own parts costs nothing to enumerate, and has no
+  // glob or enumeration to tell it from another such source: never cached.
+  if (!options.cache || (Array.isArray(src.parts) && src.parts.length > 0)) return enumeratePartitions(src, { fetch: options.fetch, signal: options.signal });
   let listedHere = false;
-  const shared = options.cache.parts(partListingKey(src), () => {
+  const shared = options.cache.parts(partListingKey(src), (loadSignal) => {
     listedHere = true;
-    return enumeratePartitions(src, { fetch: options.fetch });
+    return enumeratePartitions(src, { fetch: options.fetch, signal: loadSignal });
   });
   const en = await raceAbort(shared, options.signal, "listing the dataset's parts");
   return { parts: en.parts, requests: listedHere ? en.requests : 0 };
@@ -213,7 +232,7 @@ export async function planRequest(dataset, area, filter, options = {}) {
   let allRowGroupsTotal = 0;
   const perPart = [];
   for (const part of selectedParts) {
-    const handle = await openParquetFile(part.url, fetchImpl, { signal, cache: options.cache });
+    const handle = await openParquetFile(part.url, fetchImpl, { signal, cache: options.cache, requestTimeoutMs: options.requestTimeoutMs });
     if (!handle.fromCache) requests += 1;
     if (!table) {
       table = inferTableFromSchema(handle.metadata);

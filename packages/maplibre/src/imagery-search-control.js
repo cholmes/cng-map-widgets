@@ -16,7 +16,7 @@
 // an error message) reaches the DOM through `textContent`; a thumbnail becomes
 // an `src` only when it is http(s).
 
-import { createImagerySearchModel, footprintsGeoJson, areaFromBounds } from './imagery-search-model.js';
+import { createImagerySearchModel, footprintsGeoJson, areaFromBounds, statusOf, defaultTimeWindow } from './imagery-search-model.js';
 import { attributionHtml } from './layer-attribution.js';
 import { TOKENS_LIGHT, TOKENS_DARK } from './layer-control-theme.js';
 
@@ -58,6 +58,7 @@ const CSS = `
 .cng-is-btn.is-primary { background: var(--cng-focus); border-color: var(--cng-focus); color: var(--cng-on-focus); }
 .cng-is-status { padding: 6px 10px; color: var(--cng-meta); font-size: 12px; }
 .cng-is-status.is-error { color: var(--cng-error); background: var(--cng-error-bg); }
+.cng-is-status.is-error .cng-is-plan { display: none; }
 .cng-is-status details { margin-top: 2px; }
 .cng-is-status summary { cursor: pointer; }
 .cng-is-status ol { margin: 4px 0 0; padding-left: 18px; }
@@ -84,8 +85,6 @@ function injectCss(doc) {
 
 const isHttp = (value) => typeof value === 'string' && /^https?:\/\//i.test(value);
 const dayOf = (iso) => (typeof iso === 'string' && iso.length >= 10 ? iso.slice(0, 10) : null);
-const count = (n) => Number(n).toLocaleString('en-US');
-const plural = (n, word) => `${count(n)} ${word}${n === 1 ? '' : 's'}`;
 
 /** A scene's date as text: one day, or the span it covers. */
 function sceneDate(scene) {
@@ -122,11 +121,16 @@ export class ImagerySearchControl {
     this._color = options.footprintColor ?? '#e8590c';
     this._collapsed = options.collapsed ?? false;
     this._mode = 'view';
-    /** The model; its `state` is the truth this panel shows. */
-    this.model = createImagerySearchModel({ search: options.search, profile: options.profile, manager: options.manager, limit: options.limit });
+    /** The model; its `state` is the truth this panel shows. Replaced if the control is removed and added again. */
+    this.model = this._newModel();
     this._cleanup = [];
-    this._rendered = { scenes: null, profile: null };
+    this._rendered = { scenes: null, profile: null, status: null, plan: undefined };
     this._hoverFromMap = false;
+  }
+
+  _newModel() {
+    const o = this._options;
+    return createImagerySearchModel({ search: o.search, profile: o.profile, manager: o.manager, limit: o.limit });
   }
 
   getDefaultPosition() {
@@ -138,6 +142,13 @@ export class ImagerySearchControl {
     const doc = map.getContainer().ownerDocument;
     this._doc = doc;
     injectCss(doc);
+    // `onRemove` destroys the model. A control that is added again -- which
+    // React wrappers do to one instance (mount, unmount, mount) -- needs a
+    // live one, or it is a panel that renders nothing and searches forever.
+    if (this.model.destroyed) this.model = this._newModel();
+    this._rendered = { scenes: null, profile: null, status: null, plan: undefined };
+    this._drawn = null;
+    this._notice = null;
     const root = (this._root = this._el('div', 'maplibregl-ctrl cng-imagery-search'));
     if (this._collapsed) root.classList.add('is-collapsed');
 
@@ -181,9 +192,13 @@ export class ImagerySearchControl {
       form.append(where);
     }
 
+    // Dates the host gave; else, for a partitioned archive, its last 30 days
+    // (a search with no dates has to plan every part of it); `time: null`
+    // for none at all. The person can clear or change them.
+    const time = this._options.time === undefined ? defaultTimeWindow(this.model.state.profile) : this._options.time;
     const dates = this._el('div', 'cng-is-row');
-    this._from = this._dateField(dates, 'From', this._options.time?.start);
-    this._to = this._dateField(dates, 'To', this._options.time?.end);
+    this._from = this._dateField(dates, 'From', time?.start);
+    this._to = this._dateField(dates, 'To', time?.end);
     form.append(dates);
 
     this._filters = this._el('div', 'cng-is-filters');
@@ -207,9 +222,23 @@ export class ImagerySearchControl {
     form.append(actions);
 
     // --- status, results, credit ------------------------------------------------
+    // Three parts, so that each changes only when it has something new:
+    //   the LINE is the announced one (a live region), and is written only
+    //     when its words change -- not on every hover;
+    //   PROGRESS ticks many times a second while reading and is not announced;
+    //   the PLAN narration is a <details> that stays put, so it stays open.
     this._status = this._el('div', 'cng-is-status');
-    this._status.setAttribute('role', 'status');
-    this._status.setAttribute('aria-live', 'polite');
+    this._statusLine = this._el('div', 'cng-is-status-line');
+    this._statusLine.setAttribute('role', 'status');
+    this._statusLine.setAttribute('aria-live', 'polite');
+    this._progress = this._el('div', 'cng-is-progress');
+    this._progress.setAttribute('aria-hidden', 'true');
+    this._plan = this._el('details', 'cng-is-plan');
+    this._planSummary = this._el('summary');
+    this._planStages = this._el('ol');
+    this._plan.append(this._planSummary, this._planStages);
+    this._plan.hidden = true;
+    this._status.append(this._statusLine, this._progress, this._plan);
     this._results = this._el('ul', 'cng-is-results');
     this._results.setAttribute('aria-label', 'Scenes found');
     this._credit = this._el('div', 'cng-is-credit');
@@ -236,13 +265,19 @@ export class ImagerySearchControl {
     };
     map.on('mousemove', FOOTPRINTS_FILL, this._onMove);
     map.on('mouseleave', FOOTPRINTS_FILL, this._onLeave);
-    map.on('styledata', this._onStyle);
+    // After `map.setStyle()` the source and layers are gone. `style.load` is
+    // when they can go back; `idle` catches the case where they could not be
+    // added at that moment. (`styledata` alone is not enough: every one of
+    // them during a style load arrives before the style can take a layer.)
+    map.on('style.load', this._onStyle);
+    map.on('idle', this._onStyle);
     map.on('resize', this._fit);
     this._fit();
     this._cleanup.push(() => {
       map.off('mousemove', FOOTPRINTS_FILL, this._onMove);
       map.off('mouseleave', FOOTPRINTS_FILL, this._onLeave);
-      map.off('styledata', this._onStyle);
+      map.off('style.load', this._onStyle);
+      map.off('idle', this._onStyle);
       map.off('resize', this._fit);
     });
     this._render();
@@ -387,41 +422,31 @@ export class ImagerySearchControl {
     this._credit.hidden = !this._credit.textContent;
   }
 
+  /**
+   * Write what `statusOf` says, touching only what changed. This runs on
+   * every change of the model -- every hover -- and it used to rebuild the
+   * lot: an open narration snapped shut, and a screen reader was handed the
+   * same sentence again each time the pointer moved.
+   */
   _renderStatus(state) {
-    const status = this._status;
-    status.replaceChildren();
-    status.classList.toggle('is-error', state.status === 'error');
-    const say = (text) => status.append(this._el('div', '', text));
-    if (this._notice) say(this._notice);
-    else if (state.status === 'error') {
-      // The library's message names the step; the cause, when there is one,
-      // is usually what a person can act on ("Failed to fetch").
-      const cause = state.error?.cause?.message;
-      say(`The search failed: ${state.error?.message ?? state.error}${cause ? ` (${cause})` : ''}`);
+    const said = statusOf(state, this._notice);
+    const was = this._rendered.status;
+    if (!was || was.line !== said.line) this._statusLine.textContent = said.line;
+    if (!was || was.tone !== said.tone) this._status.classList.toggle('is-error', said.tone === 'error');
+    if (!was || was.progress !== said.progress) {
+      this._progress.textContent = said.progress;
+      this._progress.hidden = !said.progress;
     }
-    else if (state.status === 'searching') {
-      const p = state.progress;
-      say(state.plan ? `Reading${p ? ` ${count(p.rowGroupsDone)} of ${count(p.rowGroupsTotal)} row groups` : ''}… ${plural(state.scenes.length, 'scene')} so far.` : 'Planning the search…');
-    } else if (state.status === 'done') {
-      const n = state.scenes.length;
-      if (n === 0) say('No scenes match.');
-      else if (state.partial) say(`Showing ${plural(n, 'scene')} from the first ${count(state.matched)} that matched; there are more. Narrow the area or the dates to see them all.`);
-      else if (state.truncated) say(`Showing ${count(n)} of ${plural(state.matched, 'matching scene')}.`);
-      else say(`${plural(n, 'scene')}.`);
-    } else if (!state.scenes.length) say('Search for scenes in this view.');
-
-    const plan = state.plan;
-    if (plan && state.status !== 'error') {
-      const details = this._el('details');
-      // Row groups and files, not `plan.requests`: that figure models one
-      // request per row group, and the reader makes one per column chunk
-      // (E14 measured 4x on Sentinel-2), so it would understate the work.
-      details.append(this._el('summary', '', `Read ${count(plan.rowGroups.selected)} of ${plural(plan.rowGroups.total, 'row group')} in ${count(plan.files.selected)} of ${plural(plan.files.total, 'file')}`));
-      const list = this._el('ol');
-      for (const stage of plan.prune ?? []) list.append(this._el('li', '', `${stage.stage}: ${count(stage.before)} → ${count(stage.after)} (${stage.basis})`));
-      if (list.childElementCount) details.append(list);
-      status.append(details);
+    // The narration is rebuilt only for a different plan; the <details>
+    // element itself is never replaced, so it stays open if it was opened.
+    if (this._rendered.plan !== said.plan) {
+      this._rendered.plan = said.plan;
+      this._plan.hidden = !said.plan;
+      this._planSummary.textContent = said.summary;
+      this._planStages.replaceChildren(...said.stages.map((text) => this._el('li', '', text)));
+      this._planStages.hidden = said.stages.length === 0;
     }
+    this._rendered.status = said;
     this._go.textContent = state.status === 'error' ? 'Try again' : 'Search';
     this._stop.hidden = state.status !== 'searching';
   }
@@ -501,12 +526,26 @@ export class ImagerySearchControl {
 
   /**
    * Keep the footprints on the map and current. Runs on every change of the
-   * model and on every `styledata`, so it survives `map.setStyle()`; it only
-   * touches the map when the data changed or the layers are missing.
+   * model, and on `style.load` and `idle`, so it survives `map.setStyle()`;
+   * it only touches the map when the data changed or the layers are missing.
+   *
+   * There is no "is the style ready?" test here on purpose. An earlier one
+   * (`isStyleLoaded()`) is false at every event during a style load, so after
+   * `setStyle()` the footprints simply never came back. MapLibre itself knows
+   * whether it can take a source right now: it throws if not, and the next
+   * `idle` tries again.
    */
   _syncFootprints() {
     const map = this._map;
-    if (!map || (map.isStyleLoaded && !map.isStyleLoaded() && !map.getSource?.(FOOTPRINTS_SOURCE))) return;
+    if (!map) return;
+    try {
+      this._placeFootprints(map);
+    } catch {
+      this._drawn = null; // not now; `style.load` or `idle` will call again
+    }
+  }
+
+  _placeFootprints(map) {
     const state = this.model.state;
     const key = `${state.hovered ?? ''}`;
     const stale = this._drawn?.scenes !== state.scenes || this._drawn?.hovered !== key;

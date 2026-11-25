@@ -178,8 +178,11 @@ decoding geometry:
 
 Omit `table` entirely and it is inferred from the first file's parquet schema —
 `geometry` if present, a `bbox` struct if present, and STAC's time columns by
-name: `datetime` becomes the `timeColumn`, and a `start_datetime` /
-`end_datetime` pair becomes `timeInterval` (below). Otherwise nothing.
+name **and type**: `datetime` becomes the `timeColumn`, and a
+`start_datetime` / `end_datetime` pair becomes `timeInterval` (below), when
+the column is a timestamp, a date or a string. A bare integer of that name is
+left alone — seconds, milliseconds or a year cannot be told apart, and a
+wrong guess returns nothing without saying why. Otherwise nothing.
 
 ### `FilterSpec` — which rows and columns
 
@@ -355,7 +358,7 @@ be cancelled during planning, which is exactly when a user changes their mind.
 | `fetch` | `globalThis.fetch` | |
 | `signal` | — | Aborts reads; see the cancel gotcha below. |
 | `maxConcurrentRequests` | `12` | Parallel row-group reads, with ordered delivery. Lower it for a file with very large row groups (up to this many decoded groups are live at once); `1` is the old sequential behaviour. |
-| `readRetries` | `1` | How many times a row-group read that **fails** is made again before the run fails. A run is many range requests and one dropped connection used to fail all of it; a read is idempotent, so it is tried once more. Never retried: a cancellation, or a file that changed since it was planned. `0` is the behaviour before 0.4.0. |
+| `readRetries` | `1` | How many times a row-group read that **fails** is made again before the run fails. A run is many range requests and one dropped connection used to fail all of it; a read is idempotent, so it is tried again — after a short wait (250 ms, then three times as long each time), because a host that just failed a request tends to fail the next one too. Never retried: a cancellation, or a file that changed since it was planned. `0` is the behaviour before 0.4.0. |
 
 `DownloadHandle`:
 
@@ -564,6 +567,11 @@ plan.rowGroups;     // { total: 825, selected: 27 }
   request per row group. The reader issues one per column chunk, measured at
   about four per row group on Sentinel-2's item table.)
 - Cancelling rejects with `CANCELLED`.
+- `requestTimeoutMs` abandons a row read that has not finished — headers and
+  body — in that time; it is then made again (`readRetries`). Off by default,
+  and deliberately not offered as a default for downloads: the limit covers
+  the whole response, so a large read on a slow connection would trip it.
+  Set it when the reads are known to be small, as a search's are.
 
 ### `describeDataset(dataset, options?) => Promise<{ dataset, parts, columns, table }>`
 
@@ -587,7 +595,7 @@ row. Pass one cache as `options.cache` to `queryRows()` and `estimate()` and
 both are kept. With none, nothing changes.
 
 ```js
-const cache = createPlanCache({ maxAgeMs: 600_000 });   // the default: 10 minutes
+const cache = createPlanCache({ maxAgeMs: 600_000, loadTimeoutMs: 120_000 });   // the defaults
 cache.stats();        // { partListings, footers, hits, misses }
 cache.evict(url);     // forget one file's footer
 cache.clear();
@@ -599,16 +607,28 @@ cache.clear();
 - A load runs without the caller's abort signal: a search superseded
   mid-plan leaves its footers for the search that superseded it. The
   superseded caller is still released at once, with `CANCELLED`.
+- **A load has a time limit** (`loadTimeoutMs`, 2 minutes; `0` for none).
+  Because a load is shared and no caller can cancel it, a request that never
+  answers would otherwise sit in the cache as a promise that never settles,
+  handed to every later caller. Past the limit its requests are dropped and
+  it fails as a retryable `NETWORK` error, `context.reason: 'timeout'` — and,
+  being a failure, is not kept.
 - **Published files get rewritten.** Every range read made against a kept
-  footer checks the file's current size (from `Content-Range`); if it has
-  changed, the footer is dropped and the read fails as a retryable
-  `DATASET_UNRESOLVED` with `context.reason: 'file-changed'`, before a byte
-  is decoded. `queryRows()` then re-plans once by itself, provided it has
-  delivered no rows yet. A rewrite to exactly the same size is not caught by
-  this; `maxAgeMs` is the bound on that. In a browser the check also needs
-  the host to expose `Content-Range` to scripts
-  (`Access-Control-Expose-Headers`; source.coop sends `*`). Where it is
-  hidden the size cannot be seen and `maxAgeMs` is again the only bound.
+  footer checks two things the response says about the file: its current
+  size (`Content-Range`) and its `Last-Modified`, against what was seen when
+  the footer was read. If either differs, the footer is dropped and the read
+  fails as a retryable `DATASET_UNRESOLVED` with
+  `context.reason: 'file-changed'`, before a byte is decoded. `queryRows()`
+  then re-plans once by itself, provided it has delivered no rows yet.
+  - A browser script can always read `Last-Modified`. It can read
+    `Content-Range` only where the host exposes it
+    (`Access-Control-Expose-Headers`: source.coop sends `*`, GitHub Pages
+    sends nothing).
+  - Where a host shows neither, nothing can tell. So a `queryRows()` that
+    fails while reading also drops the footers it used: the next query
+    re-reads them, instead of every query failing until `maxAgeMs`.
+- A source that lists its own `parts` is never cached: it costs nothing to
+  enumerate and has nothing to key on.
 
 ### `resolveDataset(descriptor, options?) => Promise<DatasetDescriptor>`
 
@@ -635,10 +655,12 @@ dataset.attribution[0].license;   // 'CC0-1.0'
 dataset.source.glob;              // 's3://portolan-mirrors/…'  <-- see the gotcha
 ```
 
-A collection that is **not** partitioned but publishes its STAC items as one
-parquet file — a `collection-mirror` asset, as OpenAerialMap does — resolves
-to that file, `{ kind: 'parquet', url }`. Before 0.4.0 it resolved to
-nothing and the collection was reported unsupported.
+A collection that is **not** partitioned, has **no data parquet of its own**,
+and publishes its STAC items as one parquet file — a `collection-mirror`
+asset, as OpenAerialMap does — resolves to that file,
+`{ kind: 'parquet', url }`: its item index is what there is to read. Before
+0.4.0 such a collection was reported unsupported. A collection with a `data`
+parquet resolves to that, mirror or no mirror, as it always did.
 
 ### `descriptorFromCollection(collection, options?)` / `collectionDownloadSupport(collection, options?)`
 

@@ -3,7 +3,7 @@
 // opt-in).
 
 import { CancelledError } from '@cngeo/spec';
-import { planRequest } from './estimate.js';
+import { planRequest, schemaColumns } from './estimate.js';
 import { readRows, isFileChanged } from './parquet-io.js';
 import { rowMatchesArea } from './spatial.js';
 import { evaluateWhere } from './predicate.js';
@@ -36,6 +36,9 @@ export const DEFAULT_MAX_CONCURRENT_REQUESTS = 12;
 
 /** How many times a failed row-group read is made again before the run fails. `ctx.readRetries` overrides it. */
 export const DEFAULT_READ_RETRIES = 1;
+
+/** The wait before the first retry of a failed read; each further one waits three times as long. */
+const READ_RETRY_BASE_MS = 250;
 
 /** @returns {import('./types.js').Engine} */
 export function createHyparquetEngine() {
@@ -221,8 +224,16 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
   // nothing about the row, and must not be read as "has no geometry": that
   // dropped EVERY row of such a request.
   const rowCovering = coveringPaths(covering);
+  // A `struct` covering is often only INFERRED from a column named `bbox`,
+  // and a STAC-GeoParquet bbox may be a LIST (Sentinel-2's is): read, and no
+  // use for a per-row box. The file's own schema settles which it is.
+  const firstSchema = perPart[0]?.handle?.metadata?.schema;
+  const structIsReal =
+    covering?.kind !== 'struct' || !firstSchema || (schemaColumns({ schema: firstSchema }).find((c) => c.name === covering.column)?.struct ?? true);
   const bboxKnowable =
-    !readColumns || readColumns.includes(geometryColumn) || Boolean(rowCovering && !rowCovering.native && bboxColumnNamesOf(covering).every((c) => readColumns.includes(c)));
+    !readColumns ||
+    readColumns.includes(geometryColumn) ||
+    Boolean(rowCovering && !rowCovering.native && structIsReal && bboxColumnNamesOf(covering).every((c) => readColumns.includes(c)));
   const requireBBox = Boolean(area) || bboxKnowable;
 
   /** The per-row filter the old sequential loop ran inline. Pure; no awaits. */
@@ -269,8 +280,27 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
         return await readRows(handle, range);
       } catch (err) {
         if (attempt >= readRetries || signal?.aborted || stopReads || err?.code === 'CANCELLED' || isFileChanged(err)) throw err;
+        // Not at once: a host that just failed a request (seen live: HTTP
+        // 520, then 520 again on the immediate retry) needs a moment.
+        // 250 ms, then 750 ms, then 2.25 s ... and the wait ends the instant
+        // the run is cancelled or no longer wants this read.
+        await retryPause(READ_RETRY_BASE_MS * 3 ** attempt);
+        if (signal?.aborted) throw new CancelledError();
+        if (stopReads) throw err;
       }
     }
+  }
+
+  function retryPause(ms) {
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      signal?.addEventListener('abort', done, { once: true });
+    });
   }
 
   /**

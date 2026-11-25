@@ -177,6 +177,19 @@ test('evict() and clear() make the next plan read again', async () => {
   assert.equal(h.listings(), 1);
 });
 
+// Phase 2 review, I7: a source that lists its own `parts` has no glob and no
+// enumeration, so two such datasets had the same cache key -- and the second
+// was planned against the first one's files.
+test('two datasets that each list their own parts do not share a listing', async () => {
+  const h = host();
+  const cache = createPlanCache();
+  const withParts = (year) => ({ spec: 'cng-dataset/1.0', id: `y${year}`, source: { kind: 'hive', parts: [{ url: PART(year) }] } });
+  const a = await planRequest(withParts(2024), null, filter, { fetch: h.fetch, cache });
+  const b = await planRequest(withParts(2025), null, filter, { fetch: h.fetch, cache });
+  assert.deepEqual(a.perPart.map((p) => p.part.url), [PART(2024)]);
+  assert.deepEqual(b.perPart.map((p) => p.part.url), [PART(2025)]);
+});
+
 // --- describeDataset: what a search widget asks before its first search -----------
 
 test('describeDataset lists a partitioned dataset once and reads no footer', async () => {

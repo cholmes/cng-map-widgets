@@ -71,6 +71,41 @@ test('a read that fails every time still fails the run, with the cause', async (
   assert.equal(always.attempts.length, 4, 'two good reads, then the third tried twice');
 });
 
+// Seen live: a struggling host answered HTTP 520 to a read AND to its
+// immediate retry. A retry made at once meets the same trouble; a short wait
+// is what gives it a chance.
+test('a retry waits a moment first, longer each time, and readRetries: 2 survives two failures in a row', async () => {
+  const failedAt = [];
+  let failures = 0;
+  const { handle, attempts } = await flakyHost((n) => {
+    // The second row group fails twice, then works.
+    if (n >= 1 && failures < 2) {
+      failures += 1;
+      failedAt.push(performance.now());
+      return true;
+    }
+    if (failures === 2 && failedAt.length === 2) failedAt.push(performance.now());
+    return false;
+  });
+  const { ids } = await run(handle, { readRetries: 2 });
+  assert.deepEqual(ids, ALL_IDS);
+  assert.equal(attempts.length, 6, 'four row groups, one of them read three times');
+  const [first, second, third] = failedAt;
+  assert.ok(second - first >= 180, `waited ${Math.round(second - first)} ms before the first retry`);
+  assert.ok(third - second >= 600, `waited ${Math.round(third - second)} ms before the second`);
+});
+
+test('cancelling during the wait before a retry ends the run at once', async () => {
+  const stop = new AbortController();
+  const { handle } = await flakyHost((n) => {
+    if (n === 1) setTimeout(() => stop.abort(), 20);
+    return n >= 1;
+  }, { signal: stop.signal });
+  const started = performance.now();
+  await assert.rejects(run(handle, { signal: stop.signal, readRetries: 5 }), (e) => e.code === 'CANCELLED');
+  assert.ok(performance.now() - started < 200, 'did not sit out the wait');
+});
+
 test('readRetries: 0 restores the old behaviour: the first failure is final', async () => {
   const { handle, attempts } = await flakyHost((n) => n === 0);
   await assert.rejects(run(handle, { readRetries: 0 }), (e) => e.code === 'DATASET_UNRESOLVED');

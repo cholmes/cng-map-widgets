@@ -36,6 +36,7 @@ import { queryRows, describeDataset, createPlanCache } from '@cngeo/extract-core
 const COG_TYPE = 'image/tiff; application=geotiff; profile=cloud-optimized';
 const DEFAULT_LIMIT = 200;
 const DEFAULT_SCAN_LIMIT = 5000;
+const DEFAULT_TIMEOUT_MS = 60_000;
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
 /** `value` as an absolute http(s) URL (resolved against `base` when given), or null. */
@@ -196,6 +197,7 @@ export class ImagerySearch {
    *   cache?: object,       A `createPlanCache()` to share; one is made otherwise.
    *   fetch?: typeof fetch,
    *   maxAgeMs?: number,    Lifetime of the cache this makes (default 10 minutes).
+   *   timeoutMs?: number,   How long any one request may take: preparing, a footer, a row read (default 60 s; 0 = no limit).
    *   scanLimit?: number,   Most matching rows one search reads (default 5000).
    * }} [options]
    */
@@ -204,7 +206,15 @@ export class ImagerySearch {
     this.profile = profile;
     this._given = profile;
     this._fetch = options.fetch;
-    this._cache = options.cache ?? createPlanCache(options.maxAgeMs === undefined ? {} : { maxAgeMs: options.maxAgeMs });
+    // One limit for every request a search waits on: resolving the dataset,
+    // listing its files, a footer, a row read. Hangs are real (one live
+    // search waited 140 s), and without a limit a stalled request holds the
+    // search, and every search after it, until the page is reloaded.
+    this._timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this._ownsCache = !options.cache;
+    this._cache =
+      options.cache ??
+      createPlanCache({ loadTimeoutMs: this._timeoutMs, ...(options.maxAgeMs === undefined ? {} : { maxAgeMs: options.maxAgeMs }) });
     this._scanLimit = options.scanLimit ?? DEFAULT_SCAN_LIMIT;
     this._generation = 0;
     /** @type {AbortController|null} */
@@ -225,10 +235,40 @@ export class ImagerySearch {
    */
   warm() {
     if (!this._ready) {
-      const ready = describeDataset(this._given.dataset, { cache: this._cache, fetch: this._fetch }).then((described) => {
+      // Under its own time limit, not any one search's signal: a search that
+      // is superseded must not undo a preparation the next search needs.
+      const controller = new AbortController();
+      const ms = this._timeoutMs;
+      const limited = ms > 0 && Number.isFinite(ms);
+      const timedOut = () =>
+        new CngError(`Timed out after ${ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`} preparing to search "${this._given.id}".`, 'NETWORK', {
+          retryable: true,
+          context: { reason: 'timeout', timeoutMs: ms, collection: this._given.id },
+        });
+      let timer;
+      const limit = new Promise((_, reject) => {
+        if (limited) {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(timedOut());
+          }, ms);
+        }
+      });
+      const work = describeDataset(this._given.dataset, { cache: this._cache, fetch: this._fetch, signal: limited ? controller.signal : undefined }).then((described) => {
         this._dataset = described.dataset;
         this.profile = settleProfile(this._given, described);
       });
+      work.catch(() => {});
+      const ready = Promise.race([work, limit])
+        .catch((err) => {
+          if (!controller.signal.aborted) throw err;
+          // Whatever it was waiting on is still sitting in the cache, about
+          // to time out itself. Drop it, so that trying again starts a new
+          // request instead of joining the one that just failed.
+          if (this._ownsCache) this._cache.clear();
+          throw timedOut();
+        })
+        .finally(() => clearTimeout(timer));
       this._ready = ready;
       ready.catch(() => {
         if (this._ready === ready) this._ready = null;
@@ -270,7 +310,15 @@ export class ImagerySearch {
     this._controller = controller;
     const stale = () => generation !== this._generation;
     try {
-      await this.warm();
+      // Raced against this search's own cancellation: the preparation is
+      // shared and goes on, but a search that has been superseded or
+      // cancelled must resolve NOW, not when a stuck request gives up.
+      await Promise.race([
+        this.warm(),
+        new Promise((_, reject) => {
+          controller.signal.addEventListener('abort', () => reject(new Error('superseded')), { once: true });
+        }),
+      ]);
       if (stale()) return superseded();
       const profile = this.profile;
       const limit = Math.max(1, Math.trunc(query.limit ?? DEFAULT_LIMIT));
@@ -290,6 +338,13 @@ export class ImagerySearch {
         cache: this._cache,
         fetch: this._fetch,
         signal: controller.signal,
+        // A search's row reads are small, so a whole-response limit is safe
+        // here (it is not for a download). A read that trips it is made again.
+        requestTimeoutMs: this._timeoutMs,
+        // A search is many small reads against one host, and one read failing
+        // for good fails all of it. Two more tries, a moment apart (seen
+        // live: a host that answered 520 to a read and to its first retry).
+        readRetries: 2,
         onPlan: (plan) => {
           if (!stale()) query.onPlan?.(plan);
         },
@@ -430,6 +485,15 @@ export class ImagerySearch {
     });
   }
 
+  /**
+   * Reorder scenes already found, without reading anything: `sortScenes`, as
+   * a method, so a view that holds only this object can reorder its list.
+   * Right only when the list is every match; see `truncated`.
+   */
+  sort(scenes, sort) {
+    return sortScenes(scenes, sort);
+  }
+
   /** Stop the search in flight; it resolves superseded. Everything cached is kept. */
   cancel() {
     this._generation += 1;
@@ -441,7 +505,8 @@ export class ImagerySearch {
   close() {
     this.cancel();
     this._items.clear();
-    this._cache.clear();
+    // A cache the host passed in is the host's, and may be serving other searches.
+    if (this._ownsCache) this._cache.clear();
     this._ready = null;
   }
 }
