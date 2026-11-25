@@ -7,6 +7,15 @@ export { addAreaLayer } from './area-layer.js';
 export { viewportProvider } from './viewport.js';
 export { fitAreaBounds } from './fit-bounds.js';
 export {
+  DECK_BUNDLE_URL,
+  DECK_REQUIRED_EXPORTS,
+  APPROX_BYTES,
+  loadDeck,
+  setDeckModules,
+  clearDeckModules,
+  deckSupport,
+} from './deck-loader.js';
+export {
   createDrawTool,
   rectangleRingFromCorners,
   rectanglePolygonFromCorners,
