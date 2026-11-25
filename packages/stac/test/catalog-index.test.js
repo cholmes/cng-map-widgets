@@ -34,6 +34,7 @@ test('load() reads the light columns once and gives collections and catalogs apa
     kinds: [],
     thumbnail: null,
     render: null,
+    attribution: null,
   });
   assert.equal(index.hasRender, false);
 });

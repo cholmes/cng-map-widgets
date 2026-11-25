@@ -13,6 +13,18 @@
 import { CngError } from '@cngeo/spec';
 import { queryRows, describeDataset, createPlanCache } from '@cngeo/extract-core';
 import { loadMinisearch } from './minisearch-loader.js';
+import { layersFromCollection } from './layers-from-collection.js';
+import { layersFromRender } from './render-column.js';
+
+/** The kinds a map can draw as one layer today. `scenes` are searched, not drawn; `timeline` waits for its control. */
+const DRAWABLE_KINDS = Object.freeze(['pmtiles-vector', 'cog', 'geojson']);
+
+const WHY_NOT = {
+  table: 'A table with no geometry: there is nothing to draw on a map.',
+  scenes: 'An imagery collection: its scenes are found with the imagery search, not drawn as one layer.',
+  timeline: 'A time series: it needs the timeline control.',
+  unsupported: 'Nothing in this collection can be drawn here.',
+};
 
 /**
  * @typedef {Object} CatalogEntry
@@ -31,10 +43,11 @@ import { loadMinisearch } from './minisearch-loader.js';
  * @property {string[]} kinds        What it draws as, from the index's `render` column; `[]` when it has none.
  * @property {string|null} thumbnail
  * @property {object[]|null} render  The `render` column's value for this row.
+ * @property {object[]|null} attribution  The `attribution` column's value: who to credit, when the index says.
  */
 
 /** Read when present. `id` and `href` are required. `original`, `links` and `geometry` are never read. */
-const WANTED = ['type', 'id', 'href', 'title', 'description', 'license', 'keywords', 'parents', 'bbox', 'start_datetime', 'end_datetime', 'portolan_registry:id', 'render', 'thumbnail'];
+const WANTED = ['type', 'id', 'href', 'title', 'description', 'license', 'keywords', 'parents', 'bbox', 'start_datetime', 'end_datetime', 'portolan_registry:id', 'render', 'thumbnail', 'attribution'];
 const REQUIRED = ['id', 'href'];
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -88,6 +101,7 @@ function entryFromRow(row) {
     kinds: render ? [...new Set(render.map((r) => r.kind))] : [],
     thumbnail: httpUrl(row.thumbnail),
     render: render && render.length ? render : null,
+    attribution: Array.isArray(row.attribution) && row.attribution.some(isObject) ? row.attribution.filter(isObject) : null,
   };
 }
 
@@ -296,6 +310,77 @@ export class CatalogIndex {
     return { results: matched.slice(0, limit), total: matched.length, facets: { license: facet(counts.license), catalog: facet(counts.catalog), kinds: facet(counts.kinds) } };
   }
 
+  /**
+   * What a found collection puts on a map.
+   *
+   * From the index's `render` column when the entry has one -- no request.
+   * Otherwise the collection's JSON is fetched (once; kept) and read with
+   * `layersFromCollection`.
+   *
+   * The layers are sorted into `drawable` and `undrawable`, the latter each
+   * with a reason a person can read: a search result that adds nothing to the
+   * map has to say why.
+   *
+   * @param {CatalogEntry} result
+   * @param {{ drawableKinds?: string[] }} [options]  Default: `pmtiles-vector`, `cog`, `geojson`.
+   * @returns {Promise<{ layers: object[], source: 'render'|'collection', drawable: object[],
+   *   undrawable: { id: string, title: string, kind: string, reason: string }[] }>}
+   * @throws {CngError} `LAYER_LOAD_FAILED` (naming the collection) when its JSON cannot be fetched or is not a collection.
+   */
+  async resolve(result, options = {}) {
+    const drawableKinds = options.drawableKinds ?? DRAWABLE_KINDS;
+    let layers = [];
+    let source = 'render';
+    try {
+      layers = layersFromRender(result);
+    } catch {
+      layers = []; // a render value that cannot be a layer: fall back to the document itself
+    }
+    if (!layers.length) {
+      layers = await this._collectionLayers(result);
+      source = 'collection';
+    }
+    const drawable = layers.filter((l) => drawableKinds.includes(l.kind));
+    const undrawable = layers
+      .filter((l) => !drawableKinds.includes(l.kind))
+      .map((l) => ({ id: l.id, title: l.title, kind: l.kind, reason: l.kind === 'unsupported' ? (l.source?.reason ?? WHY_NOT.unsupported) : (WHY_NOT[l.kind] ?? `A "${l.kind}" layer cannot be drawn here.`) }));
+    return { layers, source, drawable, undrawable };
+  }
+
+  /** The layers of a collection, from its own JSON. One request per collection; a failure is not kept. */
+  _collectionLayers(result) {
+    this._collections ??= new Map();
+    let pending = this._collections.get(result.key);
+    if (!pending) {
+      pending = this._fetchCollectionLayers(result);
+      this._collections.set(result.key, pending);
+      pending.catch(() => {
+        if (this._collections.get(result.key) === pending) this._collections.delete(result.key);
+      });
+    }
+    return pending;
+  }
+
+  async _fetchCollectionLayers(result) {
+    const fetchImpl = this._fetch ?? globalThis.fetch.bind(globalThis);
+    const failed = (why, extra = {}, retryable = true, cause) =>
+      new CngError(`Couldn't read "${result.title}": ${why}.`, 'LAYER_LOAD_FAILED', { retryable, context: { collection: result.id, url: result.href, ...extra }, ...(cause ? { cause } : {}) });
+    let collection;
+    try {
+      const res = await fetchImpl(result.href);
+      if (!res.ok) throw failed(`its collection document returned HTTP ${res.status}`, { status: res.status }, res.status >= 500 || res.status === 429 || res.status === 404 || res.status === 408);
+      collection = await res.json();
+    } catch (cause) {
+      if (cause instanceof CngError) throw cause;
+      throw failed('its collection document could not be fetched', {}, true, cause);
+    }
+    try {
+      return layersFromCollection(collection, { baseUrl: result.href });
+    } catch (cause) {
+      throw failed('what is published there is not a STAC collection', {}, false, cause);
+    }
+  }
+
   /** The text index over the loaded entries, built on first use. */
   _textIndex() {
     if (!this._mini || this._miniFor !== this.entries) {
@@ -323,6 +408,7 @@ export class CatalogIndex {
     this._generation = (this._generation ?? 0) + 1;
     this._loading = null;
     this._mini = null;
+    this._collections?.clear();
     this.entries = [];
     this.catalogs = [];
     if (this._ownsCache) this._cache.clear();

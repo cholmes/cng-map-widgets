@@ -83,9 +83,9 @@ const list = (name, element) => [{ name, repetition_type: 'OPTIONAL', converted_
 const RENDER_FIELDS = [str('kind'), str('id'), str('title'), str('url'), str('style'), list('layers', str('element')), str('display_asset'), str('items'), str('reason')];
 
 /**
- * Build the index. `withRender` adds the `render` and `thumbnail` columns
- * (E13's enriched index); `without` leaves named columns out, to model an
- * index that is not one.
+ * Build the index. `withRender` adds the `render`, `thumbnail` and
+ * `attribution` columns (E13's enriched index); `without` leaves named
+ * columns out, to model an index that is not one.
  * `duplicate` repeats one collection's row at the end, as the live index does for some.
  * @param {{ withRender?: boolean, without?: string[], duplicate?: string }} [opts]
  */
@@ -123,6 +123,7 @@ export function buildIndex({ withRender = false, without = [], duplicate } = {})
       'portolan_registry:id': c.catalog,
       render: c.render,
       thumbnail: c.key === 'roads' ? `${BASE}/kenya/roads/thumbnail.png` : null,
+      attribution: c.key === 'roads' ? [{ text: 'Kenya Roads Board', license: 'CC-BY-4.0', url: 'https://roads.invalid/', share_alike: false }] : [{ text: 'Test publisher', license: c.license, url: null, share_alike: c.license === 'ODbL-1.0' }],
     })),
   ];
   if (duplicate) rows.push({ ...rows.find((r) => r.type === 'Collection' && r.id === duplicate) });
@@ -136,7 +137,9 @@ export function buildIndex({ withRender = false, without = [], duplicate } = {})
     str('description'), str('license'), str('original'), str('title'),
     list('keywords', str('element')),
     str('portolan_registry:id'),
-    ...(withRender ? [list('render', group('element', RENDER_FIELDS)), str('thumbnail')] : []),
+    ...(withRender
+      ? [list('render', group('element', RENDER_FIELDS)), str('thumbnail'), list('attribution', group('element', [str('text'), str('license'), str('url'), { name: 'share_alike', type: 'BOOLEAN', repetition_type: 'OPTIONAL' }]))]
+      : []),
   ];
   const nameOf = (c) => (Array.isArray(c) ? c[0].name : c.name);
   columns = columns.filter((c) => !without.includes(nameOf(c)));
