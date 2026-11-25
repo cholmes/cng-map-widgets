@@ -66,9 +66,11 @@ All pure; none opens a file.
 | `forSelection(chunks, { from, to }, unit)` | Every chunk that owns part of a selection. |
 
 `forView` picks the finest unit whose chunks can show the window within `cap`
-(default 3) — and that shows at least as much of it as a coarser unit would.
-A six-year view is not a wider daily view; it is what a monthly overview
-chunk is for. With no coarser chunk, the `cap` chunks nearest the middle load
+(default 3) — unless a coarser unit would show a whole bucket (32 days) more
+of it. A six-year view is not a wider daily view; it is what a monthly
+overview chunk is for. Less than a bucket more is only the unfinished part of
+the overview's last month — it runs to the 30th where the daily data ends
+today — and is no reason to give up days. With no coarser chunk, the `cap` chunks nearest the middle load
 and the rest reads as not loaded. A chunk wholly inside another's span (the
 rolling week) is an overlay and does not count against the cap.
 
@@ -89,8 +91,12 @@ histogram, partial, view, selection }`.
 
 - **Loaded follows the view.** Chunks are added as the view reaches them —
   at most every 150 ms while a gesture is in flight (`setView(w, { dragging:
-  true })`), never more than twice the cap held — and let go only after
-  450 ms of stillness. A chunk the selection draws from is never let go.
+  true })`), never more than twice the cap held for the view (the chunks a
+  selection draws from are counted apart, up to `selectionCap`) — and let go
+  only after 450 ms of stillness. A chunk the selection draws from is never
+  let go. A view left `dragging` with no further word for two seconds
+  (`stillMs`) is taken to be at rest: a gesture whose end is never reported
+  must not hold everything for ever.
 - **Drawing follows the selection**: every loaded chunk that owns part of
   it, each told only its own buckets.
 - **Handover.** A chunk that stops drawing while its successor has nothing on

@@ -70,6 +70,7 @@ const distanceFrom = (chunk, mid) => Math.abs((keyIndex(chunk.start, 'day') + ke
  * @param {number} [options.histogramMs]    The histogram follows new data by at most this. Default 180.
  * @param {number} [options.handoverMs]     Longest a frozen chunk is kept. Default 8000.
  * @param {number} [options.openTimeoutMs]  Longest a chunk may take to open. Default 60000.
+ * @param {number} [options.stillMs]        Silence after which a `dragging` view counts as at rest. Default 2000.
  * @param {{ setTimeout: Function, clearTimeout: Function, now: () => number }} [options.timers]  For tests.
  */
 export function createChunkSet(options) {
@@ -82,6 +83,7 @@ export function createChunkSet(options) {
   const histogramMs = options.histogramMs ?? 180;
   const handoverMs = options.handoverMs ?? 8000;
   const openTimeoutMs = options.openTimeoutMs ?? 60_000;
+  const stillMs = options.stillMs ?? 2000;
   const T = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (id) => clearTimeout(id), now: () => Date.now(), ...options.timers };
 
   /** @type {Map<string, any>} chunk id -> entry */
@@ -102,6 +104,7 @@ export function createChunkSet(options) {
   let loadTimer = null;
   let histogramTimer = null;
   let lastLoadAt = -Infinity;
+  let lastViewAt = -Infinity;
   let lastSignature = '';
 
   const alive = (entry) => !destroyed && entries.get(entry.chunk.id) === entry;
@@ -437,14 +440,27 @@ export function createChunkSet(options) {
           reconcile();
         }, lastLoadAt + loadEveryMs - now);
       }
+      lastViewAt = now;
       T.clearTimeout(settleTimer);
-      settleTimer = T.setTimeout(() => {
+      const settle = () => {
         settleTimer = null;
-        if (dragging) return; // the end of the gesture will call again
+        if (dragging) {
+          // The end of the gesture will call again -- usually. A gesture
+          // whose end is never reported (a pointer released outside the page,
+          // a control that forgets) must not hold the unit and what is loaded
+          // for ever: enough silence IS the end.
+          const quiet = T.now() - lastViewAt;
+          if (quiet < stillMs) {
+            settleTimer = T.setTimeout(settle, stillMs - quiet);
+            return;
+          }
+          dragging = false;
+        }
         plan(true);
         scheduleHistogram();
         reconcile();
-      }, settleMs);
+      };
+      settleTimer = T.setTimeout(settle, settleMs);
       reconcile();
     },
 

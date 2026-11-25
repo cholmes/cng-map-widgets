@@ -133,6 +133,33 @@ try {
     const back = await state();
     check('zoomed back in, it is days again, from a yearly chunk', back.unit === 'day' && back.loaded.length >= 1 && back.loaded.every((id) => id !== 'alltime') && back.drawing.length >= 1 && back.bars > 20,
       `unit ${back.unit}; loaded: ${back.loaded.join(', ')}; drawing: ${back.drawing.join(', ')}; ${back.bars} days with detections`);
+
+    // Five days of last June, out to months by the track's own gestures, and
+    // back. On the monthly track those five days are "June"; the session
+    // keeps the five. (The review: every track event forwarded the selection
+    // too, so the first zoom out there made it the whole month for good.)
+    const year = Number(thisYear.id) - 1;
+    const five = { from: `${year}0610`, to: `${year}0614` };
+    const trip = await page.evaluate(async (sel) => {
+      const D = window.DEMO;
+      const c = D.control._canvas;
+      c.setViewDays(`${sel.from.slice(0, 4)}0501`, `${sel.from.slice(0, 4)}0731`);
+      c.setSelectionDays(sel.from, sel.to);
+      await D.settle();
+      const before = D.session.state.selection;
+      for (let i = 0; i < 12 && D.session.state.unit === 'day'; i++) {
+        c.zoomBy(0.5);
+        await D.settle();
+      }
+      const out = { unit: D.session.state.unit, track: c.selectionDays(), session: D.session.state.selection };
+      c.zoomBy(0.5); // one more gesture ON the monthly track: the one that used to overwrite it
+      await D.settle();
+      c.setViewDays(D.session.timeline.addDays(sel.to, -45), D.session.timeline.addDays(sel.to, 15));
+      await D.settle();
+      return { before, out, unit: D.session.state.unit, after: D.session.state.selection, track: c.selectionDays() };
+    }, five);
+    check('a five-day selection is still those five days after a trip out to months', trip.out.unit === 'month' && trip.out.track.from === `${year}0601` && trip.out.track.to === `${year}0630` && trip.unit === 'day' && trip.after.from === five.from && trip.after.to === five.to && trip.track.from === five.from && trip.track.to === five.to,
+      `${trip.before.from}..${trip.before.to}; in months the track shows ${trip.out.track.from}..${trip.out.track.to} and the session holds ${trip.out.session.from}..${trip.out.session.to}; back in ${trip.unit}s: ${trip.after.from}..${trip.after.to}`);
   }
 
   // --- 7. Playback ------------------------------------------------------------------------------------------
@@ -185,19 +212,27 @@ try {
       // version of this check used one, and I read its blindness as a bug.)
       D.manager.setVisible('fires', false);
       await D.settle();
-      const hidden = D.fullPicture();
+      window.__hidden = D.fullPicture();
       D.manager.setVisible('fires', true);
       await D.settle();
-      const weekLit = D.litAgainst(hidden);
+      const weekLit = D.litAgainst(window.__hidden);
       const all = Object.entries(D.session.state.histogram).filter(([k]) => k >= week.start && k <= week.end).reduce((sum, [, v]) => sum + v, 0);
-      const requests = performance.getEntriesByType('resource').filter((r) => /\.pmtiles/.test(r.name)).length;
+      return { best, all, weekLit, zoom: D.map.getZoom() };
+    }, latest);
+    // Counted here, by the browser's own request events: the page's
+    // resource-timing buffer stops at 250 entries, and a count that cannot
+    // rise proves nothing.
+    const requestsBefore = tileRequests;
+    Object.assign(found, await page.evaluate(async (week) => {
+      const D = window.DEMO;
       // One day of the eight: fewer points, not none, and nothing fetched for it.
       D.control._canvas.setSelectionDays(week.start, week.start);
       await D.settle();
-      const dayLit = D.litAgainst(hidden);
-      const line = document.querySelector('.cng-tl-status').textContent;
-      return { best, all, weekLit, dayLit, line, zoom: D.map.getZoom(), fetched: performance.getEntriesByType('resource').filter((r) => /\.pmtiles/.test(r.name)).length - requests };
-    }, latest);
+      const dayLit = D.litAgainst(window.__hidden);
+      window.__hidden = null;
+      return { dayLit, line: document.querySelector('.cng-tl-status').textContent };
+    }, latest));
+    found.fetched = tileRequests - requestsBefore;
     const oneDayCount = Number(/· ([\d,]+) detections/.exec(found.line)?.[1].replaceAll(',', '') ?? 0);
     check('zoomed in, single detections are drawn, counted, and follow the selection', found.all > 0 && found.weekLit > 200 && oneDayCount > 0 && oneDayCount < found.all && found.dayLit > 20 && found.dayLit < found.weekLit && found.fetched === 0,
       `at [${found.best.center}] zoom ${found.zoom.toFixed(1)}: the week's ${found.all.toLocaleString('en-US')} detections light ${found.weekLit.toLocaleString('en-US')} pixels; one day of it (${oneDayCount} detections) lights ${found.dayLit.toLocaleString('en-US')}, with ${found.fetched} requests`);
@@ -218,19 +253,87 @@ try {
       await D.settle();
       const hidden = D.snapshot();
       const visibleAfterHide = D.manager.get('fires').visible;
-      const deckVisible = D.manager.deckLayers().map((l) => l.props.visible);
       box?.click();
       await D.settle();
-      return { shown, hidden, back: D.snapshot(), visibleAfterHide, deckVisible, box: Boolean(box), rows: rows.map((r) => r.dataset.layerId), credits: D.credits() };
+      return { shown, hidden, back: D.snapshot(), visibleAfterHide, box: Boolean(box), rows: rows.map((r) => r.dataset.layerId), credits: D.credits() };
     }, latest);
     const gone = difference(out.shown, out.hidden);
     const returned = difference(out.shown, out.back);
     // The first version of this check looked for the checkbox with a selector
     // that matched nothing, clicked nothing, and then described the layers as
     // "all invisible". It says what it found now.
-    check('the timeline is one row in the layer panel, and its checkbox hides every chunk', out.box && out.rows.filter((id) => id === 'fires').length === 1 && out.visibleAfterHide === false && out.deckVisible.length >= 1 && out.deckVisible.every((v) => v === false) && gone > 2 && returned < gone / 4,
-      out.box ? `rows: ${out.rows.join(', ')}; unchecked: layer visible ${out.visibleAfterHide}, chunk layers visible [${out.deckVisible.join(', ')}], the map changed by ${gone.toFixed(1)} of 255; checked again: within ${returned.toFixed(2)} of before` : `no checkbox was found for the layer (rows: ${out.rows.join(', ') || 'none'})`);
+    check('the timeline is one row in the layer panel, and its checkbox hides every chunk', out.box && out.rows.filter((id) => id === 'fires').length === 1 && out.visibleAfterHide === false && gone > 2 && returned < gone / 4,
+      out.box ? `rows: ${out.rows.join(', ')}; unchecked: layer visible ${out.visibleAfterHide}, the map changed by ${gone.toFixed(1)} of 255; checked again: within ${returned.toFixed(2)} of before` : `no checkbox was found for the layer (rows: ${out.rows.join(', ') || 'none'})`);
     check('the data is credited', /NASA FIRMS/.test(out.credits), out.credits.slice(0, 160));
+
+    // Hidden, it still loads: the track is about what is in view, drawn or
+    // not. (The review: deck.gl loads nothing for an invisible layer, so the
+    // panel said "0 detections in view" of a continent on fire.)
+    const requestsBefore = tileRequests;
+    const quiet = await page.evaluate(async () => {
+      const D = window.DEMO;
+      D.manager.setVisible('fires', false);
+      await D.settle();
+      const before = D.snapshot();
+      D.map.jumpTo({ center: [134, -22], zoom: 3.4 }); // Australia: nothing of it has been fetched
+      await D.settle();
+      const s = D.session.state;
+      const out = { bars: Object.keys(s.histogram).length, partial: s.partial, line: document.querySelector('.cng-tl-status').textContent, before, hidden: D.snapshot() };
+      D.manager.setVisible('fires', true);
+      await D.settle();
+      return { ...out, shown: D.snapshot(), barsShown: Object.keys(D.session.state.histogram).length };
+    });
+    const appeared = difference(quiet.hidden, quiet.shown);
+    check('a hidden timeline still loads what is in view, and paints none of it', tileRequests > requestsBefore && quiet.bars > 0 && quiet.bars === quiet.barsShown && !quiet.partial && appeared > 0.5,
+      `hidden, over a new place: ${tileRequests - requestsBefore} tile requests, ${quiet.bars} bars, "${quiet.line}"; shown again the map changed by ${appeared.toFixed(1)} of 255 and the bars did not (${quiet.barsShown})`);
+
+    // The layer panel's opacity, with nothing else changing.
+    const faded = await page.evaluate(async () => {
+      const D = window.DEMO;
+      const of = () => D.manager.deckLayers().flatMap((l) => (l.getSubLayers?.() ?? []).map((sub) => sub.props.opacity));
+      const full = { picture: D.snapshot(), opacities: of() };
+      D.manager.setOpacity('fires', 0.2);
+      await D.settle();
+      const faint = { picture: D.snapshot(), opacities: of() };
+      D.manager.setOpacity('fires', 1);
+      await D.settle();
+      return { full, faint, back: D.snapshot() };
+    });
+    const fade = difference(faded.full.picture, faded.faint.picture);
+    const max = (list) => Math.max(0, ...list);
+    check('the layer panel\'s opacity reaches the map at once', fade > 0.3 && faded.faint.opacities.length > 0 && max(faded.faint.opacities) < max(faded.full.opacities) / 3 && difference(faded.full.picture, faded.back) < fade / 4,
+      `${faded.full.opacities.length} tile sublayers at ${max(faded.full.opacities).toFixed(2)}, then ${max(faded.faint.opacities).toFixed(3)} at 0.2; the map changed by ${fade.toFixed(2)} of 255, and back`);
+  }
+
+  // --- 9b. One chunk that will not open ---------------------------------------------------------------------------
+  {
+    // A year whose archive answers 520, with the view and the selection moved
+    // wholly onto it: nothing else is loaded then. (The review: that state
+    // was read as "nothing can be loaded", the layer was failed and its
+    // session destroyed, and the panel said the layer was not on the map.)
+    const bad = '**/fire-2012.pmtiles';
+    await page.route(bad, (route) => route.fulfill({ status: 520, headers: { 'access-control-allow-origin': '*' }, body: 'unknown error' }));
+    const broken = await page.evaluate(async () => {
+      const D = window.DEMO;
+      const session = D.session;
+      D.control._canvas.setViewDays('20120301', '20120501');
+      D.control._canvas.setSelectionDays('20120401', '20120405');
+      await D.settle(30_000);
+      const s = D.session?.state;
+      return { same: D.session === session, status: D.manager.get('fires').status, note: D.manager.get('fires').note ?? '', loaded: s?.loaded ?? [], failed: (s?.failed ?? []).map((f) => f.id), line: document.querySelector('.cng-tl-status').textContent, tone: document.querySelector('.cng-tl-status').classList.contains('is-error'), retry: !document.querySelector('.cng-tl-retry').hidden };
+    });
+    await page.unroute(bad);
+    const mended = await page.evaluate(async () => {
+      const D = window.DEMO;
+      document.querySelector('.cng-tl-retry').click();
+      await D.settle(60_000);
+      const s = D.session.state;
+      return { loaded: s.loaded, failed: s.failed.length, bars: Object.keys(s.histogram).length, note: D.manager.get('fires').note ?? '', retry: !document.querySelector('.cng-tl-retry').hidden, line: document.querySelector('.cng-tl-status').textContent };
+    });
+    check('one year that will not open is said, with a way to retry; the layer and its session stay', broken.same && broken.status === 'ready' && broken.failed.join() === '2012' && broken.tone && /2012/.test(broken.line) && /2012/.test(broken.note) && broken.retry,
+      `layer ${broken.status}; loaded: ${broken.loaded.join(', ') || 'nothing'}; failed: ${broken.failed.join(', ')}; the panel says "${broken.line}"; Retry shown: ${broken.retry}`);
+    check('Retry, once the host answers, loads it', mended.loaded.includes('2012') && mended.failed === 0 && mended.bars > 20 && !mended.retry && !/2012/.test(mended.note),
+      `loaded: ${mended.loaded.join(', ')}; ${mended.bars} days with detections; "${mended.line}"`);
   }
 
   // --- 10. The panel ---------------------------------------------------------------------------------------------------

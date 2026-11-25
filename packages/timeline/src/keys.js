@@ -124,14 +124,23 @@ export function bucketKeyOfDay(dayKey, unit) {
   return unit === 'month' ? String(dayKey).slice(0, 6) : String(dayKey);
 }
 
+const ZONELESS = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+/**
+ * A date-time that names no zone, made explicit as UTC. `Date.parse` reads
+ * `2024-01-01T00:00:00` in the MACHINE's zone, so the same file would give
+ * 31 December to a reader in Berlin and 1 January to one in London.
+ */
+const asUtc = (text) => (ZONELESS.test(text) ? `${text.replace(' ', 'T')}Z` : text);
+
 /**
  * The UTC calendar day of a date, as a day key: from an ISO string, a `Date`,
- * or a day key (returned as it is). Null when it is not a date.
+ * or a day key (returned as it is). A date-time with no zone is taken as UTC.
+ * Null when it is not a date.
  */
 export function dayKeyOfDate(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string' && /^\d{8}$/.test(value)) return value;
-  const ms = value instanceof Date ? value.getTime() : typeof value === 'string' ? Date.parse(value) : NaN;
+  const ms = value instanceof Date ? value.getTime() : typeof value === 'string' ? Date.parse(asUtc(value)) : NaN;
   if (!Number.isFinite(ms)) return null;
   const d = new Date(ms);
   return pad(d.getUTCFullYear(), 4) + pad(d.getUTCMonth() + 1, 2) + pad(d.getUTCDate(), 2);

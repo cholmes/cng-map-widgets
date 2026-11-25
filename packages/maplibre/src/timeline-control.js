@@ -14,7 +14,7 @@
 // Remote text (a layer's title, an error's words) reaches the DOM through
 // `textContent` only.
 
-import { timelineStatusOf, presetsFor, inputsFor } from './timeline-model.js';
+import { timelineStatusOf, presetsFor, inputsFor, trackNews, unboundStatus, liveness } from './timeline-model.js';
 import { TOKENS_LIGHT, TOKENS_DARK } from './layer-control-theme.js';
 
 const CSS = `
@@ -85,6 +85,8 @@ export class TimelineControl {
     this._cleanup = [];
     this._bound = [];
     this._said = {};
+    /** What the track last showed: `{ view, selection, dragging }`, the baseline for `trackNews`. */
+    this._shown = null;
   }
 
   getDefaultPosition() {
@@ -147,6 +149,9 @@ export class TimelineControl {
     bar.append(this._title, playGroup, this._presets, zoom, dates, this._retry, this._progress, this._status);
 
     this._canvasEl = this._el('canvas', 'cng-tl-canvas');
+    // A role, or a screen reader has nothing to hang the label on. The date
+    // inputs and the step buttons beside it do the same job without a pointer.
+    this._canvasEl.setAttribute('role', 'application');
     this._canvasEl.setAttribute('aria-label', 'Timeline. Arrow keys move the selection; shift and arrow keys resize it; F fits the view to it.');
     root.append(bar, this._canvasEl);
 
@@ -240,8 +245,8 @@ export class TimelineControl {
       if (this._map !== map) return; // removed while the layer was loading
       const session = this._manager.handle(this._layerId);
       if (!session) {
-        const entry = this._manager.get(this._layerId);
-        this._say(entry ? (entry.error?.message ?? `"${entry.title}" is not a timeline layer.`) : `There is no layer "${this._layerId}" on the map.`, 'error');
+        const said = unboundStatus(this._manager.get(this._layerId), this._layerId);
+        this._say(said.line, said.tone);
         return;
       }
       this._attach(session);
@@ -257,12 +262,22 @@ export class TimelineControl {
     this._playback = null;
     this._canvas = null;
     this.session = null;
+    this._shown = null;
+    // Nothing to retry, and no tiles to count, without a session.
+    if (this._retry) this._retry.hidden = true;
+    if (this._progress) this._progress.textContent = '';
+    this._status?.setAttribute('aria-live', 'polite');
   }
 
   _attach(session) {
     this._detach();
     if (!session || !this._map) {
-      if (this._root) this._say('The timeline layer is not on the map.', 'info');
+      // What the layer manager knows: a layer that failed is on the map, as
+      // an error, and its own message is the thing to say.
+      if (this._root) {
+        const said = unboundStatus(this._manager.get(this._layerId), this._layerId);
+        this._say(said.line, said.tone);
+      }
       return;
     }
     const T = session.timeline;
@@ -270,14 +285,19 @@ export class TimelineControl {
     this._title.textContent = session.title ?? '';
     this._axisKey = '';
     this._applying = false;
+    this._shown = null;
 
     this._canvas = new T.TimelineCanvas(this._canvasEl, {
       metricLabel: this._metric,
       prefix: session.source?.aggregate?.prefix,
       onChange: (event) => {
         if (this._applying) return;
-        session.setView(event.view, { dragging: event.dragging });
-        session.setSelection(event.selection);
+        // Only what the track CHANGED goes to the session, whose dates are
+        // exact where the track's are whole buckets (see `trackNews`).
+        const news = trackNews(this._shown, event);
+        this._shown = { view: event.view, selection: event.selection, dragging: event.dragging };
+        if (news.view) session.setView(event.view, { dragging: event.dragging });
+        if (news.selection) session.setSelection(event.selection);
       },
     });
     this._applyTheme();
@@ -301,6 +321,8 @@ export class TimelineControl {
     const onPlayback = (state) => {
       this._play.textContent = state.playing ? 'Pause' : 'Play';
       this._play.setAttribute('aria-pressed', String(state.playing));
+      // Not announced step by step; what it says when it stops, is.
+      this._status.setAttribute('aria-live', liveness(state));
     };
     this._bound.push(this._playback.on('change', onPlayback));
     onPlayback(this._playback.state);
@@ -347,6 +369,8 @@ export class TimelineControl {
       } finally {
         this._applying = false;
       }
+      // What the track now shows is the baseline its next event is read against.
+      this._shown = { view: canvas.viewDays(), selection: canvas.selectionDays(), dragging: false };
       this._renderPresets(state);
       // Where the new axis cannot hold them -- a monthly record that ends
       // before the days that were selected -- the track shows the nearest it

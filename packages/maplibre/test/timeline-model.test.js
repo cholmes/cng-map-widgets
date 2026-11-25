@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as T from '@cngeo/timeline';
-import { timelineStatusOf, presetsFor, inputsFor, selectionTotal, notLoadedBuckets, createTimelineModel } from '../src/timeline-model.js';
+import { timelineStatusOf, presetsFor, inputsFor, selectionTotal, notLoadedBuckets, createTimelineModel, trackNews, unboundStatus, liveness } from '../src/timeline-model.js';
 
 const DAY_AXIS = { unit: 'day', min: '20240101', max: '20241231' };
 const base = (extra = {}) => ({
@@ -89,6 +89,41 @@ test('date inputs: days on a daily axis, months on a monthly one, bounded by the
   const monthly = base({ unit: 'month', axis: { unit: 'month', min: '200011', max: '202412' }, selection: { from: '20241101', to: '20241130' } });
   assert.deepEqual(inputsFor(monthly, T), { type: 'month', from: '2024-11', to: '2024-11', min: '2000-11', max: '2024-12' });
   assert.equal(inputsFor(base({ axis: null }), T), null);
+});
+
+// Review, Important 5. The track speaks whole buckets; the session holds exact
+// days. Every track event used to forward BOTH the view and the selection, so
+// on the monthly track the first zoom overwrote an exact five-day selection
+// with the whole month it sat in -- and it came back from months as a month.
+test('a track event forwards only what the track changed', () => {
+  const june = { from: '20260601', to: '20260630' };
+  const shown = { view: { from: '20200101', to: '20261130' }, selection: june, dragging: false };
+  // A zoom on the monthly track: the view moved, the selection did not.
+  assert.deepEqual(trackNews(shown, { view: { from: '20250101', to: '20261130' }, selection: june, dragging: false }), { view: true, selection: false });
+  // A drag of the selection.
+  assert.deepEqual(trackNews(shown, { view: shown.view, selection: { from: '20260701', to: '20260731' }, dragging: true }), { view: true, selection: true });
+  // The end of a gesture that changed nothing more is still news: someone is waiting for `dragging: false`.
+  assert.deepEqual(trackNews({ ...shown, dragging: true }, { ...shown, dragging: false }), { view: true, selection: false });
+  assert.deepEqual(trackNews(shown, { ...shown }), { view: false, selection: false });
+  // Nothing shown yet: everything is news.
+  assert.deepEqual(trackNews(null, shown), { view: true, selection: true });
+});
+
+// Review, Critical 1 (the panel's half). A layer that failed is ON the map,
+// as an error; the panel said it was not there.
+test('with no session, the panel says what the layer manager knows', () => {
+  assert.deepEqual(unboundStatus(null, 'fires'), { tone: 'error', line: 'There is no layer "fires" on the map.' });
+  assert.deepEqual(unboundStatus({ title: 'Fires', status: 'error', error: { message: 'HTTP 520 for fire-2012.pmtiles' } }, 'fires'), { tone: 'error', line: 'HTTP 520 for fire-2012.pmtiles' });
+  assert.deepEqual(unboundStatus({ title: 'Fires', status: 'loading' }, 'fires'), { tone: 'info', line: 'Loading "Fires"…' });
+  assert.deepEqual(unboundStatus({ title: 'Roads', status: 'ready', kind: 'pmtiles-vector' }, 'roads'), { tone: 'error', line: '"Roads" is not a timeline layer.' });
+});
+
+// Review, Important 6. A live region rewritten on every step of playback is
+// twelve sentences in four seconds to a screen reader.
+test('while it plays, the status is not announced; when it stops, it is', () => {
+  assert.equal(liveness({ playing: true }), 'off');
+  assert.equal(liveness({ playing: false }), 'polite');
+  assert.equal(liveness(undefined), 'polite');
 });
 
 test('the model follows its session and says when what it shows has changed', () => {

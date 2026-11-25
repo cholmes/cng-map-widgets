@@ -134,9 +134,24 @@ export function extentOf(chunk) {
   return { unit: chunk.unit, min: bucketKeyOfDay(chunk.start, chunk.unit), max: bucketKeyOfDay(chunk.end, chunk.unit) };
 }
 
+// A chunk's numbers are parsed from its keys once and remembered: the rules
+// below are asked about thousands of chunks on every drag of a selection.
+/** @type {WeakMap<object, { span: [number, number], days: [number, number] }>} */
+const measured = new WeakMap();
+function measure(chunk) {
+  let m = measured.get(chunk);
+  if (!m) {
+    m = {
+      span: [keyIndex(bucketKeyOfDay(chunk.start, chunk.unit), chunk.unit), keyIndex(bucketKeyOfDay(chunk.end, chunk.unit), chunk.unit)],
+      days: [keyIndex(chunk.start, 'day'), keyIndex(chunk.end, 'day')],
+    };
+    measured.set(chunk, m);
+  }
+  return m;
+}
 /** `[first, last]` bucket ordinals of a chunk, in its own unit. */
-const span = (chunk) => [keyIndex(bucketKeyOfDay(chunk.start, chunk.unit), chunk.unit), keyIndex(bucketKeyOfDay(chunk.end, chunk.unit), chunk.unit)];
-const width = (chunk) => day(chunk.end) - day(chunk.start);
+const span = (chunk) => measure(chunk).span;
+const width = (chunk) => measure(chunk).days[1] - measure(chunk).days[0];
 
 /** Does `a` win a bucket both cover? Priority, then the narrower (whoever published it meant that span), then the earlier id. */
 function beats(a, b) {
@@ -248,7 +263,7 @@ const touches = (chunk, from, to) => chunk.start <= to && chunk.end >= from;
 function coverage(chunks, from, to) {
   const lo = day(from);
   const hi = day(to);
-  const spans = chunks.map((c) => [Math.max(lo, day(c.start)), Math.min(hi, day(c.end))]).filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]);
+  const spans = chunks.map((c) => [Math.max(lo, measure(c).days[0]), Math.min(hi, measure(c).days[1])]).filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]);
   let covered = 0;
   let next = lo;
   for (const [a, b] of spans) {
@@ -262,13 +277,49 @@ function coverage(chunks, from, to) {
 }
 
 /**
+ * The chunks of `touching` that lie wholly inside another, wider one: overlays
+ * (a rolling week inside its year). One pass over them in order of start.
+ */
+function overlaysOf(touching) {
+  const sorted = [...touching].sort((a, b) => measure(a).days[0] - measure(b).days[0] || measure(b).days[1] - measure(a).days[1]);
+  const out = new Set();
+  let maxEnd = -Infinity; // the furthest end of anything seen so far (all start at or before this one)
+  let maxEndEarlier = -Infinity; // ... of anything that starts strictly earlier
+  let groupStart = null;
+  let groupMaxEnd = -Infinity;
+  for (const c of sorted) {
+    const [start, end] = measure(c).days;
+    if (start !== groupStart) {
+      // A new start: everything before it now "starts strictly earlier".
+      maxEndEarlier = Math.max(maxEndEarlier, groupMaxEnd);
+      groupStart = start;
+      groupMaxEnd = -Infinity;
+    }
+    // Contained by something wider: one that ends later, or one that ends
+    // with it and starts earlier.
+    if (maxEnd > end || maxEndEarlier >= end) out.add(c);
+    if (end > maxEnd) maxEnd = end;
+    if (end > groupMaxEnd) groupMaxEnd = end;
+  }
+  return out;
+}
+
+/**
+ * A coarser unit has to show this many more days of a window than a finer
+ * one before it is the better view of it: one whole coarse bucket. Less than
+ * that is the unfinished part of its last bucket -- a monthly archive runs to
+ * the 30th where the daily data ends today -- and is no reason to give up days.
+ */
+const COARSER_MUST_SHOW_DAYS = 32;
+
+/**
  * Which chunks a view needs LOADED, and at which unit.
  *
- * The finest unit whose chunks can show the window within `cap` -- and that
- * shows at least as much of it as a coarser unit would. Otherwise the coarser
- * unit: a view of six years is not a wider daily view, it is what a monthly
- * overview is for. With no coarser chunk to fall back on, the `cap` chunks
- * nearest the middle of the window load and the rest reads as not loaded.
+ * The finest unit whose chunks can show the window within `cap` -- unless a
+ * coarser unit would show a whole bucket more of it. Then the coarser unit: a
+ * view of six years is not a wider daily view, it is what a monthly overview
+ * is for. With no coarser chunk to fall back on, the `cap` chunks nearest the
+ * middle of the window load and the rest reads as not loaded.
  *
  * A chunk wholly inside another's span (a rolling week over its year) is an
  * overlay: it loads whenever it touches the window and does not count against
@@ -287,15 +338,16 @@ export function forView(chunks, window, { cap = 3 } = {}) {
   for (const unit of present) {
     const touching = chunks.filter((c) => c.unit === unit && touches(c, from, to));
     if (!touching.length) continue;
-    const overlays = touching.filter((c) => touching.some((o) => o !== c && o.start <= c.start && o.end >= c.end && width(o) > width(c)));
-    const base = touching.filter((c) => !overlays.includes(c));
+    const inside = overlaysOf(touching);
+    const overlays = touching.filter((c) => inside.has(c));
+    const base = touching.filter((c) => !inside.has(c));
     plans.push({ unit, base, overlays, fits: base.length <= cap, covered: coverage(touching, from, to) });
   }
   if (!plans.length) return { unit: present[0] ?? 'day', load: [] };
   const fitting = plans.filter((p) => p.fits);
   for (let i = 0; i < fitting.length; i++) {
     const coarser = fitting.slice(i + 1);
-    if (coarser.every((p) => p.covered <= fitting[i].covered)) return { unit: fitting[i].unit, load: [...fitting[i].base, ...fitting[i].overlays].sort(byStart) };
+    if (coarser.every((p) => p.covered - fitting[i].covered < COARSER_MUST_SHOW_DAYS)) return { unit: fitting[i].unit, load: [...fitting[i].base, ...fitting[i].overlays].sort(byStart) };
   }
   // Nothing fits the cap at any unit: the finest, as much of it as the cap allows.
   const finest = plans[0];
@@ -318,9 +370,75 @@ export function forView(chunks, window, { cap = 3 } = {}) {
  */
 export function forSelection(chunks, window, unit) {
   const candidates = chunks.filter((c) => c.unit === unit && touches(c, window.from, window.to));
-  const fromKey = bucketKeyOfDay(window.from, unit);
-  const toKey = bucketKeyOfDay(window.to, unit);
-  return candidates
-    .filter((c) => ownedRanges(candidates, c, fromKey, toKey).length > 0)
-    .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.id < b.id ? -1 : 1));
+  const a = keyIndex(bucketKeyOfDay(window.from, unit), unit);
+  const b = keyIndex(bucketKeyOfDay(window.to, unit), unit);
+  const owners = ownersWithin(candidates, a, b);
+  return candidates.filter((c) => owners.has(c)).sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : x.id < y.id ? -1 : 1));
+}
+
+/**
+ * The chunks that own at least one bucket of `a`..`b` (bucket ordinals), all
+ * of one unit. A sweep along the buckets with the chunks that cover the
+ * present one held in a heap, best first: where a chunk is on top for at
+ * least one bucket, it owns that bucket.
+ *
+ * Asking each chunk in turn whether every other beats it (the first version)
+ * was quadratic: 54 seconds for a selection over 9,521 daily chunks, on every
+ * move of the selection.
+ */
+function ownersWithin(candidates, a, b) {
+  const ranked = [...candidates].sort((x, y) => (beats(x, y) ? -1 : 1)); // best first: `beats` is a total order
+  const events = []; // [position, rank, +1 enters | -1 leaves]
+  ranked.forEach((chunk, rank) => {
+    const [lo, hi] = span(chunk);
+    const from = Math.max(lo, a);
+    const to = Math.min(hi, b);
+    if (to < from) return;
+    events.push([from, rank, 1], [to + 1, rank, -1]);
+  });
+  events.sort((x, y) => x[0] - y[0]);
+  // A min-heap of ranks, with leaving done lazily: a rank that has left is
+  // skipped when it reaches the top.
+  const heap = [];
+  const gone = new Set();
+  const push = (rank) => {
+    let i = heap.push(rank) - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (heap[parent] <= heap[i]) break;
+      [heap[parent], heap[i]] = [heap[i], heap[parent]];
+      i = parent;
+    }
+  };
+  const pop = () => {
+    const last = heap.pop();
+    if (!heap.length) return;
+    heap[0] = last;
+    let i = 0;
+    for (;;) {
+      const left = 2 * i + 1;
+      const right = left + 1;
+      let least = i;
+      if (left < heap.length && heap[left] < heap[least]) least = left;
+      if (right < heap.length && heap[right] < heap[least]) least = right;
+      if (least === i) break;
+      [heap[least], heap[i]] = [heap[i], heap[least]];
+      i = least;
+    }
+  };
+  const owners = new Set();
+  for (let e = 0; e < events.length; ) {
+    const position = events[e][0];
+    for (; e < events.length && events[e][0] === position; e++) {
+      if (events[e][2] === 1) push(events[e][1]);
+      else gone.add(events[e][1]);
+    }
+    while (heap.length && gone.has(heap[0])) {
+      gone.delete(heap[0]);
+      pop();
+    }
+    // Whoever is on top owns the buckets from here to the next event.
+    if (heap.length && position <= b) owners.add(ranked[heap[0]]);
+  }
+  return owners;
 }

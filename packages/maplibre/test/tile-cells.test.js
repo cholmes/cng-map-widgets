@@ -85,6 +85,19 @@ test('dayNumberOf: a point\'s day, however it was written', () => {
   assert.equal(dayNumberOf({ t: '2020-01-03T23:59:00Z' }, 't'), jan3);
   assert.ok(Number.isNaN(dayNumberOf({}, 'day')));
   assert.ok(Number.isNaN(dayNumberOf({ day: 'soon' }, 'day')));
+  // With no zone it is UTC, not this machine's time: or two viewers put one
+  // point in two different days.
+  const before = process.env.TZ;
+  try {
+    for (const zone of ['Europe/Berlin', 'America/Los_Angeles']) {
+      process.env.TZ = zone;
+      assert.equal(dayNumberOf({ t: '2020-01-03T00:00:00' }, 't'), jan3, zone);
+      assert.equal(dayNumberOf({ t: '2020-01-03 23:30:00' }, 't'), jan3, zone);
+    }
+  } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
+  }
 });
 
 test('pointFilter: one run is a range the GPU tests; several are tested in JavaScript', () => {

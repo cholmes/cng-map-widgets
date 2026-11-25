@@ -76,6 +76,11 @@ export class ByteLru {
   dropPrefix(prefix) {
     for (const key of [...this._map.keys()]) if (key.startsWith(prefix)) this.drop(key);
   }
+
+  clear() {
+    this._map.clear();
+    this.used = 0;
+  }
 }
 
 /**
@@ -159,16 +164,49 @@ export function pmtilesChunkFormat(options = {}) {
   const pointColour = pointColourOf(points?.color);
   let pointFilterExtension = null;
 
+  // An archive that has been opened stays open, and so do its tiles' bytes
+  // (within the budget): leaving a chunk and coming back -- out to months and
+  // in again -- is the common case, and it cost the whole first visit again
+  // (9 requests and 6.8 s, measured). The most recently used few are kept.
+  const KEPT_ARCHIVES = 8;
+  /** @type {Map<string, Promise<{ archive: object, metadata: object, header: object }>>} oldest first */
+  const archives = new Map();
+  const openArchive = (pm, url) => {
+    let opening = archives.get(url);
+    if (opening) {
+      archives.delete(url); // re-insert: a use makes it the newest
+      archives.set(url, opening);
+      return opening;
+    }
+    const source = new pm.FetchSource(url);
+    // Not a published option: the source's own switch for this workaround.
+    source.chromeWindowsNoCache = true;
+    const archive = new pm.PMTiles(source);
+    opening = Promise.all([archive.getMetadata(), archive.getHeader()]).then(([metadata, header]) => ({ archive, metadata, header }));
+    archives.set(url, opening);
+    // One that could not be opened is not remembered as one that cannot be.
+    opening.catch(() => {
+      if (archives.get(url) === opening) archives.delete(url);
+    });
+    for (const oldest of archives.keys()) {
+      if (archives.size <= KEPT_ARCHIVES) break;
+      archives.delete(oldest);
+    }
+    return opening;
+  };
+
   return {
     bytes,
 
+    /** Let go of every archive and every tile kept. Called when whoever made this format is done with it. */
+    close() {
+      archives.clear();
+      bytes.clear();
+    },
+
     async open(chunk) {
       const [deck, pm] = await Promise.all([loadDeck(), loadPmtiles()]);
-      const source = new pm.FetchSource(chunk.url);
-      // Not a published option: the source's own switch for this workaround.
-      source.chromeWindowsNoCache = true;
-      const archive = new pm.PMTiles(source);
-      const [metadata, header] = await Promise.all([archive.getMetadata(), archive.getHeader()]);
+      const { archive, metadata, header } = await openArchive(pm, chunk.url);
       const timeline = aggregate ? timelineFromMetadata(metadata, { layer: aggregate.layer, prefix }) : null;
       const unit = timeline?.unit ?? chunk.unit;
       if (unit !== chunk.unit) {
@@ -183,7 +221,10 @@ export function pmtilesChunkFormat(options = {}) {
       const aggregateZooms = [said?.minzoom ?? header.minZoom, aggregate?.maxzoom ?? said?.maxzoom ?? (Number.isFinite(pointsMinZoom) ? pointsMinZoom - 1 : header.maxZoom)];
       return {
         deck, archive, unit,
-        columns: timeline ? new Set(timeline.columns) : null,
+        // An archive may declare its axis and list no columns (`fields` is
+        // optional in `vector_layers`). None listed is "did not say", not
+        // "has none": read as none, the map drew nothing while the track counted.
+        columns: timeline?.columns?.length ? new Set(timeline.columns) : null,
         totalBuckets: timeline?.buckets ?? 0,
         declared: timeline?.declared ?? false,
         aggregateLayer: timeline?.layer ?? null,
@@ -207,9 +248,32 @@ export function pmtilesChunkFormat(options = {}) {
       let tileErrors = 0;
       /** The layer panel's opacity, as last given to `layers()`: the sublayers multiply their own by it. */
       let layerOpacity = 1;
+      /** Hidden in the layer panel. It still LOADS (see `layers()`); it paints nothing. */
+      let hidden = false;
+      let inFlight = 0;
 
-      /** deck.gl's `fetch` for this layer: one tile's bytes out of the archive, parsed and split by source layer. */
+      /**
+       * deck.gl's `fetch` for this layer. deck.gl says when a view has
+       * finished loading and never when one starts, so the first request of a
+       * burst is that signal: without it the track reported what it had as
+       * the whole answer while the tiles of a new view were still arriving.
+       */
       const fetchTile = async (url, fetchContext = {}) => {
+        if (destroyed) return null;
+        inFlight += 1;
+        if (inFlight === 1 && lastSettled !== false) {
+          lastSettled = false;
+          ctx.settled(false);
+        }
+        try {
+          return await readTile(url, fetchContext);
+        } finally {
+          inFlight -= 1;
+        }
+      };
+
+      /** One tile's bytes out of the archive, parsed and split by source layer. */
+      const readTile = async (url, fetchContext) => {
         const key = bytePrefix + url;
         let data = bytes.get(key);
         if (data === undefined) {
@@ -240,7 +304,7 @@ export function pmtilesChunkFormat(options = {}) {
 
       /** A tile's sublayers: cells coloured by the window, points filtered by it. */
       const renderTile = (p) => {
-        if (!p.data || plan.keys.length + (filter.trigger === 'none' ? 0 : 1) === 0) return null;
+        if (hidden || !p.data || plan.keys.length + (filter.trigger === 'none' ? 0 : 1) === 0) return null;
         const out = [];
         if (p.data.cells?.length && plan.keys.length) {
           const stops = stopsFor({ buckets: plan.buckets, totalBuckets: info.totalBuckets, zoom: p.tile?.index?.z ?? 0 });
@@ -315,8 +379,7 @@ export function pmtilesChunkFormat(options = {}) {
 
         destroy() {
           destroyed = true;
-          cache.clear();
-          bytes.dropPrefix(bytePrefix);
+          cache.clear(); // the parsed tiles; their BYTES stay in the cache, for a return
           lastLayer = null;
         },
 
@@ -330,6 +393,7 @@ export function pmtilesChunkFormat(options = {}) {
           if (destroyed) return [];
           const drawing = window !== null;
           layerOpacity = typeof state?.opacity === 'number' ? state.opacity : 1;
+          hidden = state?.visible === false;
           const stopsKey = typeof options.stops === 'function' ? `fn:${plan.buckets}` : '';
           lastLayer = new deck.MVTLayer({
             id: `${idPrefix}--${chunk.id}`,
@@ -342,7 +406,10 @@ export function pmtilesChunkFormat(options = {}) {
             refinementStrategy: 'no-overlap',
             loadOptions: { worker: false },
             beforeId,
-            visible: state?.visible !== false,
+            // Never `visible: false`: deck.gl does not load an invisible
+            // layer at all, so a hidden timeline fetched nothing and its track
+            // reported zeros as loaded fact. Hidden, it paints nothing
+            // (`renderTile`) and goes on loading.
             // Not `opacity` here: deck.gl would hand it down to the sublayers
             // AND they multiply by it themselves, applying it twice.
             // On its way out it must not starve its successor; a chunk that is
@@ -365,13 +432,22 @@ export function pmtilesChunkFormat(options = {}) {
               tileErrors += 1;
               options.onTileError?.(chunk, error);
             },
-            updateTriggers: { getFillColor: plan.signature + stopsKey, getLineColor: plan.signature + stopsKey, getFilterValue: filter.trigger },
+            // deck.gl keeps a tile's sublayers until a prop it COMPARES changes,
+            // and `renderSubLayers` is a function, which it does not. Opacity
+            // and hiding live in this closure, so they are named here: without
+            // `panel`, the layer panel's slider did nothing until the
+            // selection next moved.
+            updateTriggers: { getFillColor: plan.signature + stopsKey, getLineColor: plan.signature + stopsKey, getFilterValue: filter.trigger, panel: `${hidden ? 'hidden' : 'shown'}|${layerOpacity}` },
             renderSubLayers: renderTile,
           });
           return [lastLayer];
         },
 
-        /** Look at deck.gl's own tile set and say whether this view has loaded. Call after the map moves. */
+        /**
+         * Look at deck.gl's own tile set and say whether this view has loaded.
+         * A second opinion, for after the map moves: the first request of a
+         * burst and `onViewportLoad` are the signals.
+         */
         refresh: report,
 
         /** How many of the tiles this view wants have arrived. */

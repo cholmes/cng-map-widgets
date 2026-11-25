@@ -87,6 +87,7 @@ export class TimelineCanvas {
     this._drag = null;
     this._pointers = new Map();
     this._pinch = null;
+    this._gesture = false;
     this._destroyed = false;
 
     canvas.style.touchAction = 'none'; // this owns pinch and drag
@@ -645,6 +646,7 @@ export class TimelineCanvas {
   _onDown(e) {
     if (!this.axis) return;
     this.canvas.focus();
+    this._gesture = true;
     this._pointers.set(e.pointerId, this._x(e));
     // Capture after the pointer is registered: setPointerCapture throws for a
     // pointer the browser does not think is down, and a throw here must cost
@@ -719,14 +721,21 @@ export class TimelineCanvas {
   }
 
   _onUp(e) {
-    const was = this._drag !== null || this._pinch !== null;
     this._pointers.delete(e.pointerId);
     if (this._pointers.size < 2) this._pinch = null;
     if (this._pointers.size === 0) this._drag = null;
     // One more event when the gesture ends. Every event during a drag says
     // `dragging: true`, and without this there was never one that said false
     // -- so a listener waiting for the gesture to finish waited for ever.
-    if (was && this._pointers.size === 0) this._emit();
+    //
+    // "A gesture was in progress" is remembered from the first pointer down,
+    // not read off `_drag` / `_pinch` here: a pinch clears `_pinch` when its
+    // FIRST finger lifts, so by the second there was nothing left to see, and
+    // a pinch never said it had ended.
+    if (this._gesture && this._pointers.size === 0) {
+      this._gesture = false;
+      this._emit();
+    }
   }
 
   _onKey(e) {
@@ -739,12 +748,19 @@ export class TimelineCanvas {
     const step = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
     if (!step) return;
     e.preventDefault();
-    if (e.shiftKey) {
-      const to = Math.max(this.selection.from, this.selection.to + step);
-      this.selection = clampSelection({ from: this.selection.from, to }, this.bounds());
-    } else {
-      this.selection = moveSelection(this.selection, step, this.bounds());
+    // Along the AXIS, with the view following -- not inside the view. Clamped
+    // to the view, an arrow key at its edge did nothing though the axis went
+    // on; a selection wider than the view shrank to fit it on one press; and
+    // one off screen jumped into view.
+    if (!e.shiftKey) {
+      this.shift(step);
+      return;
     }
+    const last = this.axis.count - 1;
+    const to = Math.min(last, Math.max(this.selection.from, this.selection.to + step));
+    if (to === this.selection.to) return;
+    this.selection = { from: this.selection.from, to };
+    this._follow();
     this._emit();
     this.draw();
   }

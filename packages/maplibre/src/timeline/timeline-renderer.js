@@ -25,6 +25,7 @@ const FORMATS = new Map();
  *   onTileError: (chunk: object, error: any) => void }) => object} factory
  *   Returns a `ChunkFormat` (see `@cngeo/timeline`) whose mounts also have
  *   `layers(state, beforeId)` -> deck.gl layers, and optionally `refresh()` and `tiles()`.
+ *   The format itself may have `close()`, called when the layer is removed.
  */
 export function registerChunkFormat(name, factory) {
   FORMATS.set(name, factory);
@@ -90,6 +91,7 @@ async function createSession(ctx) {
   const listeners = new Set();
   let destroyed = false;
   let started = false;
+  let everLoaded = false;
   let refreshTimer = null;
   let startTimer = null;
 
@@ -110,10 +112,19 @@ async function createSession(ctx) {
     refreshTimer = setTimeout(refresh, 400); // again once deck.gl has had a frame to decide what it needs
   };
 
-  /** A chunk that will not load is a note; nothing loadable at all is a failed layer. */
+  /**
+   * A chunk that will not load is a note; a layer that has never shown
+   * anything and cannot is a failed layer.
+   *
+   * "Never" matters. "Nothing is loaded right now" is also what a healthy
+   * layer looks like the moment its view moves onto one year whose archive
+   * answers a 520: the other chunks have been let go. Failing the layer then
+   * destroyed the session, with its Retry, over one chunk.
+   */
   const report = (state) => {
     if (!started) return;
-    if (state.failed.length && !state.loaded.length && !state.pending.length) {
+    if (state.loaded.length) everLoaded = true;
+    if (!everLoaded && state.failed.length && !state.loaded.length && !state.pending.length) {
       const first = state.failed[0].error;
       ctx.fail(first instanceof CngError ? first : new CngError(String(first?.message ?? first), 'LAYER_LOAD_FAILED', { context: { id: spec.id } }));
       return;
@@ -126,6 +137,7 @@ async function createSession(ctx) {
 
   set.on('change', (state) => {
     if (destroyed) return;
+    if (state.loaded.length) everLoaded = true; // even before `started`
     ctx.redraw();
     report(state);
     for (const fn of [...listeners]) fn(state);
@@ -134,8 +146,14 @@ async function createSession(ctx) {
 
   // Open on the most recent days of the record, in real time so it means the
   // same whatever the chunks' unit: a control moves it from there.
-  const end = chunks.reduce((latest, c) => (c.end > latest ? c.end : latest), chunks[0].end);
-  const start = chunks.reduce((earliest, c) => (c.start < earliest ? c.start : earliest), chunks[0].start);
+  //
+  // The most recent days of the FINEST unit. A monthly overview covers its
+  // last month whole, to the 30th, where the daily data ends today: opening
+  // on the latest end of any chunk put the selection on days no daily chunk
+  // has, and the timeline opened in months.
+  const finest = chunks.some((c) => c.unit === 'day') ? chunks.filter((c) => c.unit === 'day') : chunks;
+  const end = finest.reduce((latest, c) => (c.end > latest ? c.end : latest), finest[0].end);
+  const start = finest.reduce((earliest, c) => (c.start < earliest ? c.start : earliest), finest[0].start);
   const back = (days) => {
     const from = T.addDays(end, -(Math.max(1, days) - 1));
     return from < start ? start : from;
@@ -193,6 +211,8 @@ async function createSession(ctx) {
       map.off('moveend', onMoveEnd);
       listeners.clear();
       set.destroy();
+      // A format may keep what it opened across chunks coming and going; this is when it lets go.
+      for (const format of Object.values(formats)) format.close?.();
     },
     get destroyed() {
       return destroyed;

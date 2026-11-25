@@ -587,9 +587,11 @@ of time. The chunks are one layer:
 
 ```js
 import { chunksFromTemplate } from '@cngeo/timeline';
-import { LayerManager, LayerControl, TimelineControl } from '@cngeo/maplibre';
+import { LayerManager, LayerControl, TimelineControl, describePmtilesChunk } from '@cngeo/maplibre';
 
 const BASE = 'https://data.source.coop/portolan-mirrors/firms-catalog/detections';
+// The overview says its own span: it is rebuilt less often than the years are.
+const overview = await describePmtilesChunk(`${BASE}/alltime.pmtiles`);   // { unit: 'month', start, end, url, format }
 const fires = {
   spec: 'cng-layer/1.0',
   id: 'fires',
@@ -598,7 +600,7 @@ const fires = {
   source: {
     chunks: [
       ...chunksFromTemplate({ template: `${BASE}/year={YYYY}/fire-{YYYY}.pmtiles`, period: 'year', start: '2000-11-01' }),
-      { id: 'alltime', start: '20001101', end: today, unit: 'month', url: `${BASE}/alltime.pmtiles` },
+      { ...overview, id: 'alltime' },
     ],
     aggregate: { layer: 'aggregate', idProperty: 'a5_cell' },   // cells with a count_YYYYMMDD column per day
     points: { layer: 'features', property: 'day' },             // features that each carry their own day
@@ -621,7 +623,7 @@ bundler: `setTimelineModules(await import('@cngeo/timeline'))`.
 | | |
 |---|---|
 | `chunks` | Chunk descriptors: `{ id, start, end, unit, format, url, priority? }`. See [`@cngeo/timeline`](../timeline/README.md); `chunksFromStac` in `@cngeo/stac` builds them from a collection. |
-| `aggregate` | `{ layer?, prefix = 'count_', idProperty?, maxzoom? }` — a vector layer whose features have a count per bucket. The selection is the **sum of its columns**, so moving it recolours the map and fetches nothing. `false` when the archive has none. |
+| `aggregate` | `{ layer?, prefix = 'count_', idProperty?, maxzoom? }` — a vector layer whose features have a count per bucket. Within a chunk the selection is the **sum of its columns**, so moving it recolours the map and fetches nothing. A selection that spans chunks is drawn by each of them from its own columns: a cell present in two is drawn twice, each coloured by its own share, not once by the total. `false` when the archive has none. |
 | `points` | `{ layer, property, minzoom?, color? }` — a layer of features that each carry their own day (`20240105`, or an ISO date). The selection filters them on the GPU. `color` is an `[r, g, b, a]`, or data: `{ property: 'frp', stops: [[0, '#4a5bd4'], [50, '#c9cf4a'], …] }`. |
 | `stops` | Cell colours by count: `[[1, '#2c3d5a'], …]`. Default: `@cngeo/timeline`'s `COUNT_RAMP`. |
 | `cap` | Most big chunks a view loads. Default 3. |
@@ -648,11 +650,18 @@ loaded-and-empty: false zeros.
 However many chunks are mounted, the layer manager has **one entry**: hide,
 fade, reorder and remove act on all of it. `manager.handle(id)` is its
 **session** — `state`, `on('change')`, `setView()`, `setSelection()`,
-`retry()`, `tiles()` — for a host that wants its own controls. A chunk that
-will not load is a note on the layer and a gap in the track; the layer fails
-only when nothing can be loaded. A *tile* that fails is a note too, with how
-many: its chunk is otherwise "loaded", and the hole it leaves in the map and
-the short count in the track would say nothing.
+`retry()`, `tiles()` — for a host that wants its own controls. A **hidden**
+timeline paints nothing and goes on loading, so its track still counts what
+is in view. A chunk that will not load is a note on the layer, a gap in the
+track and a Retry in the panel; the layer itself fails only when it has never
+shown anything and cannot — one year answering a 520 in the middle of a
+session is not that. A *tile* that fails is a note too, with how many: its
+chunk is otherwise "loaded", and the hole it leaves in the map and the short
+count in the track would say nothing.
+
+An archive that has been opened stays open while the layer is on the map
+(the eight most recently used), and its tiles' bytes stay in a 64 MiB cache:
+going out to months and back in does not fetch the year again.
 
 **The control.** Drag the selection or its handles; drag elsewhere to pan;
 wheel or pinch to zoom; shift-drag to draw a selection; arrow keys move it.

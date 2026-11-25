@@ -119,6 +119,48 @@ export function inputsFor(state, T) {
   };
 }
 
+const sameWindow = (a, b) => Boolean(a && b) && a.from === b.from && a.to === b.to;
+
+/**
+ * Which parts of a track event the session has not heard: the track's last
+ * known `{ view, selection, dragging }` against the event.
+ *
+ * The track speaks whole buckets and the session holds exact days, so a part
+ * the track did not change must not be sent back: on the monthly track, a
+ * zoom would overwrite an exact five-day selection with its whole month. The
+ * end of a gesture is news about the view even when nothing else moved --
+ * whoever loads for the view is waiting for `dragging: false`.
+ *
+ * @returns {{ view: boolean, selection: boolean }}
+ */
+export function trackNews(last, event) {
+  if (!last) return { view: true, selection: true };
+  return {
+    view: !sameWindow(last.view, event.view) || Boolean(last.dragging) !== Boolean(event.dragging),
+    selection: !sameWindow(last.selection, event.selection),
+  };
+}
+
+/**
+ * What a panel with no session says, from the layer manager's entry for its
+ * layer (or none). A layer that FAILED is on the map, as an error: its own
+ * message is the thing to show, not "not on the map".
+ * @returns {{ tone: 'info'|'error', line: string }}
+ */
+export function unboundStatus(entry, layerId) {
+  if (!entry) return { tone: 'error', line: `There is no layer "${layerId}" on the map.` };
+  if (entry.status === 'error') return { tone: 'error', line: entry.error?.message ?? `"${entry.title ?? layerId}" could not be loaded.` };
+  if (entry.status === 'loading') return { tone: 'info', line: `Loading "${entry.title ?? layerId}"…` };
+  return { tone: 'error', line: `"${entry.title ?? layerId}" is not a timeline layer.` };
+}
+
+/**
+ * `aria-live` for the status line. Off while playing: it is rewritten on
+ * every step, which is a sentence several times a second to a screen reader.
+ * What it says when playback stops is announced.
+ */
+export const liveness = (playback) => (playback?.playing ? 'off' : 'polite');
+
 /**
  * The panel's state, following a timeline session: `{ status, presets,
  * inputs, unit }`. `on('change')` fires when any of them is different.

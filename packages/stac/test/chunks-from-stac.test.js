@@ -147,3 +147,32 @@ test('two items with one id get ids of their own', async () => {
   const { chunks } = await chunksFromStac(collection([2003, 2004]), { baseUrl: COLLECTION_URL, fetch });
   assert.equal(new Set(chunks.map((c) => c.id)).size, 2);
 });
+
+// Review. `Date.parse` reads a date-time with no zone in the MACHINE's zone,
+// so one catalog gave different days to a reader in Berlin and one in London.
+test('a date-time with no zone is read as UTC, wherever this runs', async () => {
+  const before = process.env.TZ;
+  try {
+    for (const zone of ['Europe/Berlin', 'America/Los_Angeles']) {
+      process.env.TZ = zone;
+      const { fetch } = host(() => ({ ...item(2024), properties: { start_datetime: '2024-01-01T00:00:00', end_datetime: '2024-12-31T23:59:59' } }));
+      const { chunks } = await chunksFromStac(collection([2024]), { baseUrl: COLLECTION_URL, fetch });
+      assert.deepEqual([chunks[0].start, chunks[0].end], ['20240101', '20241231'], zone);
+    }
+  } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
+  }
+});
+
+// An interval that ends at exactly midnight ends BEFORE that day: read as
+// including it, 2023 owned the first of January 2024 and showed it as zero.
+test('an interval ending at midnight does not include the day that starts then', async () => {
+  const { fetch } = host(() => ({ ...item(2023), properties: { start_datetime: '2023-01-01T00:00:00Z', end_datetime: '2024-01-01T00:00:00Z' } }));
+  const { chunks } = await chunksFromStac(collection([2023]), { baseUrl: COLLECTION_URL, fetch });
+  assert.deepEqual([chunks[0].start, chunks[0].end], ['20230101', '20231231']);
+  // ...but one instant at midnight is still that day.
+  const one = host(() => ({ ...item(2023), properties: { datetime: '2023-06-01T00:00:00Z' } }));
+  const single = await chunksFromStac(collection([2023]), { baseUrl: COLLECTION_URL, fetch: one.fetch });
+  assert.deepEqual([single.chunks[0].start, single.chunks[0].end], ['20230601', '20230601']);
+});

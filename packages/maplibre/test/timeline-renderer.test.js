@@ -170,6 +170,59 @@ test('tiles that fail to load are said on the layer, once, with how many', async
   assert.equal(manager.handle('fires').tiles().errors, 3);
 });
 
+// Review, Critical 1. "Nothing is loaded right now" is not "nothing can be
+// loaded": move onto one year whose archive answers a 520 and the others are
+// let go, which is exactly that state. The layer was failed, its session
+// destroyed, and the panel said the layer was not on the map.
+test('the only chunk in view failing mid-session does not fail the layer; it is said, and can be retried', async () => {
+  const { manager } = make();
+  await manager.add(spec());
+  await settle();
+  const session = manager.handle('fires');
+  assert.deepEqual(session.state.loaded, ['2024', 'week']);
+  failing = new Set(['2023']);
+  session.setView({ from: '20230301', to: '20230501' });
+  session.setSelection({ from: '20230401', to: '20230405' });
+  await settle(600); // past the settle: 2024 and the week are let go, 2023 has failed
+  assert.deepEqual(session.state.loaded, []);
+  assert.deepEqual(session.state.failed.map((f) => f.id), ['2023']);
+  assert.equal(manager.get('fires').status, 'ready', 'the layer is still there');
+  assert.equal(manager.handle('fires'), session, 'and so is its session');
+  assert.match(manager.get('fires').note, /2023/);
+  failing = new Set();
+  session.retry('2023');
+  await settle();
+  assert.deepEqual(session.state.loaded, ['2023']);
+  assert.ok(!manager.get('fires').note);
+});
+
+// Review, Critical 2 (the other half). A monthly overview covers its last
+// month whole; the daily data ends today. Opening on the latest END of any
+// chunk put the selection on days no daily chunk has.
+test('it opens on the last days of the finest unit, not of whichever chunk ends last', async () => {
+  const { manager } = make();
+  await manager.add(spec({ chunks: [...CHUNKS, chunk('alltime', '20001101', '20241231', { unit: 'month' })] }));
+  const session = manager.handle('fires');
+  assert.deepEqual(session.state.selection, { from: '20241206', to: '20241210' });
+  assert.deepEqual(session.state.view, { from: '20240902', to: '20241210' });
+  await settle();
+  assert.equal(session.state.unit, 'day');
+});
+
+test('when the session ends, each format is told, so it can let go of what it kept', async () => {
+  let closed = 0;
+  registerChunkFormat('closing', () => ({
+    async open() { return {}; },
+    mount: () => ({ setWindow() {}, histogram: () => ({}), freeze() {}, destroy() {}, layers: () => [] }),
+    close: () => { closed += 1; },
+  }));
+  const { manager } = make();
+  await manager.add(spec({ chunks: [chunk('2024', '20240101', '20241210', { format: 'closing' })] }));
+  await settle();
+  manager.remove('fires');
+  assert.equal(closed, 1);
+});
+
 test('when nothing at all can be loaded the layer has failed', async () => {
   failing = new Set(['2023', '2024', 'week']);
   const { manager } = make();

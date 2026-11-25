@@ -14,13 +14,41 @@
 
 const pad = (n, width) => String(n).padStart(width, '0');
 
-/** The UTC calendar day of an ISO date, as `YYYYMMDD`; null when it is not a date. */
-function dayKey(value) {
-  if (typeof value !== 'string' || !value) return null;
-  const ms = Date.parse(value);
-  if (!Number.isFinite(ms)) return null;
+const ZONELESS = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * An ISO date as milliseconds; NaN when it is not one. A date-time with no
+ * zone is UTC: `Date.parse` would read it in the MACHINE's zone, and one
+ * catalog would give different days to readers in different places.
+ */
+function instant(value) {
+  if (typeof value !== 'string' || !value) return NaN;
+  return Date.parse(ZONELESS.test(value) ? `${value.replace(' ', 'T')}Z` : value);
+}
+
+const keyOf = (ms) => {
   const d = new Date(ms);
   return pad(d.getUTCFullYear(), 4) + pad(d.getUTCMonth() + 1, 2) + pad(d.getUTCDate(), 2);
+};
+
+/** The UTC calendar day of an ISO date, as `YYYYMMDD`; null when it is not a date. */
+function dayKey(value) {
+  const ms = instant(value);
+  return Number.isFinite(ms) ? keyOf(ms) : null;
+}
+
+/**
+ * The last day of an interval that ends at `value`. An interval ending at
+ * exactly midnight ends BEFORE the day that starts then (the usual way to
+ * write "all of 2023" is `…/2024-01-01T00:00:00Z`): counted in, the chunk
+ * owned a day it has nothing for, and showed it as zero.
+ */
+function lastDayKey(value, startValue) {
+  const ms = instant(value);
+  if (!Number.isFinite(ms)) return null;
+  const start = instant(startValue);
+  return ms % MS_PER_DAY === 0 && Number.isFinite(start) && start < ms ? keyOf(ms - 1) : keyOf(ms);
 }
 
 function absolute(href, base) {
@@ -107,7 +135,7 @@ export async function chunksFromStac(collection, options = {}) {
         const item = await fetchJsonWithin(fetchImpl, slot.href, timeoutMs);
         const props = item?.properties ?? {};
         const start = dayKey(props.start_datetime) ?? dayKey(props.datetime);
-        const end = dayKey(props.end_datetime) ?? dayKey(props.datetime);
+        const end = lastDayKey(props.end_datetime, props.start_datetime) ?? dayKey(props.datetime);
         if (!start || !end) {
           slot.reason = 'it has no dates (start_datetime and end_datetime, or datetime)';
           continue;

@@ -361,7 +361,9 @@ chunks[0];   // { id: '2000', start: '20001101', end: '20001231', unit: 'day', f
 ```
 
 - An item's span is its `start_datetime`..`end_datetime` (or its `datetime`),
-  as UTC days.
+  as UTC days. A date-time that names no zone is read as UTC, not in the
+  reader's own zone; an interval that ends at exactly midnight ends the day
+  before (`…/2024-01-01T00:00:00Z` is all of 2023).
 - Its tiles are the asset of `assetType` (default `application/vnd.pmtiles`)
   with role `tiles`, else `visual`, else the first.
 - An item that cannot be fetched (60 s limit), has no dates, or has no such

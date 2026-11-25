@@ -225,10 +225,105 @@ test('a point\'s colour can be data: a property and stops', async () => {
   assert.equal(colour({ properties: { frp: 12 } }), colour({ properties: { frp: 13 } }), 'the same array back: nothing allocated per point');
 });
 
-test('a hidden layer is not visible; a frozen one keeps what it showed', async () => {
+// Review, Important 3. deck.gl does not load an invisible layer at all, so a
+// hidden timeline stopped fetching and the track then reported zeros as
+// loaded fact. The layer stays in deck.gl's eyes visible, and paints nothing.
+test('a hidden layer still loads its tiles, and paints nothing', async () => {
   const { mount } = await mounted();
   mount.setWindow(DAYS('20240101', '20240102'));
-  assert.equal(mount.layers({ visible: false, opacity: 1 })[0].props.visible, false);
+  const hidden = mount.layers({ visible: false, opacity: 1 })[0].props;
+  assert.notEqual(hidden.visible, false, 'or deck.gl fetches nothing for it');
+  const tile = { id: 't', data: { cells: [cellFeature(1, { count_20240101: 9 })], points: [] }, tile: { index: { z: 5 } } };
+  assert.equal(hidden.renderSubLayers(tile), null);
+  const shown = mount.layers({ visible: true, opacity: 1 })[0].props;
+  assert.notEqual(shown.renderSubLayers(tile), null);
+});
+
+// Review, Important 2. deck.gl keeps a tile's sublayers until a compared prop
+// of the tile layer changes. Opacity lived only in a closure, so the panel's
+// slider did nothing until the selection next moved.
+test('a change of opacity or of visibility is a change deck.gl can see', async () => {
+  const { mount } = await mounted();
+  mount.setWindow(DAYS('20240101', '20240102'));
+  const key = (state) => JSON.stringify(mount.layers(state)[0].props.updateTriggers);
+  const full = key({ visible: true, opacity: 1 });
+  assert.notEqual(key({ visible: true, opacity: 0.2 }), full);
+  assert.notEqual(key({ visible: false, opacity: 1 }), full);
+  assert.equal(key({ visible: true, opacity: 1 }), full, 'and nothing changes when nothing did');
+  const [sub] = mount.layers({ visible: true, opacity: 0.2 })[0].props.renderSubLayers({ id: 't', data: { cells: [cellFeature(1, { count_20240101: 9 })], points: [] }, tile: { index: { z: 5 } } });
+  assert.ok(Math.abs(sub.props.opacity - 0.74 * 0.2) < 1e-9);
+});
+
+// Review, Important 3 (second half). deck.gl says when a view has finished
+// loading and never when one starts; the fetch itself is that signal.
+test('the first tile request of a burst says "loading"; the view finishing says "loaded"', async () => {
+  const features = [cellFeature(1, { count_20240101: 3 })];
+  const { mount, calls } = await mounted({}, { tiles: { '5/1/2': features, '5/1/3': features } });
+  const { fetch, onViewportLoad } = mount.layers({ visible: true, opacity: 1 })[0].props;
+  const a = fetch('5/1/2', { loadOptions: {} });
+  const b = fetch('5/1/3', { loadOptions: {} });
+  assert.deepEqual(calls.settled, [false], 'once for the burst');
+  await Promise.all([a, b]);
+  onViewportLoad();
+  assert.deepEqual(calls.settled, [false, true]);
+  await fetch('5/1/2', { loadOptions: {} });
+  assert.deepEqual(calls.settled, [false, true, false]);
+});
+
+// Review, Important 4. Leaving a chunk and coming back -- out to months and
+// in again -- reopened the archive and refetched every tile: 9 requests and
+// 6.8 s, the same as the first visit.
+test('coming back to a chunk reads nothing again: its archive and its tile bytes were kept', async () => {
+  const features = [cellFeature(1, { count_20240101: 3 })];
+  const m = make({}, { tiles: { '5/1/2': features } });
+  const ctx = (info) => ({ chunk: CHUNK, info, changed() {}, settled() {} });
+  const first = m.format.mount(ctx(await m.format.open(CHUNK, {})));
+  await first.layers({ visible: true, opacity: 1 })[0].props.fetch('5/1/2', { loadOptions: {} });
+  first.destroy();
+  const second = m.format.mount(ctx(await m.format.open(CHUNK, {})));
+  await second.layers({ visible: true, opacity: 1 })[0].props.fetch('5/1/2', { loadOptions: {} });
+  assert.deepEqual([m.log.metadata, m.log.header], [1, 1], 'the archive was opened once');
+  assert.equal(m.log.sources.length, 1);
+  assert.deepEqual(m.log.zxy, ['5/1/2'], 'the tile was fetched once');
+  // ...until the format itself is closed.
+  m.format.close();
+  await m.format.open(CHUNK, {});
+  assert.deepEqual([m.log.metadata, m.log.header], [2, 2]);
+});
+
+test('an archive that could not be opened is not remembered as one that could not', async () => {
+  const m = make();
+  let fail = true;
+  const real = m.loadPmtiles;
+  const format = pmtilesChunkFormat({
+    aggregate: { layer: 'aggregate' },
+    loadDeck: m.loadDeck,
+    loadPmtiles: async () => {
+      const pm = await real();
+      return { ...pm, PMTiles: class extends pm.PMTiles { async getMetadata() { if (fail) throw new Error('HTTP 520'); return super.getMetadata(); } } };
+    },
+  });
+  await assert.rejects(format.open(CHUNK, {}), /520/);
+  fail = false;
+  assert.equal((await format.open(CHUNK, {})).unit, 'day');
+});
+
+// An archive may declare its axis and list no bucket columns at all (its
+// `vector_layers` fields are optional). An empty list is "did not say", not
+// "has none": read as none, the map drew nothing while the track counted.
+test('an archive that declares an axis but lists no columns still draws', async () => {
+  const declared = { 'cng:timeline': { unit: 'day', min: '20240101', max: '20241231' }, vector_layers: [{ id: 'aggregate', minzoom: 0, maxzoom: 9, fields: {} }] };
+  const { mount, info } = await mounted({ aggregate: { layer: 'aggregate' }, points: undefined }, { metadata: declared });
+  assert.equal(info.columns, null);
+  mount.setWindow(DAYS('20240101', '20240102'));
+  const cells = [cellFeature(1, { count_20240101: 3, count_20240102: 4 })];
+  const [sub] = mount.layers({ visible: true, opacity: 1 })[0].props.renderSubLayers({ id: 't', data: { cells, points: [] }, tile: { index: { z: 5 } } });
+  assert.deepEqual(sub.props.getFillColor(cells[0]), [0x3f, 0x6d, 0x8f, 255]);
+});
+
+test('a frozen layer keeps what it showed', async () => {
+  const { mount } = await mounted();
+  mount.setWindow(DAYS('20240101', '20240102'));
   const before = mount.layers({ visible: true, opacity: 1 })[0].props.updateTriggers.getFillColor;
   mount.freeze();
   const frozen = mount.layers({ visible: true, opacity: 1 })[0].props;
@@ -288,17 +383,18 @@ test('tiles feed the histogram: cells below the points zoom, points above it', a
   assert.deepEqual(mount.histogram(null), {}, 'no viewport yet: nothing, not a throw');
 });
 
-test('destroy() lets go of the tiles and their bytes', async () => {
+test('destroy() lets go of the parsed tiles; the bytes stay in the cache for a return', async () => {
   const features = [cellFeature(1, { count_20240101: 3 })];
-  const { mount, log } = await mounted({}, { tiles: { '5/1/2': features } });
+  const { mount, calls } = await mounted({}, { tiles: { '5/1/2': features } });
   const { fetch, onTileLoad } = mount.layers({ visible: true, opacity: 1 })[0].props;
   await fetch('5/1/2', { loadOptions: {} });
   onTileLoad({ id: '5-1-2', index: { z: 5 }, bbox: { west: 0, east: 10, north: 10, south: 0 }, content: { cells: features, points: [] } });
   mount.destroy();
   assert.deepEqual(mount.layers({ visible: true, opacity: 1 }), []);
   assert.deepEqual(mount.histogram({ bbox: [-1, -1, 11, 11], zoom: 5 }), {});
-  await fetch('5/1/2', { loadOptions: {} });
-  assert.deepEqual(log.zxy, ['5/1/2', '5/1/2'], 'its bytes were dropped with it');
+  const said = calls.settled.length;
+  await fetch('5/1/2', { loadOptions: {} }); // deck.gl may still be mid-request
+  assert.equal(calls.settled.length, said, 'a destroyed mount says nothing more');
 });
 
 // --- describing an archive ----------------------------------------------------------------------------------

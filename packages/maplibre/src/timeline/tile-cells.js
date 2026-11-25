@@ -134,16 +134,19 @@ export function fillFor(count, stops) {
 
 // ------------------------------------------------------------------- points
 
+const ZONELESS = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
 /**
  * The day a feature belongs to, as days since 1970 -- from a number or string
- * `YYYYMMDD`, or an ISO date. NaN when it has none.
+ * `YYYYMMDD`, or an ISO date (UTC when it names no zone: read in the viewer's
+ * own, two viewers would put one point in two days). NaN when it has none.
  */
 export function dayNumberOf(properties, property) {
   const v = properties?.[property];
   if (v === null || v === undefined) return NaN;
   const text = String(v);
   if (/^\d{8}$/.test(text)) return dayNumber(text);
-  const ms = Date.parse(text);
+  const ms = Date.parse(ZONELESS.test(text) ? `${text.replace(' ', 'T')}Z` : text);
   return Number.isFinite(ms) ? Math.floor(ms / 86_400_000) : NaN;
 }
 
