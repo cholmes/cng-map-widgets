@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cng-map-widgets — imagery search</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
+  #map { position: absolute; inset: 0; }
+  /* Top centre: clear of the search panel (top left), the layer panel (top right) and the credits (bottom). */
+  #info {
+    position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 5; width: min(440px, calc(100vw - 660px));
+    min-width: 260px; padding: 8px 12px; border-radius: 8px; box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.96); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  }
+  #info h1 { font-size: 14px; margin: 0 0 2px; }
+  #info p { font-size: 12px; color: #555; margin: 0 0 6px; }
+  #info label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; color: #555; margin-bottom: 3px; }
+  #collection { width: 100%; box-sizing: border-box; padding: 5px; font: inherit; font-size: 12px; }
+  #status { font-size: 12px; color: #555; margin-top: 6px; overflow-wrap: anywhere; }
+  @media (prefers-color-scheme: dark) {
+    #info { background: rgba(30, 31, 34, 0.96); color: #e8e8e6; }
+    #info p, #info label, #status { color: #a3a3a0; }
+    #collection { background: #1e1f22; color: #e8e8e6; border: 1px solid #46484d; }
+  }
+</style>
+<!--
+  Zero-build ESM. Map every @cngeo package this page reaches, including the
+  ones only reached transitively (@cngeo/stac imports @cngeo/extract-core).
+  deck.gl, hyparquet and the layer panel are NOT in this map: each package
+  loads its own, lazily, from a pinned URL.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/extract-core": "../../packages/extract-core/src/index.js",
+    "@cngeo/stac": "../../packages/stac/src/index.js",
+    "@cngeo/maplibre": "../../packages/maplibre/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="info">
+  <h1>Imagery search</h1>
+  <p>
+    No search server: scenes are found by reading the collection's published STAC-GeoParquet index from
+    object storage. Search the view, then add a scene.
+  </p>
+  <label for="collection">Collection</label>
+  <select id="collection"></select>
+  <div id="status" role="status">Loading…</div>
+</div>
+
+<script type="module">
+import { imageryProfile, ImagerySearch } from '@cngeo/stac';
+import { LayerManager, LayerControl, ImagerySearchControl } from '@cngeo/maplibre';
+
+const statusEl = document.getElementById('status');
+const setStatus = (text) => { statusEl.textContent = text; };
+const params = new URLSearchParams(location.search);
+const verifying = params.has('verify');
+
+// Three collections that agree on STAC and on little else. Each preset is
+// only a URL, a place to look and (for a deep archive) a date range: every
+// difference between them is absorbed by imageryProfile().
+const PRESETS = {
+  s2: {
+    label: 'Sentinel-2 Collection 1 L2A',
+    url: 'https://data.source.coop/tge-labs/s2-stac-geoparquet/sentinel-2-c1-l2a/collection.json',
+    center: [36.82, -1.29], // Nairobi
+    zoom: 10.2,
+    // Twelve years of scenes: without dates a search has to plan every one.
+    time: { start: '2025-06-01', end: '2025-06-30' },
+  },
+  naip: {
+    label: 'NAIP (US aerial imagery)',
+    url: 'https://nthh.github.io/data-publications/naip/collection.json',
+    center: [-122.44, 37.765], // San Francisco
+    zoom: 12,
+  },
+  oam: {
+    label: 'OpenAerialMap, CC BY 4.0',
+    url: 'https://data.source.coop/geospatialjeff/oam-portolan/oam-cc-by-4-0/collection.json',
+    center: [-77.0076, 18.0557], // Kingston, Jamaica
+    zoom: 11.8,
+  },
+};
+
+// `?collection=` is a preset key, or the URL of any STAC collection that
+// publishes its items as STAC-GeoParquet.
+const chosen = params.get('collection') ?? 's2';
+const custom = /^https?:\/\//i.test(chosen);
+const preset = custom ? { label: chosen, url: chosen, center: [0, 20], zoom: 1.5 } : (PRESETS[chosen] ?? PRESETS.s2);
+const presetKey = custom ? chosen : (PRESETS[chosen] ? chosen : 's2');
+
+const picker = document.getElementById('collection');
+for (const [key, p] of Object.entries(PRESETS)) picker.append(new Option(p.label, key));
+if (custom) picker.append(new Option(chosen, chosen));
+picker.value = presetKey;
+picker.addEventListener('change', () => {
+  const next = new URLSearchParams(location.search);
+  next.set('collection', picker.value);
+  location.search = next.toString();
+});
+
+const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+const map = new maplibregl.Map({
+  container: 'map',
+  style: STYLE_URL,
+  center: preset.center,
+  zoom: preset.zoom,
+  // Only so verify.mjs can read pixels back; a real page leaves this off.
+  ...(verifying ? { canvasContextAttributes: { preserveDrawingBuffer: true }, fadeDuration: 0 } : {}),
+});
+
+try {
+  const [collection] = await Promise.all([
+    fetch(preset.url).then((r) => {
+      if (!r.ok) throw Object.assign(new Error(`The collection returned HTTP ${r.status}`), { code: 'DATASET_UNRESOLVED' });
+      return r.json();
+    }),
+    new Promise((resolve) => map.once('load', resolve)),
+  ]);
+
+  // One document in, everything a search needs out. No further request.
+  const profile = imageryProfile(collection, { baseUrl: preset.url });
+  const search = new ImagerySearch(profile);
+
+  const manager = new LayerManager(map);
+  map.addControl(new LayerControl({ manager, basemapStyleUrl: STYLE_URL }), 'top-right');
+  manager.on('error', ({ id, error }) => setStatus(`error: ${error.code} — ${id}: ${error.message}`));
+
+  const control = new ImagerySearchControl({ search, manager, time: preset.time });
+  map.addControl(control, 'top-left');
+
+  // Resolve the dataset and read what the index really holds, before the first search.
+  await search.warm();
+  await control.ready;
+  setStatus(`ready: ${profile.id}`);
+
+  // --- Hooks for verify.mjs ---------------------------------------------------
+  const settle = () => new Promise((resolve) => {
+    map.triggerRepaint();
+    const done = () => requestAnimationFrame(() => requestAnimationFrame(resolve));
+    const timer = setTimeout(done, 2000);
+    map.once('idle', () => { clearTimeout(timer); done(); });
+  });
+  const grab = (bbox, inset = 0.25) => {
+    const a = map.project([bbox[0], bbox[3]]), b = map.project([bbox[2], bbox[1]]);
+    const w = b.x - a.x, h = b.y - a.y;
+    const rect = { x: a.x + w * inset, y: a.y + h * inset, w: w * (1 - 2 * inset), h: h * (1 - 2 * inset) };
+    const canvas = map.getCanvas(), scale = canvas.width / canvas.getBoundingClientRect().width;
+    const out = document.createElement('canvas'); out.width = 48; out.height = 48;
+    const ctx = out.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(canvas, rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale, 0, 0, 48, 48);
+    return Array.from(ctx.getImageData(0, 0, 48, 48).data);
+  };
+  /** The same sample as `grab`, plus where on the earth each sampled pixel is. */
+  const grabWithCoords = (bbox, inset = 0.1, n = 48) => {
+    const a = map.project([bbox[0], bbox[3]]), b = map.project([bbox[2], bbox[1]]);
+    const w = b.x - a.x, h = b.y - a.y;
+    const rect = { x: a.x + w * inset, y: a.y + h * inset, w: w * (1 - 2 * inset), h: h * (1 - 2 * inset) };
+    const coords = [];
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) coords.push(map.unproject([rect.x + ((i + 0.5) * rect.w) / n, rect.y + ((j + 0.5) * rect.h) / n]).toArray());
+    return { pixels: grab(bbox, inset), coords };
+  };
+  const viewBox = () => {
+    const b = map.getBounds();
+    return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  };
+  /** The footprints as MapLibre holds them: asked of the source itself, not of the control. */
+  const footprints = async () => {
+    const source = map.getSource('cng-layer-imagery-footprints');
+    if (!source) return null;
+    const data = typeof source.getData === 'function' ? await source.getData() : (source._data?.geojson ?? source._data);
+    return data?.features ?? null;
+  };
+  window.DEMO = { map, manager, search, model: control.model, profile, control, settle, grab, grabWithCoords, viewBox, footprints };
+} catch (err) {
+  setStatus(`error: ${err?.code ?? 'UNEXPECTED'} — ${err?.message ?? err}`);
+  throw err;
+}
+</script>
+</body>
+</html>

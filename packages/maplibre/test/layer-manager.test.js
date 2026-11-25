@@ -77,6 +77,52 @@ test('anchor() is the layer the stack sits just below', () => {
   assert.equal(new LayerManager(createFakeMap(), { renderers: renderers(), beforeId: 'nope' }).anchor(), undefined, 'a slot the style does not have');
 });
 
+// Found live by examples/imagery-search: deck.gl puts its layer group
+// DIRECTLY below whatever `beforeId` names, and moves it back there on every
+// update. Footprints placed "just under the labels" by another control were
+// therefore covered by the first image added. They have to be the thing the
+// stack is slotted under.
+test('setTopLayers keeps another control\'s layers just above the stack, under the labels', async () => {
+  const map = createFakeMap();
+  const manager = new LayerManager(map, { renderers: renderers() });
+  await manager.add(vector('v'));
+  await manager.add(raster('r'));
+  map.addLayer({ id: 'guest--fill', type: 'fill' }, 'labels');
+  map.addLayer({ id: 'guest--line', type: 'line' }, 'labels');
+  manager.setTopLayers(['guest--fill', 'guest--line']);
+
+  const order = map.order();
+  assert.deepEqual(order.slice(order.indexOf('guest--fill'), order.indexOf('labels') + 1), ['guest--fill', 'guest--line', 'labels']);
+  assert.ok(order.indexOf('cng-layer-v') < order.indexOf('guest--fill'), 'the stack is below the guests');
+  // The raster, on top of the stack, is slotted under the LOWEST guest -- not under the labels.
+  assert.equal(manager.deckLayers()[0].beforeId, 'guest--fill');
+  assert.equal(manager.anchor(), 'labels', 'anchor() is still where stack and guests together end');
+
+  // It holds through a reorder...
+  manager.move('r', 0);
+  const after = map.order();
+  assert.deepEqual(after.slice(after.indexOf('guest--fill'), after.indexOf('labels') + 1), ['guest--fill', 'guest--line', 'labels']);
+  assert.ok(after.indexOf('cng-layer-v') < after.indexOf('guest--fill'));
+  assert.equal(manager.deckLayers()[0].beforeId, 'cng-layer-v');
+
+  // ...and letting go puts the stack back under the labels.
+  manager.setTopLayers([]);
+  manager.move('r', 1);
+  assert.equal(manager.deckLayers()[0].beforeId, 'labels');
+});
+
+test('setTopLayers ignores a layer the map does not have (yet)', async () => {
+  const map = createFakeMap();
+  const manager = new LayerManager(map, { renderers: renderers() });
+  await manager.add(raster('r'));
+  manager.setTopLayers(['not-there--fill', 'not-there--line']);
+  assert.equal(manager.deckLayers()[0].beforeId, 'labels');
+  // Once it exists, declaring it again takes effect.
+  map.addLayer({ id: 'not-there--fill', type: 'fill' }, 'labels');
+  manager.setTopLayers(['not-there--fill', 'not-there--line']);
+  assert.equal(manager.deckLayers()[0].beforeId, 'not-there--fill');
+});
+
 test('list() and get() return copies, not the live entries', async () => {
   const manager = new LayerManager(createFakeMap(), { renderers: renderers() });
   await manager.add(vector('a'));

@@ -4,7 +4,7 @@
 
 import { CancelledError } from '@cngeo/spec';
 import { planRequest } from './estimate.js';
-import { readRows } from './parquet-io.js';
+import { readRows, isFileChanged } from './parquet-io.js';
 import { rowMatchesArea } from './spatial.js';
 import { evaluateWhere } from './predicate.js';
 import { coveringPaths, timeRowPredicate, timeSpanPredicate } from './prune.js';
@@ -33,6 +33,9 @@ export const HYPARQUET_ENGINE_ID = 'hyparquet';
  * `runHyparquetPlan` for the end-to-end before/after.
  */
 export const DEFAULT_MAX_CONCURRENT_REQUESTS = 12;
+
+/** How many times a failed row-group read is made again before the run fails. `ctx.readRetries` overrides it. */
+export const DEFAULT_READ_RETRIES = 1;
 
 /** @returns {import('./types.js').Engine} */
 export function createHyparquetEngine() {
@@ -247,6 +250,30 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
   }
 
   /**
+   * Read one row group, trying again when the read fails.
+   *
+   * A run is many range requests -- a Sentinel-2 scene search is about 80 --
+   * and one of them failing used to fail all of it: seen live, two searches
+   * in ten lost a single request to a transport error and, with it, every
+   * scene already found. A row-group read is idempotent, so it is made
+   * again (`ctx.readRetries` times, default once) before the run gives up.
+   *
+   * Not retried: a cancellation, and a file that changed under a kept
+   * footer (parquet-io.js) -- reading that again cannot help; it has to be
+   * re-planned.
+   */
+  const readRetries = Math.max(0, Math.trunc(ctx.readRetries ?? DEFAULT_READ_RETRIES));
+  async function readRowGroup(handle, range) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await readRows(handle, range);
+      } catch (err) {
+        if (attempt >= readRetries || signal?.aborted || stopReads || err?.code === 'CANCELLED' || isFileChanged(err)) throw err;
+      }
+    }
+  }
+
+  /**
    * `pause()` is implemented by `download.js` as an `onProgress` that does
    * not resolve until `resume()` (design doc §3.5). A worker therefore has
    * to wait on that same promise *before starting another read*, or a
@@ -281,7 +308,7 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
         const i = cursor;
         cursor = i + 1;
         const { handle, rg } = tasks[i];
-        const decoded = await readRows(handle, { rowStart: rg.rowStart, rowEnd: rg.rowEnd, columns: readColumns });
+        const decoded = await readRowGroup(handle, { rowStart: rg.rowStart, rowEnd: rg.rowEnd, columns: readColumns });
         results[i] = {
           matched: matchRows(decoded),
           scanned: decoded.length,

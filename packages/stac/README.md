@@ -157,8 +157,10 @@ read them — see below.
 **What a search costs.** The dataset is resolved once and its part listing and
 footers are kept (a plan cache, 10 minutes by default; `options.maxAgeMs`, or
 pass your own `options.cache` to share one). A repeated search pays for row
-reads only. `onPlan(plan)` fires before any row with `plan.requests` and the
-pruning narration (`plan.prune`).
+reads only. `onPlan(plan)` fires before any row with what will be read
+(`plan.files`, `plan.rowGroups`) and the pruning narration (`plan.prune`).
+`plan.requests` models one request per row group; the reader makes one per
+column chunk, so expect about four times as many on a wide table.
 
 **`limit`, `sort` and `scanLimit`.** Rows come in file order, so the newest N
 cannot be had without reading every match. A search therefore reads up to

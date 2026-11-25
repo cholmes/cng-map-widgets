@@ -129,6 +129,69 @@ others were not inspected.
      for that box, not 2024 alone. Resolving these item tables with STAC
      table defaults is what supplies `datetime`.
 
+## After Phase 2: what the cache did (measured 2026-11-25)
+
+Point 1 above ended on an inference. This is the measurement. The search is
+now `@cngeo/stac`'s `ImagerySearch` over `queryRows`, with a plan cache.
+
+**Same query twice, Node, same harness style as above** (a `fetch` wrapper
+counting requests and `content-length`; Sentinel-2, the Nairobi box, June
+2025):
+
+| | before (E14, above) | first search now | repeat now |
+|---|---|---|---|
+| listing requests | 13, every search | 14, once (`warm()`) | **0** |
+| footer | 7.92 MB, every search | once | **0** |
+| row reads | 84 | 85 | 84 |
+| whole search | 100 requests / 13.2 MB | 14 + 87 requests | **84 requests / 8.3 MB** |
+| time | 7–10 s | 5.6–7.7 s after a 2–3 s warm | **2.9–3.8 s** |
+
+Bytes are not like for like: this search reads nine columns where the
+baseline read three, including the row's `links` (how a scene's files are
+found later), so the row reads grew from about 5.2 MB to 8.3 MB while the
+7.9 MB footer and the listing went away.
+
+**In a browser** (headless Chrome, `examples/imagery-search/verify.mjs`,
+which counts requests from the browser's own network log):
+
+| | Sentinel-2 | NAIP | OpenAerialMap |
+|---|---|---|---|
+| page load + first search | 16 documents, 1 HEAD, 1 footer, 85 row reads | 2, 1, 1, 3 | 2, 1, 1, 10 |
+| a repeated search | **76 row reads, nothing else** | **2 row reads** | **9 row reads** |
+| first search, range over 5–7 runs | 6.0–24 s (five of six between 6 and 9) | 0.5–3.3 s | 0.9–5.5 s |
+| repeated search, range over 5–7 runs | 2.2–9.0 s (five of seven between 2 and 5) | 0.5–2.0 s | 0.9–2.4 s |
+
+The request counts were identical on every run; the times were not, by a
+factor of four on the same afternoon, so the counts are the finding and the
+times are a range. Later the same day the Sentinel-2 host was answering some
+range requests with HTTP 520 and a first search took 55 s (those runs are
+not in the ranges above); every search still completed, on the retry
+described below. (The Sentinel-2 "repeated search" is a ten-day window
+inside the first search's month, which is why it is 76 reads and not 85.)
+
+What it leaves:
+
+- **A Sentinel-2 search is still about 80 requests.** They are row reads:
+  roughly four range requests per row group, because the columns a search
+  needs are not next to each other in the file and the 6.5 MB `assets` chunk
+  sits between them. Only a different file layout, or a reader that merges
+  nearby ranges, would lower it. Point 3's 4x gap between `estimate()`'s
+  modelled requests and real ones is unchanged, so the search panel reports
+  row groups and files and does not quote a request count.
+- **One range read failing failed the search.** One of seven verifier runs
+  lost a Sentinel-2 search to a transport error on a single request
+  (`ERR_QUIC_PROTOCOL_ERROR`, after hanging for over two minutes), and a
+  second run lost one the same way. The reader now makes a failed row-group
+  read once more before giving up (`readRetries`, default 1), which covers a
+  dropped connection. It still has **no per-request timeout**: a request
+  that hangs, hangs the search until the browser gives up on it. Not
+  addressed in Phase 2.
+- **A scene's files on Sentinel-2** come from the scene's own STAC item (one
+  request to Earth Search, on "Add to map") — the third of point 4's routes,
+  now measured to work; the `assets` column is never read.
+- Both filters of point 5 are fixed: OpenAerialMap is searched by span
+  overlap, and a bare item table gets its `datetime` column from its schema.
+
 ## What this does not show
 
 - Browser timings. Node has no HTTP cache lock and no main-thread contention.

@@ -355,6 +355,7 @@ be cancelled during planning, which is exactly when a user changes their mind.
 | `fetch` | `globalThis.fetch` | |
 | `signal` | — | Aborts reads; see the cancel gotcha below. |
 | `maxConcurrentRequests` | `12` | Parallel row-group reads, with ordered delivery. Lower it for a file with very large row groups (up to this many decoded groups are live at once); `1` is the old sequential behaviour. |
+| `readRetries` | `1` | How many times a row-group read that **fails** is made again before the run fails. A run is many range requests and one dropped connection used to fail all of it; a read is idempotent, so it is tried once more. Never retried: a cancellation, or a file that changed since it was planned. `0` is the behaviour before 0.4.0. |
 
 `DownloadHandle`:
 
@@ -542,7 +543,7 @@ const cache = createPlanCache();                 // keep it for the session
 const { rows, truncated, plan } = await queryRows(dataset, area, filter, {
   cache,
   geometry: 'geojson',                           // 'geojson' (default) | 'wkb' | 'none'
-  onPlan: (plan) => show(plan.requests, plan.prune),
+  onPlan: (plan) => show(plan.rowGroups, plan.prune),
   onRows: (rows) => append(rows),                // per row group, in file order; awaited
   signal,
 });
@@ -558,7 +559,10 @@ plan.rowGroups;     // { total: 825, selected: 27 }
   spatial filter needs it. `'wkb'` returns what the file holds.
 - `filter.limit` is honoured and `truncated` reports it. There is **no
   ceiling** here — there is no output file to size — so bound a query with
-  `limit`, and read `plan.requests` before deciding it is worth the wait.
+  `limit`, and read `plan.rowGroups.selected` before deciding it is worth
+  the wait. (`plan.requests` is the same model `estimate()` reports: one
+  request per row group. The reader issues one per column chunk, measured at
+  about four per row group on Sentinel-2's item table.)
 - Cancelling rejects with `CANCELLED`.
 
 ### `describeDataset(dataset, options?) => Promise<{ dataset, parts, columns, table }>`
@@ -601,7 +605,10 @@ cache.clear();
   `DATASET_UNRESOLVED` with `context.reason: 'file-changed'`, before a byte
   is decoded. `queryRows()` then re-plans once by itself, provided it has
   delivered no rows yet. A rewrite to exactly the same size is not caught by
-  this; `maxAgeMs` is the bound on that.
+  this; `maxAgeMs` is the bound on that. In a browser the check also needs
+  the host to expose `Content-Range` to scripts
+  (`Access-Control-Expose-Headers`; source.coop sends `*`). Where it is
+  hidden the size cannot be seen and `maxAgeMs` is again the only bound.
 
 ### `resolveDataset(descriptor, options?) => Promise<DatasetDescriptor>`
 

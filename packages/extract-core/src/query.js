@@ -7,8 +7,8 @@
 // back as they arrive.
 //
 // It applies no ceiling: there is no output file to size. Bound a query with
-// `filter.limit`, and read `plan.requests` (from `onPlan`) before deciding a
-// query is worth waiting for.
+// `filter.limit`, and read `plan.rowGroups.selected` (from `onPlan`) before
+// deciding a query is worth waiting for.
 
 import { CancelledError } from '@cngeo/spec';
 import { createHyparquetEngine } from './engine-hyparquet.js';
@@ -22,7 +22,9 @@ import { isFileChanged, openParquetFile } from './parquet-io.js';
  * @property {{ total: number, selected: number }} files
  * @property {{ total: number, selected: number }} rowGroups
  * @property {{ stage: string, before: number, after: number, basis: string }[]} prune  What narrowed the read, in order.
- * @property {number} requests   Requests this query makes; with a plan cache, only those not already paid for.
+ * @property {number} requests   `estimate()`'s model: one request per row group read, plus planning requests
+ *   not already paid for through a plan cache. The reader issues one request per column CHUNK, so the real
+ *   count is higher (about 4x on Sentinel-2's item table, E14).
  * @property {object[]} warnings `estimate()`'s warnings (`no-covering`, `share-alike`, ...), flat.
  */
 
@@ -67,6 +69,7 @@ import { isFileChanged, openParquetFile } from './parquet-io.js';
  *   cache?: import('./plan-cache.js').PlanCache,
  *   fetch?: typeof fetch,
  *   maxConcurrentRequests?: number,
+ *   readRetries?: number,
  * }} [options]
  * @returns {Promise<{ rows: object[], truncated: boolean, plan: QueryPlan }>}
  */
@@ -105,7 +108,7 @@ export async function queryRows(dataset, area, filter, options = {}) {
         rows.push(...out);
         await options.onRows?.(out);
       },
-      { signal, rowFormat: 'objects', maxConcurrentRequests: options.maxConcurrentRequests, onProgress: options.onProgress },
+      { signal, rowFormat: 'objects', maxConcurrentRequests: options.maxConcurrentRequests, readRetries: options.readRetries, onProgress: options.onProgress },
     );
     return plan;
   }

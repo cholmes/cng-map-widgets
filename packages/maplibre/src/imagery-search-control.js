@@ -28,7 +28,7 @@ const CSS = `
 .cng-imagery-search {${TOKENS_LIGHT}
   color-scheme: light dark; font: 13px/1.4 system-ui, sans-serif; color: var(--cng-ink); background: var(--cng-bg);
   width: 300px; max-width: calc(100vw - 20px); border-radius: 4px; box-shadow: 0 0 0 1px var(--cng-border), 0 2px 10px var(--cng-shadow);
-  display: flex; flex-direction: column; max-height: min(78vh, 720px);
+  display: flex; flex-direction: column; max-height: 78vh; /* then set from the map's own height; see _fit() */
 }
 @media (prefers-color-scheme: dark) { .cng-imagery-search {${TOKENS_DARK} } }
 .cng-imagery-search * { box-sizing: border-box; }
@@ -41,6 +41,9 @@ const CSS = `
 .cng-is-body { display: flex; flex-direction: column; min-height: 0; }
 .cng-is-form { padding: 8px 10px; display: grid; gap: 6px; border-bottom: 1px solid var(--cng-border); }
 .cng-is-form fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.cng-is-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.cng-is-filters:empty { display: none; }
+.cng-is-filters > .is-wide { grid-column: 1 / -1; }
 .cng-is-form legend, .cng-is-label { padding: 0; font-size: 11px; color: var(--cng-meta); }
 .cng-is-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .cng-is-row > label { display: flex; align-items: center; gap: 4px; }
@@ -184,8 +187,6 @@ export class ImagerySearchControl {
     form.append(dates);
 
     this._filters = this._el('div', 'cng-is-filters');
-    this._filters.style.display = 'grid';
-    this._filters.style.gap = '6px';
     form.append(this._filters);
 
     const sortField = this._el('label', 'cng-is-field');
@@ -227,19 +228,23 @@ export class ImagerySearchControl {
     };
     this._onLeave = () => this.model.hover(null);
     this._onStyle = () => this._syncFootprints();
+    // The panel is as tall as the MAP allows, not the window: a map in a
+    // small box would otherwise have a panel hanging out of it.
+    this._fit = () => {
+      const height = map.getContainer().clientHeight;
+      if (height > 0) root.style.maxHeight = `${Math.max(220, height - 20)}px`;
+    };
     map.on('mousemove', FOOTPRINTS_FILL, this._onMove);
     map.on('mouseleave', FOOTPRINTS_FILL, this._onLeave);
     map.on('styledata', this._onStyle);
+    map.on('resize', this._fit);
+    this._fit();
     this._cleanup.push(() => {
       map.off('mousemove', FOOTPRINTS_FILL, this._onMove);
       map.off('mouseleave', FOOTPRINTS_FILL, this._onLeave);
       map.off('styledata', this._onStyle);
+      map.off('resize', this._fit);
     });
-    // The manager moves its layers to just under the labels whenever the
-    // stack changes, which would leave the footprints beneath them.
-    const offManager = this._manager.on?.('change', () => this._syncFootprints());
-    if (typeof offManager === 'function') this._cleanup.push(offManager);
-
     this._render();
     // Resolve the dataset and settle the profile while the person is still
     // reading the panel. A failure here is reported by the search that follows.
@@ -252,6 +257,7 @@ export class ImagerySearchControl {
     this.model.destroy();
     const map = this._map;
     if (map) {
+      this._manager.setTopLayers?.([]);
       for (const id of [FOOTPRINTS_LINE, FOOTPRINTS_FILL]) if (map.getLayer?.(id)) map.removeLayer(id);
       if (map.getSource?.(FOOTPRINTS_SOURCE)) map.removeSource(FOOTPRINTS_SOURCE);
     }
@@ -331,6 +337,7 @@ export class ImagerySearchControl {
       const field = this._el('div', 'cng-is-field');
       const set = (value) => this.model.setFilter(filter.column, value);
       if (filter.kind === 'range') {
+        field.classList.add('is-wide');
         field.append(this._el('span', 'cng-is-label', filter.label));
         const row = this._el('div', 'cng-is-row');
         const current = () => this.model.state.filters[filter.column] ?? {};
@@ -386,7 +393,12 @@ export class ImagerySearchControl {
     status.classList.toggle('is-error', state.status === 'error');
     const say = (text) => status.append(this._el('div', '', text));
     if (this._notice) say(this._notice);
-    else if (state.status === 'error') say(`The search failed: ${state.error?.message ?? state.error}`);
+    else if (state.status === 'error') {
+      // The library's message names the step; the cause, when there is one,
+      // is usually what a person can act on ("Failed to fetch").
+      const cause = state.error?.cause?.message;
+      say(`The search failed: ${state.error?.message ?? state.error}${cause ? ` (${cause})` : ''}`);
+    }
     else if (state.status === 'searching') {
       const p = state.progress;
       say(state.plan ? `Reading${p ? ` ${count(p.rowGroupsDone)} of ${count(p.rowGroupsTotal)} row groups` : ''}… ${plural(state.scenes.length, 'scene')} so far.` : 'Planning the search…');
@@ -401,7 +413,10 @@ export class ImagerySearchControl {
     const plan = state.plan;
     if (plan && state.status !== 'error') {
       const details = this._el('details');
-      details.append(this._el('summary', '', `${plural(plan.requests, 'request')}; ${count(plan.rowGroups.selected)} of ${plural(plan.rowGroups.total, 'row group')} in ${count(plan.files.selected)} of ${plural(plan.files.total, 'file')}`));
+      // Row groups and files, not `plan.requests`: that figure models one
+      // request per row group, and the reader makes one per column chunk
+      // (E14 measured 4x on Sentinel-2), so it would understate the work.
+      details.append(this._el('summary', '', `Read ${count(plan.rowGroups.selected)} of ${plural(plan.rowGroups.total, 'row group')} in ${count(plan.files.selected)} of ${plural(plan.files.total, 'file')}`));
       const list = this._el('ol');
       for (const stage of plan.prune ?? []) list.append(this._el('li', '', `${stage.stage}: ${count(stage.before)} → ${count(stage.after)} (${stage.basis})`));
       if (list.childElementCount) details.append(list);
@@ -485,10 +500,9 @@ export class ImagerySearchControl {
   }
 
   /**
-   * Keep the footprints on the map, current, and just above the layer stack.
-   * Runs on every change and on every `styledata`, so it survives
-   * `map.setStyle()` and the manager re-ordering its layers; it only touches
-   * the map when something is actually out of place.
+   * Keep the footprints on the map and current. Runs on every change of the
+   * model and on every `styledata`, so it survives `map.setStyle()`; it only
+   * touches the map when the data changed or the layers are missing.
    */
   _syncFootprints() {
     const map = this._map;
@@ -505,22 +519,27 @@ export class ImagerySearchControl {
       source.setData(footprintsGeoJson(state.scenes, state.hovered));
       this._drawn = { scenes: state.scenes, hovered: key };
     }
+    if (map.getLayer(FOOTPRINTS_FILL) && map.getLayer(FOOTPRINTS_LINE)) return;
     const anchor = this._manager.anchor?.();
     const before = anchor && map.getLayer(anchor) ? anchor : undefined;
     const hovered = ['boolean', ['get', 'hovered'], false];
     if (!map.getLayer(FOOTPRINTS_FILL)) {
-      map.addLayer({ id: FOOTPRINTS_FILL, type: 'fill', source: FOOTPRINTS_SOURCE, paint: { 'fill-color': this._color, 'fill-opacity': ['case', hovered, 0.3, 0.06] } }, before);
+      // Only the hovered footprint is visibly filled. Scenes overlap heavily
+      // -- a month of Sentinel-2 puts a dozen on the same tile -- and even a
+      // faint fill on each stacks into a solid colour over the map and over
+      // any image added to it (seen live: 27 footprints at 6% hid both). The
+      // rest keep a fill too faint to see, so the map can still tell which
+      // footprint the pointer is over.
+      map.addLayer({ id: FOOTPRINTS_FILL, type: 'fill', source: FOOTPRINTS_SOURCE, paint: { 'fill-color': this._color, 'fill-opacity': ['case', hovered, 0.28, 0.002] } }, before);
     }
     if (!map.getLayer(FOOTPRINTS_LINE)) {
-      map.addLayer({ id: FOOTPRINTS_LINE, type: 'line', source: FOOTPRINTS_SOURCE, paint: { 'line-color': this._color, 'line-width': ['case', hovered, 3, 1.2] } }, before);
+      map.addLayer({ id: FOOTPRINTS_LINE, type: 'line', source: FOOTPRINTS_SOURCE, paint: { 'line-color': this._color, 'line-width': ['case', hovered, 3, 1], 'line-opacity': ['case', hovered, 1, 0.7] } }, before);
     }
-    // In place means: fill, then line, then the anchor, with nothing between.
-    const order = map.getLayersOrder?.() ?? (map.getStyle()?.layers ?? []).map((l) => l.id);
-    const at = order.indexOf(FOOTPRINTS_LINE);
-    const inPlace = order[at - 1] === FOOTPRINTS_FILL && (before ? order[at + 1] === before : at === order.length - 1);
-    if (!inPlace) {
-      map.moveLayer(FOOTPRINTS_FILL, before);
-      map.moveLayer(FOOTPRINTS_LINE, before);
-    }
+    // Keeping them above the stack is the manager's job, not a `moveLayer`
+    // here: deck.gl puts an image's layer group directly under whatever it is
+    // slotted beneath and moves it back on every update, so the footprints
+    // have to BE what the stack is slotted beneath. Declared each time the
+    // layers are (re)made -- after `map.setStyle()` they are new layers.
+    this._manager.setTopLayers?.([FOOTPRINTS_FILL, FOOTPRINTS_LINE]);
   }
 }

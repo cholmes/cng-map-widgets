@@ -477,14 +477,16 @@ that one. The host owns it: call `search.close()` when you are done with it.
   lists, two inputs for a `range`.
 - **Results** stream in as they are read, then settle into the sorted answer.
   The status line says what is shown out of what matched, and unfolds into
-  how the search ran: requests made, files and row groups read, and each
-  pruning stage.
+  how the search ran: the files and row groups read out of how many, and
+  each pruning stage.
 - **Add to map** hands the scene to the `LayerManager` as a `cog` layer in
   the collection's group. A scene that cannot be added says why on its card.
 - **Footprints** are one GeoJSON source and two style layers
   (`cng-layer-imagery-footprints--fill` / `--line`), kept just above the
-  layer stack and below the labels. Hovering a card highlights its footprint,
-  and the reverse.
+  layer stack and below the labels — so they stay visible over an image you
+  add. Hovering a card highlights its footprint, and the reverse. Only the
+  hovered footprint is filled: scenes overlap, and a faint fill on each
+  stacks into solid colour.
 
 `control.search()` runs a search programmatically; `control.model` is the
 state.
@@ -496,8 +498,16 @@ shown only from an `http(s)` URL, lazily.
 same state with no DOM — `setArea`, `setTime`, `setFilter`, `setSort`, `run`,
 `cancel`, `hover`, `add`, `on('change')`, `destroy` — for a host with its own
 UI. `footprintsGeoJson(scenes, hoveredId)` and `areaFromBounds([w, s, e, n])`
-are exported too. `manager.anchor()` is the layer the stack sits below, for
-drawing something of your own just above it.
+are exported too.
+
+**Drawing something of your own just above the stack.** Add your style
+layers before `manager.anchor()` (the layer the stack sits below), then
+declare them: `manager.setTopLayers([ids, bottom first])`. The declaration
+matters. deck.gl puts an image's layer group *directly* under whatever it is
+slotted beneath and moves it back there on every update, so a layer you
+merely insert under the labels ends up beneath the next image added. Declared,
+the stack is slotted under your layers instead. Declare again after
+`map.setStyle()`; `setTopLayers([])` lets go.
 
 ### Loaders
 
