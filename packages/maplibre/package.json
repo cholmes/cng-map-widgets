@@ -22,6 +22,7 @@
   },
   "files": [
     "src",
+    "vendor",
     "README.md",
     "LICENSE"
   ],
@@ -42,5 +43,23 @@
   "homepage": "https://github.com/cholmes/cng-map-widgets#readme",
   "bugs": {
     "url": "https://github.com/cholmes/cng-map-widgets/issues"
+  },
+  "devDependencies": {
+    "@deck.gl/core": "9.4.2",
+    "@deck.gl/extensions": "9.4.2",
+    "@deck.gl/geo-layers": "9.4.2",
+    "@deck.gl/layers": "9.4.2",
+    "@deck.gl/maplibre": "9.4.2",
+    "@deck.gl/mesh-layers": "9.4.2",
+    "@developmentseed/deck.gl-geotiff": "0.10.0",
+    "@developmentseed/deck.gl-raster": "0.10.0",
+    "@developmentseed/geotiff": "0.10.0",
+    "@loaders.gl/mvt": "4.5.5",
+    "@luma.gl/core": "9.4.2",
+    "@luma.gl/engine": "9.4.2",
+    "@luma.gl/shadertools": "9.4.2",
+    "@luma.gl/webgl": "9.4.2",
+    "maplibre-gl": "5.24.1",
+    "proj4": "2.22.0"
   }
 }

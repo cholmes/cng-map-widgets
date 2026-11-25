@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>E12 — deck.gl bundle on a no-build page</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px/1.4 system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #status {
+    position: absolute; left: 10px; bottom: 10px; z-index: 5; padding: 6px 10px; border-radius: 6px;
+    background: rgba(255, 255, 255, 0.95); box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3); max-width: 70vw;
+  }
+</style>
+<!--
+  No bundler. The import map covers @cngeo packages only; deck.gl arrives as
+  ONE prebuilt module through @cngeo/maplibre's loadDeck().
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/maplibre": "../../packages/maplibre/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+<div id="status">loading…</div>
+
+<script type="module">
+import { loadDeck, deckSupport, DECK_BUNDLE_URL } from '@cngeo/maplibre';
+import { PMTiles, FetchSource } from 'https://cdn.jsdelivr.net/npm/pmtiles@4.5.0/+esm';
+
+const params = new URLSearchParams(location.search);
+const which = params.get('case') ?? 's2';
+const interleaved = params.get('interleaved') !== 'false';
+const statusEl = document.getElementById('status');
+const setStatus = (text) => { statusEl.textContent = text; };
+
+// One 8-bit COG per imagery collection the widgets must handle. All three
+// are in a UTM zone, none in web mercator: reprojection is the test.
+const COGS = {
+  s2: {
+    url: 'https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/18/T/WL/2026/1/S2B_18TWL_20260101_0_L2A/TCI.tif',
+    center: [-74.4, 41.0], zoom: 8.2,
+  },
+  naip: {
+    url: 'https://data.source.coop/nthh/naip/ca/2024/60cm/rgb/37122/m_3712213_se_10_060_20240520.tif',
+    center: [-122.4062, 37.7813], zoom: 12.6,
+  },
+  oam: {
+    url: 'https://oin-hotosm-temp.s3.us-east-1.amazonaws.com/u-589a8fa42c5435ad/94dff54c-2dbc-4c50-b68d-7223a0a6a4a9/cog-odm_orthophoto.tif',
+    center: [-100.40924, 20.62366], zoom: 15.6,
+  },
+};
+const FIRMS_2020 = 'https://data.source.coop/portolan-mirrors/firms-catalog/detections/year=2020/fire-2020.pmtiles';
+const MVT_VIEW = { center: [22, -3], zoom: 3.2, bounds: [12, -12, 32, 6] };
+
+const cogKeys = which === 'stack' ? ['s2'] : COGS[which] ? [which] : [];
+const wantMvt = which === 'mvt' || which === 'stack';
+const view = cogKeys.length ? COGS[cogKeys[0]] : MVT_VIEW;
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: view.center,
+  zoom: view.zoom,
+  // So the verifier can read pixels back out of the (shared) GL canvas.
+  canvasContextAttributes: { preserveDrawingBuffer: true },
+  fadeDuration: 0,
+});
+
+const state = { visible: true, beforeId: undefined, bounds: {}, ready: new Set(), errors: [] };
+
+try {
+  const bundleOverride = params.get('bundle');
+  const deck = await loadDeck(bundleOverride ? { importer: () => import(bundleOverride) } : undefined);
+  const { MapLibreOverlay, COGLayer, MVTLayer, MVTLoader, VERSIONS } = deck;
+
+  await new Promise((resolve) => (map.loaded() ? resolve() : map.once('load', resolve)));
+
+  const overlay = new MapLibreOverlay({ interleaved, layers: [] });
+  map.addControl(overlay);
+
+  // The MVT layer reads tiles out of one PMTiles archive, as firms-catalog's
+  // deck.html does: pmtiles finds the bytes, the bundled MVTLoader parses them.
+  let mvtFetch = null;
+  let mvtMaxZoom = 0;
+  if (wantMvt) {
+    const source = new FetchSource(FIRMS_2020);
+    source.chromeWindowsNoCache = true; // Chrome serialises same-URL range reads behind its cache lock
+    const archive = new PMTiles(source);
+    mvtMaxZoom = (await archive.getHeader()).maxZoom;
+    mvtFetch = async (url, ctx) => {
+      const [z, x, y] = url.split('/').map(Number);
+      const tile = await archive.getZxy(z, x, y, ctx.signal);
+      if (!tile) return null; // no tile here: empty, not an error
+      return MVTLoader.parse(tile.data, { ...ctx.loadOptions, worker: false });
+    };
+  }
+
+  const expected = new Set([...cogKeys, ...(wantMvt ? ['mvt'] : [])]);
+  const markReady = (id) => {
+    state.ready.add(id);
+    if (!state.errors.length && [...expected].every((k) => state.ready.has(k))) setStatus(`ready: ${which}`);
+  };
+  const fail = (id, err) => {
+    state.errors.push(`${id}: ${err?.message ?? err}`);
+    setStatus(`error: ${err?.code ?? 'LAYER'} ${state.errors.join(' | ')}`);
+  };
+
+  // deck.gl's idiom: describe the layers again from state, same ids.
+  const buildLayers = () => {
+    const layers = [];
+    if (wantMvt) {
+      layers.push(new MVTLayer({
+        id: 'mvt',
+        data: '{z}/{x}/{y}',
+        fetch: mvtFetch,
+        minZoom: 0,
+        maxZoom: mvtMaxZoom,
+        loadOptions: { worker: false },
+        visible: state.visible,
+        beforeId: state.beforeId,
+        getFillColor: [230, 70, 20, 190],
+        getLineColor: [120, 30, 0, 220],
+        lineWidthMinPixels: 1,
+        pointRadiusMinPixels: 2,
+        onViewportLoad: () => markReady('mvt'),
+        onTileError: (err) => fail('mvt', err),
+      }));
+    }
+    for (const key of cogKeys) {
+      layers.push(new COGLayer({
+        id: `cog-${key}`,
+        source: COGS[key].url,
+        visible: state.visible,
+        beforeId: state.beforeId,
+        onSourceLoad: (source) => {
+          const { west, south, east, north } = source.geographicBounds;
+          state.bounds[key] = [west, south, east, north];
+        },
+        onViewportLoad: () => markReady(key),
+        onTileError: (err) => fail(key, err),
+      }));
+    }
+    return layers;
+  };
+  const apply = () => overlay.setProps({ layers: buildLayers() });
+  apply();
+
+  const settle = () => new Promise((resolve) => {
+    map.triggerRepaint();
+    const done = () => requestAnimationFrame(() => requestAnimationFrame(resolve));
+    const timer = setTimeout(done, 1500);
+    map.once('idle', () => { clearTimeout(timer); done(); });
+  });
+
+  /** Screen rectangle (CSS px) of the middle of a lng/lat box, safely inside it. */
+  const screenRect = (bbox, inset = 0.25) => {
+    const a = map.project([bbox[0], bbox[3]]);
+    const b = map.project([bbox[2], bbox[1]]);
+    const size = map.getCanvas().getBoundingClientRect();
+    const x0 = Math.max(0, Math.min(a.x, b.x)), x1 = Math.min(size.width, Math.max(a.x, b.x));
+    const y0 = Math.max(0, Math.min(a.y, b.y)), y1 = Math.min(size.height, Math.max(a.y, b.y));
+    const w = x1 - x0, h = y1 - y0;
+    return { x: x0 + w * inset, y: y0 + h * inset, w: w * (1 - 2 * inset), h: h * (1 - 2 * inset) };
+  };
+
+  /** A 64x64 RGBA sample of a screen rectangle of the map's GL canvas. */
+  const grab = (rect) => {
+    const canvas = map.getCanvas();
+    const scale = canvas.width / canvas.getBoundingClientRect().width;
+    const out = document.createElement('canvas');
+    out.width = 64; out.height = 64;
+    const ctx = out.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(canvas, rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale, 0, 0, 64, 64);
+    return Array.from(ctx.getImageData(0, 0, 64, 64).data);
+  };
+
+  window.E12 = {
+    map, overlay, state, VERSIONS,
+    bundleUrl: bundleOverride ?? DECK_BUNDLE_URL,
+    support: deckSupport(),
+    interleaved,
+    firstSymbolLayer: () => map.getStyle().layers.find((l) => l.type === 'symbol')?.id,
+    boundsOf: (key) => (key === 'mvt' ? MVT_VIEW.bounds : state.bounds[key]),
+    screenRect, grab, settle,
+    async setVisible(visible) { state.visible = visible; apply(); await settle(); },
+    async moveBefore(layerId) { state.beforeId = layerId; apply(); await settle(); },
+    /** Change the order WITHOUT waiting, for the "no blank frame" check. */
+    moveBeforeNow(layerId) { state.beforeId = layerId; apply(); map.triggerRepaint(); },
+  };
+} catch (err) {
+  setStatus(`error: ${err?.code ?? 'UNEXPECTED'} ${err?.message ?? err}`);
+  throw err;
+}
+</script>
+</body>
+</html>

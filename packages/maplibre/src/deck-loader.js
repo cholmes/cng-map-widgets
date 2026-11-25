@@ -54,9 +54,11 @@ export const DECK_REQUIRED_EXPORTS = Object.freeze([
 /**
  * Transferred weight (gzip) a UI can show before loading anything -- the
  * deferred-plugin contract `@cngeo/raster-core`'s APPROX_BYTES established.
- * Placeholder until experiment E12 measures the built bundle.
+ * Measured: `gzip -9` of the committed bundle is 446,168 bytes (1,495,218
+ * raw), 2026-11-25 -- experiments/e12-deck-bundle/RESULTS.md. Re-measure
+ * when the bundle is rebuilt.
  */
-export const APPROX_BYTES = { deck: 760_000 };
+export const APPROX_BYTES = { deck: 446_000 };
 
 /** @type {object|null} */
 let injected = null;
