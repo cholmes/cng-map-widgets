@@ -3,8 +3,9 @@
 For AI agents and anyone who wants the facts without the prose. Every snippet
 here is executed against live published data by
 [`docs/verify-snippets.mjs`](docs/verify-snippets.mjs)
-(`node docs/verify-snippets.mjs agents`). If you change a snippet, change it
-there too.
+(`node docs/verify-snippets.mjs agents widgets`). If you change a snippet,
+change it there too. The few lines that need a browser — a control on a map —
+say which Playwright script covers them.
 
 Prose version: [README.md](README.md). Normative API design:
 [`docs/design/widgets-architecture.md`](docs/design/widgets-architecture.md).
@@ -26,6 +27,16 @@ Queries are place names; results are boundaries. No street addresses, ever.
 4. `@cngeo/extract-core` consumes an `Area` + a `DatasetDescriptor` +
    a `FilterSpec` and writes a file.
 5. There is **no server and no build step**. An import map is the setup.
+
+And, since 0.4.0, for **showing** data rather than extracting it:
+
+6. A **`LayerSpec`** (`cng-layer/1.0`) is plain JSON that says how to draw
+   one thing. `@cngeo/stac` makes them from STAC — a collection, a scene
+   found by an imagery search, a result of a catalog search — and
+   `@cngeo/maplibre`'s `LayerManager` draws them, in one ordered stack.
+7. A **timeline** is one such layer whose data is published as **chunks**,
+   files that each cover a span of time. `@cngeo/timeline` decides which
+   chunks a view needs; a chunk *format* reads them.
 
 Live catalogs you can use right now:
 
@@ -51,11 +62,25 @@ OV  https://data.source.coop/portolan-mirrors/cn-gazetteer-overture/names/index.
     "@cngeo/geocoder-core":   "/packages/geocoder-core/src/index.js",
     "@cngeo/upload-core":     "/packages/upload-core/src/index.js",
     "@cngeo/extract-core":   "/packages/extract-core/src/index.js",
+    "@cngeo/stac":            "/packages/stac/src/index.js",
+    "@cngeo/timeline":        "/packages/timeline/src/index.js",
     "@cngeo/maplibre":        "/packages/maplibre/src/index.js"
   }
 }
 </script>
 ```
+
+Which lines a page needs. `@cngeo/maplibre` imports only `@cngeo/spec` when
+it loads: the search controls are *handed* a `@cngeo/stac` object you made,
+so `stac` is a line only on a page that imports it — and it brings
+`@cngeo/extract-core` with it. `@cngeo/timeline` is loaded by
+`@cngeo/maplibre` itself, the first time a timeline layer is added: a page
+with no timeline can leave its line out, and a page with one that leaves it
+out fails then, not at load.
+
+deck.gl, PMTiles, the layer panel and MiniSearch are **not** import-map
+lines: like hyparquet, each loads from a pinned URL the first time it is
+needed (deck.gl from a bundle shipped inside `@cngeo/maplibre`).
 
 Do **not** add `hyparquet` to that map. The packages `import()` it themselves
 from pinned absolute CDN URLs (`src/cdn.js` in each). Nothing is on npm yet;
@@ -109,6 +134,24 @@ setDownloadModules({ hyparquet, compressors, writer });   // `writer` only for G
 Pinned versions: `hyparquet@1.33.0`, `hyparquet-compressors@1.1.3`,
 `hyparquet-writer@0.18.0`. Every snippet below runs in Node with those two
 calls in place.
+
+The widgets have the same seam for each thing they load lazily. A bundled
+host injects its own copy, once, before first use:
+
+```js
+import MiniSearch from 'minisearch';                       // 7.2.0
+import { setMinisearchModules } from '@cngeo/stac';
+setMinisearchModules({ MiniSearch });                      // catalog search (recipe 8)
+
+// In a browser bundle, from @cngeo/maplibre:
+//   setDeckModules(deckStack)                 deck.gl 9.4.2 + deck.gl-raster, ONE copy on the page
+//   setPmtilesModules(pmtiles)                pmtiles 4.5.0
+//   setLayerControlModules(layerControl)      maplibre-gl-layer-control
+//   setTimelineModules(await import('@cngeo/timeline'))
+```
+
+`@cngeo/stac` reads parquet through `@cngeo/extract-core`, so the
+`setDownloadModules` call above covers it.
 
 ---
 
@@ -640,6 +683,303 @@ records the assumption), `UPLOAD_TOO_LARGE`, `UPLOAD_UNSUPPORTED_FORMAT`,
 
 ---
 
+## The map widgets (recipes 6–9)
+
+Four widgets, each a headless half you can run anywhere and a MapLibre
+control that drives it. The headless halves below are executed by
+`node docs/verify-snippets.mjs widgets`; a control needs a browser, and is
+verified by the `examples/*/verify.mjs` named beside it.
+
+**Add every control after the map's `load` event**, and give them all the
+**same `LayerManager`**: it is the one list of what is on the map.
+
+## Recipe 6 — a layer stack, from STAC or by hand
+
+A `LayerSpec` is plain JSON: `{ spec: 'cng-layer/1.0', id, title, kind,
+source, style?, bbox?, attribution[], group? }`. `kind` is one of
+`pmtiles-vector`, `cog`, `geojson`, `timeline` (drawable), `scenes` (a
+collection of imagery: not one picture, so it is *searched* — recipe 7 — and
+each scene found becomes a `cog`), `table` and `unsupported` (nothing to
+draw). `add()` rejects the last three with `LAYER_UNSUPPORTED`.
+
+```js
+import { layersFromCollection } from '@cngeo/stac';
+import { validateLayerSpec } from '@cngeo/spec';
+
+const url = 'https://storage.googleapis.com/carto-open-catalogs/ocha-cod-jamaica/main/parishes/collection.json';
+const collection = await fetch(url).then((r) => r.json());
+const layers = layersFromCollection(collection, { baseUrl: url });   // synchronous, no fetch of its own
+
+const [layer] = layers;
+layer.kind;              // 'pmtiles-vector'
+layer.source.url;        // absolute: made so against `baseUrl`
+layer.source.style?.url; // the collection's own style, when it publishes one
+layer.attribution;       // what your UI MUST display
+
+validateLayerSpec(layer);   // throws a CngError (`LAYER_INVALID`) for a spec that is not one
+```
+
+In a browser (`examples/layers-demo/verify.mjs`, 15 checks):
+
+```js
+import { LayerManager, LayerControl, urlAddProvider } from '@cngeo/maplibre';
+
+const manager = new LayerManager(map);                    // bottom-first; sits under the basemap's labels
+map.addControl(new LayerControl({ manager, addProviders: [urlAddProvider({ layersFromCollection })] }), 'top-right');
+
+await manager.add(layer);                                 // drawn with the collection's own style
+await manager.add({ spec: 'cng-layer/1.0', id: 'image', kind: 'cog', source: { url: 'https://example.org/scene.tif' } });
+manager.move('image', 0);                                 // to the bottom; the map follows
+manager.setOpacity('image', 0.6);
+manager.list();          // [{ id, title, kind, visible, opacity, status, error?, note?, attribution, spec }]
+manager.attribution();   // every credit owed for what is shown
+```
+
+Hard rules:
+
+- **`baseUrl` is not optional in practice.** Without it relative asset hrefs
+  stay relative and nothing loads.
+- `add()` rejects with a coded error and, for a load failure
+  (`LAYER_LOAD_FAILED`), **leaves the layer in the list** with
+  `status: 'error'`. Read `list()`, do not assume.
+- A COG is read by range request and reprojected in the browser from its own
+  CRS (UTM included). It does not need to be in Web Mercator.
+- `source` is data. A function anywhere in it fails validation.
+
+## Recipe 7 — imagery search over STAC-GeoParquet
+
+One search for any collection whose items are published as GeoParquet:
+Sentinel-2, NAIP, OpenAerialMap. `imageryProfile()` absorbs how they differ
+(where the items file is, which asset is the picture, whether `assets` is a
+struct or a JSON string, a `datetime` or a start/end interval).
+
+```js
+import { imageryProfile, ImagerySearch } from '@cngeo/stac';
+
+const collectionUrl = 'https://data.source.coop/tge-labs/s2-stac-geoparquet/sentinel-2-c1-l2a/collection.json';
+const collection = await fetch(collectionUrl).then((r) => r.json());
+const profile = imageryProfile(collection, { baseUrl: collectionUrl });
+const search = new ImagerySearch(profile);
+
+profile.filters;   // what a panel can offer: [{ column: 'eo:cloud_cover', label, kind: 'max', type }, …]
+
+const { scenes, truncated, plan } = await search.search({
+  area,                                            // an Area (recipes 1, 5), or omit for everywhere
+  time: { start: '2025-06-01T00:00:00Z', end: '2025-06-08T00:00:00Z' },
+  where: [{ col: 'eo:cloud_cover', op: '<=', value: 60 }],
+  limit: 20,                                       // default 200
+  onScenes: (batch) => draw(batch),                // as each row group is read
+});
+
+scenes[0];   // { id, datetime, start, end, bbox: [w, s, e, n], geometry, properties, thumbnail, self, assets? }
+             // newest first, unless `sort` says otherwise
+
+const layer = await search.layerSpecFor(scenes[0]);   // a 'cog' LayerSpec for the scene's picture
+```
+
+In a browser (`examples/imagery-search/verify.mjs`, per collection):
+
+```js
+import { LayerManager, ImagerySearchControl } from '@cngeo/maplibre';
+map.addControl(new ImagerySearchControl({ search, manager }), 'top-left');
+// area (the map view, or a drawn one), dates, the profile's filters, cards with
+// thumbnails, footprints on the map, and "Add to map" -> manager.add(layerSpecFor(scene))
+```
+
+Hard rules:
+
+- `search()` is safe to call again before the last one finishes: **the
+  superseded one resolves `{ scenes: [], superseded: true }`, never
+  rejects.** Check the flag before you clear a list.
+- **A time filter means "overlaps the window"**, per row, as
+  `start_datetime ?? datetime` … `end_datetime ?? datetime`. OpenAerialMap
+  items have no `datetime` at all, and are found.
+- The first search of a collection pays for its footers (Sentinel-2: about
+  8 MB, several seconds, more on a slow day — the snippet above measured
+  between 9 and 36 s cold). They are cached for the life of the
+  `ImagerySearch`; call `search.warm()` when the panel opens.
+- **Do not ask for `assets` in a search of Sentinel-2.** It is a JSON string
+  of about 18 KB a row. `layerSpecFor(scene)` finds the one asset it needs.
+- `truncated: true` means `limit` cut the list, not that the search failed.
+
+## Recipe 8 — catalog search over a `collections.parquet`
+
+A STAC-GeoParquet index of collections — the Portolan registry's has 6,941 —
+searched in the browser: text, area, time, licence, and what each can be
+drawn as.
+
+```js
+import { CatalogIndex } from '@cngeo/stac';
+
+const index = new CatalogIndex('https://registry.portolan-sdi.org/v0.1/collections.parquet');
+await index.load();                // or let the first search do it
+index.entries.length;              // 6,941 (2026-11-25)
+
+const { results, total, facets } = await index.search({ text: 'buildings', limit: 10 });
+results[0];        // { key, id, title, description, href, license, keywords, catalog, catalogs,
+                   //   bbox, start, end, kinds, thumbnail, score, fit }
+facets.license;    // [{ value: 'CC-BY-4.0', count }, …]  -- also facets.catalog, facets.kinds
+
+const { drawable, undrawable, source } = await index.resolve(results[0]);
+drawable;          // LayerSpec[]: hand each to manager.add()
+undrawable;        // [{ title, kind: 'table', reason }] -- say why, do not hide it
+source;            // 'render' (read from the index) or 'collection' (its JSON was fetched)
+```
+
+`search()` also takes `area` (an `Area`), `time: { start?, end? }`,
+`license`, `kinds` and `within` (a catalog). Results whose extent *fits* the
+area rank above global ones.
+
+In a browser (`examples/catalog-search/verify.mjs`, 42 checks):
+
+```js
+import { LayerManager, LayerControl, CatalogSearchControl, catalogAddProvider } from '@cngeo/maplibre';
+
+const catalog = new CatalogSearchControl({ index, manager });
+map.addControl(catalog, 'top-left');
+// The layer panel's "Add" button leads to it:
+map.addControl(new LayerControl({ manager, addProviders: [catalogAddProvider(catalog)] }), 'top-right');
+```
+
+Hard rules:
+
+- The index is loaded once, light columns only (never `original`, 56.7 MB of
+  text in a 19 MB file). **A file's size is found with a ranged GET, not
+  HEAD**: GitHub Pages, which hosts the registry, answers HEAD with the
+  length of the file's gzip encoding, and the footer is then looked for in
+  the wrong place. `remoteByteLength()` in `@cngeo/extract-core` is the
+  function; use it if you open a parquet file yourself.
+- A superseded `search()` resolves `{ results: [], total: 0, superseded:
+  true }`. Safe on every keystroke.
+- Typos resolve: `"buildngs"` finds buildings (one edit, on words of six
+  letters or more).
+- `resolve()` needs one fetch of the collection's JSON unless the index
+  carries a `render` column. The live registry does not yet
+  (`experiments/e13-render-column/` measures what it would cost: 454 KB).
+- Two results can share an `id` across catalogs. `key` is unique; layer ids
+  are disambiguated when both are added.
+
+## Recipe 9 — a timeline over chunks of any size
+
+A histogram of time under the map, a selection that decides what the map
+draws, and play / pause — over files that each cover a span of time. A
+chunk's **span** is whatever it says (a year, a month, a week); the
+**bucket unit** inside it is `day` or `month`.
+
+```js
+import { chunksFromTemplate, forView, forSelection } from '@cngeo/timeline';
+
+const BASE = 'https://data.source.coop/portolan-mirrors/firms-catalog/detections';
+const years = chunksFromTemplate({
+  template: `${BASE}/year={YYYY}/fire-{YYYY}.pmtiles`,
+  period: 'year',                      // 'year' | 'month' | 'week' | 'day' | { days: n }
+  start: '20001101',                   // day keys: YYYYMMDD, always UTC
+  end: '20261125',                     // default: today
+});
+years.length;   // 27
+years[0];       // { id: '2000', start: '20001101', end: '20001231', unit: 'day', format: 'pmtiles', url, priority: 0 }
+
+// Monthly files are the same thing with another period.
+const months = chunksFromTemplate({ template: 'https://example.org/{YYYY}/{MM}.pmtiles', period: 'month', start: '20240101', end: '20241231' });
+forSelection(months, { from: '20240120', to: '20240310' }, 'day').length;   // 3: a selection draws from every chunk it touches
+
+// With a monthly overview beside the years, a narrow view is days and a wide one months.
+const overview = { id: 'alltime', start: '20001101', end: '20261130', unit: 'month', format: 'pmtiles', url: `${BASE}/alltime.pmtiles` };
+forView([...years, overview], { from: '20260818', to: '20261125' });   // { unit: 'day',   load: [2026] }
+forView([...years, overview], { from: '20150101', to: '20261125' });   // { unit: 'month', load: [alltime] }
+```
+
+From a STAC collection whose items have dates and a tiles asset:
+
+```js
+import { chunksFromStac } from '@cngeo/stac';
+
+const url = 'https://data.source.coop/portolan-mirrors/firms-catalog/detections/collection.json';
+const { chunks, skipped } = await chunksFromStac(await fetch(url).then((r) => r.json()), { baseUrl: url });
+chunks.length;   // 27 -- one request per item
+skipped;         // [{ href, reason }] for an item that is gone or has no tiles
+```
+
+In a browser (`examples/timeline-firms/verify.mjs`, 24 checks):
+
+```js
+import { LayerManager, LayerControl, TimelineControl, describePmtilesChunk } from '@cngeo/maplibre';
+
+const fires = {
+  spec: 'cng-layer/1.0', id: 'fires', title: 'Active fires', kind: 'timeline',
+  source: {
+    chunks: [...years, { ...(await describePmtilesChunk(`${BASE}/alltime.pmtiles`)), id: 'alltime' }],
+    aggregate: { layer: 'aggregate', idProperty: 'a5_cell' },   // cells with a count_YYYYMMDD column per day
+    points: { layer: 'features', property: 'day' },             // features that each carry their own day
+  },
+  attribution: [{ text: 'NASA FIRMS' }],
+};
+map.addControl(new TimelineControl({ manager, layer: fires, metricLabel: 'detections' }), 'bottom-left');
+manager.handle('fires');   // the session: state, on('change'), setView(), setSelection(), retry()
+```
+
+PMTiles is one chunk **format**. Anything that can answer "counts per bucket
+for this view" and "draw this window" is another, and the orchestrator does
+not know the difference:
+
+```js
+import { createChunkSet } from '@cngeo/timeline';
+
+const counts = { 20240105: 3, 20240106: 5, 20240210: 2 };
+const memoryFormat = {
+  async open(chunk) {
+    return { unit: chunk.unit };                 // whatever mount() needs
+  },
+  mount({ chunk, settled }) {
+    const mine = Object.fromEntries(Object.entries(counts).filter(([day]) => day >= chunk.start && day <= chunk.end));
+    settled(true);                               // "what I have for this view is complete"
+    return {
+      setWindow(window) {},                      // { unit, ranges: [[from, to], …] } to draw; null = nothing
+      histogram(viewport) { return mine; },      // { bucketKey: count } for what is in view
+      freeze() {},                               // keep showing what you show: a successor is loading
+      destroy() {},
+    };
+  },
+};
+
+const set = createChunkSet({
+  chunks: chunksFromTemplate({ template: 'https://example.org/{YYYY}-{MM}.bin', period: 'month', start: '20240101', end: '20240229', format: 'memory' }),
+  formats: { memory: memoryFormat },
+});
+set.setViewport({ bbox: [-180, -85, 180, 85], zoom: 2 });
+set.setView({ from: '20240101', to: '20240229' });
+set.setSelection({ from: '20240105', to: '20240210' });
+// ...a moment later:
+set.state.drawing.length;   // 2 -- the selection spans both chunks, so both draw
+set.state.histogram;        // { 20240105: 3, 20240106: 5, 20240210: 2 }
+set.destroy();
+```
+
+On a map, `registerChunkFormat(name, factory)` from `@cngeo/maplibre` adds
+such a format to the timeline layer; its mounts also return deck.gl layers.
+**No GeoParquet format is built.** The interface is the place for one.
+
+Hard rules:
+
+- **A descriptor must say what its file really holds.** One that claims more
+  shows the difference as loaded-and-empty: false zeros, indistinguishable
+  from "no fires". For a file whose span is not in its name (a rolling
+  "latest", an overview rebuilt monthly) ask the file:
+  `describePmtilesChunk(url)`. A catalog's item dates can lag its file too.
+- The **axis** is the whole chunk set; what is **loaded** follows the view
+  (`cap`, default 3 big chunks); what **draws** follows the selection. What is
+  not loaded is hatched, never drawn as zero: `state.gaps`.
+- Where chunks overlap, each bucket has **one owner**: higher `priority`,
+  then the narrower span.
+- A chunk that will not open is in `state.failed`, with a `retry(id)`. It
+  does not fail the layer unless the layer has never shown anything.
+- Day keys are **UTC calendar days**. A date-time with no zone is read as
+  UTC, not in the viewer's zone.
+- A page with a timeline needs `@cngeo/timeline` in its import map (see
+  Setup). It fails when the layer is added, not at load, without it.
+
+---
+
 ## The manifest contract
 
 `indexUrl` points at ~10 KB of JSON that describes the whole gazetteer. You can
@@ -968,13 +1308,21 @@ on them anyway; they will not change meaning.
 ## Verifying your work
 
 ```bash
-npm test                              # 400+ unit tests, no network
+npm test                              # 1,400+ unit tests. Offline, but for two integration tests
+                                      # (extract-core, format-gpkg) that read source.coop and
+                                      # fail when that host does: re-run before believing them.
+npm run check:deck                    # the committed deck.gl bundle equals a fresh build
 node docs/verify-snippets.mjs         # every snippet in every doc, against live data
-node docs/verify-snippets.mjs agents  # just this file's recipes
+node docs/verify-snippets.mjs agents  # just this file's recipes 1-5
+node docs/verify-snippets.mjs widgets # recipes 6-9, the widgets' headless halves
 
 python3 serve.py 8000 &               # real Range support; -m http.server will not do
 node examples/quickstart/verify.mjs 8000
 node examples/download-demo/verify.mjs 8000
+node examples/layers-demo/verify.mjs 8000        # recipe 6
+node examples/imagery-search/verify.mjs 8000     # recipe 7: Sentinel-2, NAIP and OpenAerialMap (add `naip` for one)
+node examples/catalog-search/verify.mjs 8000     # recipe 8
+node examples/timeline-firms/verify.mjs 8000     # recipe 9
 
 # Starts its own server; needs no running serve.py. The File System Access
 # path -- the one `npm test` cannot reach, because no Node runtime has a
