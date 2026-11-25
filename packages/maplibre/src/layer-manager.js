@@ -481,10 +481,18 @@ export class LayerManager {
    *
    * A layer the map does not have is skipped; declare again once it exists
    * (after `map.setStyle()`, say). `[]` lets go.
+   *
+   * Declarations are per `owner`, so two controls on one map each keep their
+   * own layers up there: one declaring, or letting go, leaves the other's
+   * alone. Owners are stacked in the order they first declared.
    * @param {string[]} ids
+   * @param {string} [owner]  Whose layers these are. Give one if anything else on the map might declare too.
    */
-  setTopLayers(ids) {
-    this._topLayers = Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : [];
+  setTopLayers(ids, owner = 'default') {
+    this._topLayers ??= new Map();
+    const list = Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : [];
+    if (list.length) this._topLayers.set(owner, list);
+    else this._topLayers.delete(owner);
     if (!this._destroyed) this._applyOrder();
   }
 
@@ -493,7 +501,7 @@ export class LayerManager {
     let slot = this._anchor();
     // Guests first, top down, each just under the last: they end directly
     // below the anchor, in the order given, and the stack goes under them.
-    const guests = (this._topLayers ?? []).filter((id) => this._map.getLayer(id));
+    const guests = [...(this._topLayers?.values() ?? [])].flat().filter((id) => this._map.getLayer(id));
     for (let i = guests.length - 1; i >= 0; i--) {
       this._map.moveLayer(guests[i], slot);
       slot = guests[i];

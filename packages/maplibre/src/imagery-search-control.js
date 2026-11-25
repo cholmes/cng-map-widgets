@@ -292,7 +292,7 @@ export class ImagerySearchControl {
     this.model.destroy();
     const map = this._map;
     if (map) {
-      this._manager.setTopLayers?.([]);
+      this._manager.setTopLayers?.([], FOOTPRINTS_SOURCE);
       for (const id of [FOOTPRINTS_LINE, FOOTPRINTS_FILL]) if (map.getLayer?.(id)) map.removeLayer(id);
       if (map.getSource?.(FOOTPRINTS_SOURCE)) map.removeSource(FOOTPRINTS_SOURCE);
     }
@@ -579,6 +579,6 @@ export class ImagerySearchControl {
     // slotted beneath and moves it back on every update, so the footprints
     // have to BE what the stack is slotted beneath. Declared each time the
     // layers are (re)made -- after `map.setStyle()` they are new layers.
-    this._manager.setTopLayers?.([FOOTPRINTS_FILL, FOOTPRINTS_LINE]);
+    this._manager.setTopLayers?.([FOOTPRINTS_FILL, FOOTPRINTS_LINE], FOOTPRINTS_SOURCE);
   }
 }

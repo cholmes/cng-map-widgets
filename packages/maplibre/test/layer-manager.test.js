@@ -111,6 +111,26 @@ test('setTopLayers keeps another control\'s layers just above the stack, under t
   assert.equal(manager.deckLayers()[0].beforeId, 'labels');
 });
 
+// Two controls on one map each have layers of their own up there (the imagery
+// search's footprints, the catalog search's extent). The second to declare
+// must not undo the first.
+test('setTopLayers is per owner: two controls each keep their layers above the stack', async () => {
+  const map = createFakeMap();
+  const manager = new LayerManager(map, { renderers: renderers() });
+  await manager.add(raster('r'));
+  for (const id of ['a--fill', 'a--line', 'b--line']) map.addLayer({ id, type: 'line' }, 'labels');
+  manager.setTopLayers(['a--fill', 'a--line'], 'a');
+  manager.setTopLayers(['b--line'], 'b');
+  const order = map.order();
+  assert.deepEqual(order.slice(order.indexOf('a--fill'), order.indexOf('labels') + 1), ['a--fill', 'a--line', 'b--line', 'labels'], 'both sets, in the order their owners declared');
+  assert.equal(manager.deckLayers()[0].beforeId, 'a--fill');
+  // One owner letting go leaves the other's in place.
+  manager.setTopLayers([], 'a');
+  assert.equal(manager.deckLayers()[0].beforeId, 'b--line');
+  manager.setTopLayers([], 'b');
+  assert.equal(manager.deckLayers()[0].beforeId, 'labels');
+});
+
 test('setTopLayers ignores a layer the map does not have (yet)', async () => {
   const map = createFakeMap();
   const manager = new LayerManager(map, { renderers: renderers() });

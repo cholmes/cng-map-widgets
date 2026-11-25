@@ -46,6 +46,8 @@ export {
 export { utmDefinition, registerKnownProjections, KNOWN_UTM_CODES } from './projections.js';
 export { decodePoolFor, canStartBlobWorker } from './decode-pool.js';
 export { ImagerySearchControl, FOOTPRINTS_SOURCE, FOOTPRINTS_FILL, FOOTPRINTS_LINE } from './imagery-search-control.js';
+export { CatalogSearchControl, catalogAddProvider, KIND_LABELS, EXTENT_SOURCE, EXTENT_FILL, EXTENT_LINE } from './catalog-search-control.js';
+export { createCatalogSearchModel, catalogStatusOf, extentsGeoJson } from './catalog-search-model.js';
 export { createImagerySearchModel, footprintsGeoJson, areaFromBounds, whereFromFilters, statusOf, defaultTimeWindow } from './imagery-search-model.js';
 export {
   createDrawTool,
