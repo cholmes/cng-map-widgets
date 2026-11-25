@@ -126,6 +126,44 @@ pursued further. A host that wants its own deck.gl should bundle it and call
   Firefox 114+.
 - MapLibre GL 6 (ES-module only; the page uses 5.24.1's script build).
 
-## Gate B
+## Gate B — is `maplibre-gl-layer-control` a fit for the layer manager?
 
-Recorded below once `layer-control.verify.mjs` has run.
+**Date:** 2026-11-25. `maplibre-gl-layer-control@0.18.3` (opengeos, MIT),
+loaded from jsDelivr as published, on `layer-control.html` with one MapLibre
+style layer and one deck.gl `COGLayer` registered through the control's
+`CustomLayerAdapter`. Run: `node experiments/e12-deck-bundle/layer-control.verify.mjs 8123`.
+
+| # | requirement | result | evidence |
+|---|---|---|---|
+| 1 | Loads with no build and no import-map entries | **pass** | page ready, 0 console errors; the published ESM has no bare imports |
+| 2 | Add and remove a layer at runtime | **pass** | a deck layer (via the adapter's `onLayerChange`) and a style layer both appear and disappear as rows |
+| 3 | deck.gl layers toggle | **pass** | the row's checkbox calls `adapter.setVisibility(false)`; 100% of the raster's pixels change |
+| 4 | Opacity for both kinds | **pass** | slider sets the deck layer's `opacity` to 0.3 and the style layer's `fill-opacity` to 0.2 |
+| 5 | Reorder, reported to the host | **pass** | dragging a row reorders the list and fires `onLayerReorder(["user-poly","cog-naip"])` |
+| 6 | Theming with CSS variables, and dark mode | **fail** | its stylesheet uses 0 CSS custom properties and has 0 `prefers-color-scheme` rules; the panel is `rgb(255,255,255)` in both light and dark |
+| 7 | Keyboard access to every action | **fail** | Space toggles and arrow keys change opacity, and the context menu (remove, move) opens from the keyboard; but the checkbox and the slider have no accessible name, and the drag handle is not focusable |
+
+**Verdict under the plan's rule ("adopt only if all seven pass"): build own.**
+
+That rule was written before the measurement, and the result is closer than
+the rule anticipated, so both readings are recorded for Chris to choose:
+
+- **What it already does that we would otherwise write:** the deck.gl adapter
+  seam, runtime add/remove, drag-and-drop reorder, per-layer opacity, groups,
+  zoom-to-bounds, a right-click menu with remove and move, a paint-property
+  style editor, and grouping the basemap's layers under one "Background" row.
+- **What adopting it would still need from us:**
+  - an override stylesheet mapping its classes onto the `--cng-*` tokens, with
+    a dark variant (it exposes no variables, so this tracks its class names);
+  - a shim that names the checkbox and slider for assistive technology and
+    gives reordering a keyboard path — or the same two fixes sent upstream;
+  - applying the reported order to deck layers ourselves: deck layers are not
+    in the MapLibre style, so `onLayerReorder` is only a notification and the
+    host must translate it into `beforeId` (the `LayerManager` does this either way);
+  - an "Add layer" entry point, which it does not have.
+- **Risks of adopting:** one maintainer; 30.6 KB gzip; the override stylesheet
+  and the shim both depend on its internal DOM, which can change in any release.
+
+Either way the `LayerManager` (the ordered stack and its two executors) is
+ours; the question is only whether the panel that drives it is this control
+or a small one of our own.
