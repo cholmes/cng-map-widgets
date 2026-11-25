@@ -397,6 +397,11 @@ One belongs to its catalog search: `CATALOG_INDEX_INVALID` — the URL is not
 a collections index: a catalog with no parquet link of `rel: "data"`, or a
 parquet file with no `id` or `href` column (`context.missing`). Not retryable.
 
+One belongs to `@cngeo/timeline`: `TIMELINE_INVALID` — a chunk list, a chunk
+descriptor, a bucket key or a data file's own timeline declaration that
+cannot be used (`context` names it). Not retryable. A chunk that is fine and
+will not *load* is `LAYER_LOAD_FAILED`.
+
 Two codes belong to `@cngeo/maplibre`'s deck.gl loader
 (`packages/maplibre/src/deck-loader.js`): `DECK_LOAD_FAILED` — the deck.gl
 bundle could not be fetched; retry — and `DECK_MODULES_INVALID` — the deck.gl
