@@ -54,7 +54,7 @@ export const DECK_REQUIRED_EXPORTS = Object.freeze([
 /**
  * Transferred weight (gzip) a UI can show before loading anything -- the
  * deferred-plugin contract `@cngeo/raster-core`'s APPROX_BYTES established.
- * Measured: `gzip -9` of the committed bundle is 446,168 bytes (1,495,218
+ * Measured: `gzip -9` of the committed bundle is 446,204 bytes (1,495,266
  * raw), 2026-11-25 -- experiments/e12-deck-bundle/RESULTS.md. Re-measure
  * when the bundle is rebuilt.
  */
@@ -87,14 +87,28 @@ function assertDeckModules(mods, origin) {
  * @param {object} mods An object carrying every name in DECK_REQUIRED_EXPORTS.
  */
 export function setDeckModules(mods) {
+  // Once a load has begun, some caller holds (or is about to hold) the
+  // bundle's deck.gl. Swapping in another set now would put two copies on
+  // the page -- the silent failure this module exists to prevent.
+  if (loading) {
+    throw new CngError(
+      'setDeckModules() must be called before the first loadDeck(): the deck.gl bundle is already loading or loaded.',
+      'DECK_MODULES_INVALID',
+      { retryable: false, context: { reason: 'already-loading' } },
+    );
+  }
   injected = assertDeckModules(mods, 'setDeckModules()');
-  loading = null;
 }
 
-/** Undo `setDeckModules` and forget any loaded or in-flight bundle. */
+/**
+ * Undo `setDeckModules`, forget any loaded or in-flight bundle, and forget
+ * the remembered `deckSupport()` probe. For tests; a page that has already
+ * drawn with one deck.gl should not switch to another.
+ */
 export function clearDeckModules() {
   injected = null;
   loading = null;
+  probed = null;
 }
 
 /**
@@ -137,12 +151,31 @@ export function loadDeck(options = {}) {
  *             reflectance) samples as zero and composites come out black,
  *             silently. 8-bit imagery (true-colour TCI, NAIP, most
  *             OpenAerialMap) is unaffected. Headless Chrome lacks it.
- * @param {{ getContext(type: string): any }} [canvas] Defaults to a throwaway <canvas>.
+ *
+ * With no argument it probes a throwaway <canvas> ONCE, remembers the answer
+ * and releases the context straight away. A page gets only a handful of live
+ * WebGL contexts; a probe that opened one per call and kept it took the
+ * map's own context away after a few dozen calls, blanking the map with no
+ * error. Pass a canvas to inspect that canvas instead (not remembered, and
+ * its context is left alone -- it is the caller's).
+ * @param {{ getContext(type: string): any }} [canvas]
  * @returns {{ webgl2: boolean, norm16: boolean }}
  */
 export function deckSupport(canvas) {
-  const target = canvas ?? (typeof document !== 'undefined' ? document.createElement('canvas') : null);
-  const gl = target?.getContext?.('webgl2') ?? null;
+  if (canvas) return readSupport(canvas.getContext?.('webgl2') ?? null);
+  if (typeof document === 'undefined') return { webgl2: false, norm16: false };
+  if (!probed) {
+    const gl = document.createElement('canvas').getContext?.('webgl2') ?? null;
+    probed = readSupport(gl);
+    gl?.getExtension?.('WEBGL_lose_context')?.loseContext();
+  }
+  return { ...probed };
+}
+
+/** @type {{ webgl2: boolean, norm16: boolean }|null} */
+let probed = null;
+
+function readSupport(gl) {
   if (!gl) return { webgl2: false, norm16: false };
   return { webgl2: true, norm16: Boolean(gl.getExtension?.('EXT_texture_norm16')) };
 }

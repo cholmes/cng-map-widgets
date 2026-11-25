@@ -128,7 +128,8 @@ row(1, 'Loads with no build and no import-map entries', errors.length === 0, `pa
     const handle = r.querySelector('.layer-control-drag-handle');
     const checkbox = r.querySelector('.layer-control-checkbox');
     const slider = r.querySelector('.layer-control-opacity');
-    const named = (el) => Boolean(el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || (el.id && document.querySelector(`label[for="${el.id}"]`)) || el.closest('label'));
+    // `title` counts: it is the last step of the accessible-name computation.
+    const named = (el) => Boolean(el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || (el.id && document.querySelector(`label[for="${el.id}"]`)) || el.closest('label') || el.getAttribute('title'));
     return { handleFocusable: handle.tabIndex >= 0, handleRole: handle.getAttribute('role'), checkboxNamed: named(checkbox), sliderNamed: named(slider), rowFocusable: r.tabIndex >= 0 };
   });
   // Toggle by keyboard.
@@ -154,10 +155,39 @@ row(1, 'Loads with no build and no import-map entries', errors.length === 0, `pa
     await page.waitForTimeout(300);
     menu = await page.locator('.layer-control-context-menu').isVisible().catch(() => false);
   }
+  // Opening the menu is not operating it: can its items take focus and be activated?
+  const menuItems = menu
+    ? await page.evaluate(() => {
+        const items = [...document.querySelector('.layer-control-context-menu').querySelectorAll('*')].filter((el) => el.children.length === 0 && el.textContent.trim());
+        return {
+          count: items.length,
+          labels: items.map((el) => el.textContent.trim()).slice(0, 8),
+          focusable: items.filter((el) => el.tabIndex >= 0 || ['BUTTON', 'A', 'INPUT'].includes(el.tagName)).length,
+          withRole: items.filter((el) => (el.closest('[role]') ?? el).getAttribute('role')).length,
+        };
+      })
+    : { count: 0, labels: [], focusable: 0, withRole: 0 };
+  await page.keyboard.press('Escape');
+  // Visible focus: does the focused checkbox show an outline or a ring?
+  await checkbox.focus();
+  const focusStyle = await checkbox.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { outline: `${s.outlineStyle} ${s.outlineWidth}`, boxShadow: s.boxShadow };
+  });
+  const visibleFocus = (!focusStyle.outline.startsWith('none') && !focusStyle.outline.endsWith(' 0px')) || focusStyle.boxShadow !== 'none';
   const toggleOk = visBefore !== visAfter;
   const opacityOk = opBefore !== opAfter;
-  const pass = toggleOk && opacityOk && info.handleFocusable && menu && info.checkboxNamed && info.sliderNamed;
-  row(7, 'Keyboard access to every action', pass, `Space toggles=${toggleOk}; arrow changes opacity=${opacityOk}; drag handle focusable=${info.handleFocusable} (role=${info.handleRole}); context menu (remove, move) opens from the keyboard=${menu}; checkbox has an accessible name=${info.checkboxNamed}; slider has one=${info.sliderNamed}`);
+  const menuOperable = menu && menuItems.count > 0 && menuItems.focusable === menuItems.count;
+  const pass = toggleOk && opacityOk && info.handleFocusable && menuOperable && info.checkboxNamed && info.sliderNamed && visibleFocus;
+  row(
+    7,
+    'Keyboard access to every action',
+    pass,
+    `Space toggles=${toggleOk}; arrow changes opacity=${opacityOk}; drag handle focusable=${info.handleFocusable} (role=${info.handleRole}); ` +
+      `context menu opens from the keyboard=${menu}, but ${menuItems.focusable} of its ${menuItems.count} items can take focus (${menuItems.labels.join(', ')}), ${menuItems.withRole} carry a role; ` +
+      `accessible name: checkbox=${info.checkboxNamed}, slider=${info.sliderNamed} (title only); ` +
+      `focused checkbox outline="${focusStyle.outline}" box-shadow="${focusStyle.boxShadow}" -> visible focus=${visibleFocus}`,
+  );
 }
 
 await page.close();

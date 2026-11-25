@@ -18,6 +18,49 @@ setHyparquetModules({ hyparquet, compressors });
 
 const runs = Number(process.argv[process.argv.indexOf('--runs') + 1]) || 3;
 const now = () => performance.now();
+
+// --- A fetch log -------------------------------------------------------------
+// `estimate()` reports a MODEL of a search (one request per admitted row
+// group). This records what actually went over the wire, tagged with the
+// phase it happened in, so the two are never confused -- and so planning time
+// can be split into its two halves: enumerating the dataset's parts (small
+// JSON documents) and reading parquet footers.
+let phase = 'idle';
+/** @type {{ phase: string, kind: 'json'|'parquet', bytes: number, start: number, end: number }[]} */
+let fetchLog = [];
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === 'string' ? input : input.url;
+  const entry = { phase, kind: /\.parquet(\?|$)/.test(url) ? 'parquet' : 'json', bytes: 0, start: now(), end: 0 };
+  fetchLog.push(entry);
+  const response = await realFetch(input, init);
+  // A HEAD response's content-length is the size of the whole file, none of
+  // which was transferred.
+  const method = (init?.method ?? (typeof input === 'string' ? 'GET' : input.method) ?? 'GET').toUpperCase();
+  entry.bytes = method === 'HEAD' ? 0 : Number(response.headers.get('content-length') ?? 0);
+  entry.end = now();
+  // The body is where the bytes (and most of the time) are: stamp the end
+  // when it has been read, not when the headers arrived.
+  for (const method of ['arrayBuffer', 'json', 'text']) {
+    const original = response[method].bind(response);
+    response[method] = async () => {
+      const value = await original();
+      entry.end = now();
+      return value;
+    };
+  }
+  return response;
+};
+/** Wall-clock span, request count and bytes of one kind of request in one phase. */
+function wire(log, inPhase, kind) {
+  const hits = log.filter((e) => e.phase === inPhase && e.kind === kind);
+  if (!hits.length) return { requests: 0, bytes: 0, spanMs: 0 };
+  return {
+    requests: hits.length,
+    bytes: hits.reduce((n, e) => n + e.bytes, 0),
+    spanMs: Math.max(...hits.map((e) => e.end)) - Math.min(...hits.map((e) => e.start)),
+  };
+}
 const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 const box = ([w, s, e, n]) => ({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } });
 
@@ -51,12 +94,15 @@ const DATASETS = [
   },
 ];
 
-/** Footer facts for one file: size, row groups, and what the `assets` column is. */
+/**
+ * Footer facts for one file: size, row groups, and what the `assets` column
+ * is. Structure only -- how long footers take is measured inside the runs
+ * loop, from the fetch log, not here.
+ */
 async function footerFacts(url) {
-  const t0 = now();
+  phase = 'facts';
   const file = await hyparquet.asyncBufferFromUrl({ url, requestInit: { cache: 'no-store' } });
   const metadata = await hyparquet.parquetMetadataAsync(file, { initialFetchSize: 65_536, geoparquet: false });
-  const ms = now() - t0;
   const groups = metadata.row_groups;
   const assetsChunks = groups.map((g) => g.columns.filter((c) => c.meta_data.path_in_schema[0] === 'assets'));
   const assetsBytes = assetsChunks.map((cs) => cs.reduce((n, c) => n + Number(c.meta_data.total_compressed_size), 0));
@@ -66,7 +112,6 @@ async function footerFacts(url) {
   const withOffsetIndex = allChunks.filter((c) => c.offset_index_offset !== undefined && c.offset_index_offset !== null).length;
   const rows = groups.map((g) => Number(g.num_rows));
   return {
-    footerReadMs: Math.round(ms),
     fileBytes: file.byteLength,
     footerBytes: metadata.metadata_length,
     rowGroups: groups.length,
@@ -94,35 +139,58 @@ async function searchOnce(ds, area) {
     limit: 200,
   };
   const out = {};
+  fetchLog = [];
+  phase = 'resolve';
   let t = now();
   const dataset = ds.descriptor.source.kind === 'portolan-collection' ? await resolveDataset(ds.descriptor) : ds.descriptor;
   out.resolveMs = now() - t;
 
+  phase = 'estimate1';
   t = now();
   const est1 = await estimate(dataset, area, filter);
   out.estimate1Ms = now() - t;
+  phase = 'estimate2';
   t = now();
   await estimate(dataset, area, filter);
   out.estimate2Ms = now() - t;
 
   const engine = createHyparquetEngine();
+  phase = 'plan';
   t = now();
   const plan = await engine.plan(dataset, area, filter, {});
   out.planMs = now() - t;
+  phase = 'run';
   t = now();
   let rows = 0;
   await engine.run(plan, async (batch) => { rows += batch.rows; }, {});
   out.runMs = now() - t;
+  phase = 'idle';
 
-  out.facts = {
+  // MEASURED, from the fetch log.
+  const enumeration = wire(fetchLog, 'plan', 'json');
+  const footers = wire(fetchLog, 'plan', 'parquet');
+  const data = wire(fetchLog, 'run', 'parquet');
+  out.enumerationMs = enumeration.spanMs;
+  out.footerMs = footers.spanMs;
+  out.measured = {
+    planEnumerationRequests: enumeration.requests,
+    planFooterRequests: footers.requests,
+    planFooterBytes: footers.bytes,
+    runRequests: data.requests + wire(fetchLog, 'run', 'json').requests,
+    runBytes: data.bytes,
+    searchRequests: fetchLog.filter((e) => e.phase === 'plan' || e.phase === 'run').length,
+    searchBytes: fetchLog.filter((e) => e.phase === 'plan' || e.phase === 'run').reduce((n, e) => n + e.bytes, 0),
+  };
+  // MODELLED, by estimate(). Not the same thing as the block above.
+  out.modelled = {
     files: est1.files,
     rowGroups: est1.rowGroups,
     requests: est1.requests,
     readBytes: est1.readBytes?.estimate,
-    rowsReturned: rows,
     bboxBasis: est1.prune.find((p) => p.stage === 'row-group-bbox')?.basis,
     warnings: est1.warnings.map((w) => w.code),
   };
+  out.rowsReturned = rows;
   return out;
 }
 
@@ -138,11 +206,19 @@ for (const ds of DATASETS) {
     for (let i = 0; i < runs; i++) {
       const s = await searchOnce(ds, area);
       samples.push(s);
-      console.error(`run ${i + 1}: resolve ${Math.round(s.resolveMs)} estimate ${Math.round(s.estimate1Ms)}/${Math.round(s.estimate2Ms)} plan ${Math.round(s.planMs)} run ${Math.round(s.runMs)} ms`);
+      console.error(
+        `run ${i + 1}: resolve ${Math.round(s.resolveMs)} estimate ${Math.round(s.estimate1Ms)}/${Math.round(s.estimate2Ms)} ` +
+          `plan ${Math.round(s.planMs)} (enumeration ${Math.round(s.enumerationMs)}, footers ${Math.round(s.footerMs)}) run ${Math.round(s.runMs)} ms`,
+      );
     }
     const med = (k) => Math.round(median(samples.map((s) => s[k])));
-    entry.medianMs = { resolve: med('resolveMs'), estimateFirst: med('estimate1Ms'), estimateSecond: med('estimate2Ms'), plan: med('planMs'), run: med('runMs') };
-    entry.facts = samples[0].facts;
+    entry.medianMs = {
+      resolve: med('resolveMs'), estimateFirst: med('estimate1Ms'), estimateSecond: med('estimate2Ms'),
+      plan: med('planMs'), planEnumeration: med('enumerationMs'), planFooters: med('footerMs'), run: med('runMs'),
+    };
+    entry.measured = samples[0].measured;
+    entry.modelled = samples[0].modelled;
+    entry.rowsReturned = samples[0].rowsReturned;
     entry.filter = { bbox: ds.bbox, time: ds.time, columns: ds.columns };
   } catch (err) {
     entry.error = `${err?.code ?? err?.name}: ${err?.message}`;

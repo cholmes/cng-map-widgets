@@ -149,7 +149,12 @@ Skip: `@geoarrow/deck.gl-layers` (pulls a second deck.gl 9.3), `maplibre-gl-rast
 - `queryRows(dataset, area, filter, options)`: row objects with decoded geometry, delivered as row groups
   arrive. Implement as an opt-in `rowFormat: 'objects'` on the engine context so `run()` hands over matched
   rows directly instead of transposing in `buildBatch` (`src/engine-hyparquet.js`); writers are untouched.
-- **Footer cache** per session, keyed by URL, plus a `warm(dataset)` call for a control to use on open.
+- **Plan cache** per session, plus a `warm(dataset)` call for a control to use on open. It must hold
+  **both** the resolved part list and the footers: E14 measured a Sentinel-2 plan as 13 part-listing
+  requests (1.5–4.7 s) plus the 7.92 MB footer (about 3 s), all repaid on every call today. A footer
+  cache alone leaves the listing repaid. *(Amended 2026-11-25 after E14 and its review.)*
+- `estimate().requests` models one request per row group; the engine sends one per column chunk and
+  planning adds more (Sentinel-2: 35 modelled, 100 measured). Fix or relabel it before a UI shows it.
 - Single-file item tables: a non-partitioned `collection-mirror` asset (OpenAerialMap) falls through to
   `DATASET_UNSUPPORTED` today. Resolve it, and a `data` parquet carrying STAC columns (NAIP), to
   `{ kind:'parquet', url }` with STAC table defaults — **not** `stac-geoparquet`, whose enumeration path
@@ -173,6 +178,10 @@ Skip: `@geoarrow/deck.gl-layers` (pulls a second deck.gl 9.3), `maplibre-gl-rast
 - Asset resolution, first that applies: struct `assets` read with the search (small); a profile
   `assetHref(scene)` shortcut (S2's thumbnail-directory convention — the only path the original app
   proves); a single-row read when the file has offset indexes (Gate C); else a clear refusal.
+  *(E14, 2026-11-25: the single-row branch buys nothing for these three collections — only NAIP has
+  offset indexes and NAIP does not need it — and would need reader work. Keeping it is Chris's call.
+  Two unmeasured Sentinel-2 alternatives to the shortcut: fetch the scene's 6.5 MB `assets` chunk only
+  on "Add to map", or fetch the scene's own STAC item JSON.)*
 - `ImagerySearch.search({ area, time, where, sort, limit })` → scenes streamed plus the `estimate()` prune
   narration. A superseded search resolves `[]`, as `Geocoder.search` does. Port the pure parts of
   `sentinel-2-catalog/apps/explorer/results.js`: filter/sort, "null means unknown", and `whyFiltered`.
@@ -188,6 +197,11 @@ Skip: `@geoarrow/deck.gl-layers` (pulls a second deck.gl 9.3), `maplibre-gl-rast
   staleness protocol, texture clean-up, memoised `source` identity, percentile stretch from the overview,
   thumbnail-first preview. Port `portolan-browser/src/utils/cogProjection.js` (proj4 EPSG:3857 `over`) with
   a delete-when-fixed note; `cogSource.js` is superseded by 0.10's range coalescing.
+- Three runtime requirements E12 found *(added 2026-11-25)*: pass a local `epsgResolver` covering the CRS
+  families imagery uses, NAD83 UTM included (the bundle's default asks `epsg.io`; NAIP is EPSG:26910);
+  pass `loadOptions: { worker: false }` on every `MVTLayer` (the default fetches a worker from unpkg);
+  and handle a decode worker that cannot start (CSP without `worker-src blob:`, old Safari/Firefox) by
+  falling back to `new DecoderPool({})`, since otherwise no COG draws at all.
 - Example `examples/imagery-search/` with a collection picker preset to Sentinel-2, NAIP and OpenAerialMap,
   and one `verify.mjs` run per collection.
 

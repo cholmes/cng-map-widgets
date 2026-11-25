@@ -16,6 +16,7 @@
  *   'FILTER_UNSUPPORTED_PREDICATE'|'FILTER_REQUIRES_ENGINE'|
  *   'CEILING_EXCEEDED'|'FORMAT_UNAVAILABLE'|'FORMAT_CAPABILITY'|
  *   'FORMAT_LOAD_FAILED'|
+ *   'DECK_LOAD_FAILED'|'DECK_MODULES_INVALID'|
  *   'SINK_PERMISSION_DENIED'|'SINK_QUOTA_EXCEEDED'|'SINK_UNSUPPORTED'|
  *   'NETWORK'|'CORS'|'HTTP_STATUS'|'CANCELLED'|'INTERNAL'|
  *   'GEOCODER_NOT_LOADED'} CngErrorCode
@@ -32,6 +33,10 @@ const RETRYABLE_DEFAULTS = new Set([
   // transient-failure shape as INDEX_FETCH_FAILED/NETWORK, so it gets the
   // same default.
   'FORMAT_LOAD_FAILED',
+  // @cngeo/maplibre's lazy import of the deck.gl bundle: one more network
+  // fetch under its own name. (Its sibling DECK_MODULES_INVALID is not
+  // retryable: the same modules fail the same way.)
+  'DECK_LOAD_FAILED',
 ]);
 
 export class CngError extends Error {

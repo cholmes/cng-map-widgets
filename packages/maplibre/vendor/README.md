@@ -4,6 +4,7 @@
 |---|---|
 | `deck-stack.js` | **Generated, committed.** deck.gl + luma.gl + Development Seed's deck.gl-raster as one ES module. Loaded at runtime by `../src/deck-loader.js`. |
 | `deck-stack.js.LEGAL.txt` | **Generated, committed.** The licence comments esbuild lifted out of the bundle. |
+| `deck-stack.js.NOTICES.txt` | **Generated, committed.** Every package whose code is in the bundle, with its licence and licence text. Ships with the bundle because MIT, BSD and ISC require the notice to travel with the code. |
 | `deck-entry.js` | The bundle's source: the list of what it exports. Not loaded at runtime. |
 
 Do not edit `deck-stack.js`. To change what it contains, edit `deck-entry.js`

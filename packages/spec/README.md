@@ -331,8 +331,15 @@ known follow-up.
 
 **The `code` is the API. Messages are for humans and may be reworded; codes may
 not.** `retryable` defaults to `true` for `INDEX_FETCH_FAILED`,
-`DATASET_UNRESOLVED`, `SINK_PERMISSION_DENIED` and `NETWORK`, and `false`
-otherwise.
+`DATASET_UNRESOLVED`, `SINK_PERMISSION_DENIED`, `NETWORK`,
+`FORMAT_LOAD_FAILED` and `DECK_LOAD_FAILED`, and `false` otherwise.
+
+Two codes belong to `@cngeo/maplibre`'s deck.gl loader
+(`packages/maplibre/src/deck-loader.js`): `DECK_LOAD_FAILED` — the deck.gl
+bundle could not be fetched; retry — and `DECK_MODULES_INVALID` — the deck.gl
+modules are missing a required export (`context.missing`), or
+`setDeckModules()` was called after loading began
+(`context.reason: 'already-loading'`); not retryable.
 
 ```js
 import { CngError, isCngError } from '@cngeo/spec';
