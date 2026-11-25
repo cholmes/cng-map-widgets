@@ -25,8 +25,18 @@ const absolute = (href, base) => {
   }
 };
 
-/** `{z}` and friends survive `new URL()` only percent-encoded; put them back. */
-const absoluteTemplate = (href, base) => absolute(href, base).replace(/%7B/gi, '{').replace(/%7D/gi, '}');
+/**
+ * A tile template made absolute. `{z}` and friends survive `new URL()` only
+ * percent-encoded; put them back. A template in the PMTiles protocol's own
+ * form (`pmtiles://<archive url>/{z}/{x}/{y}`) is resolved INSIDE its prefix:
+ * given whole to `new URL()`, `pmtiles://https://host/…` has "https" for a
+ * host and comes back as `pmtiles://https//host/…`.
+ */
+const absoluteTemplate = (href, base) => {
+  const inner = typeof href === 'string' && href.startsWith(PMTILES) ? href.slice(PMTILES.length) : null;
+  const resolved = absolute(inner ?? href, base).replace(/%7B/gi, '{').replace(/%7D/gi, '}');
+  return inner === null ? resolved : PMTILES + resolved;
+};
 
 function resolveSource(def, styleUrl) {
   const out = structuredClone(def);

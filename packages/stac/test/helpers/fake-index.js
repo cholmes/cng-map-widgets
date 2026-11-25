@@ -87,9 +87,10 @@ const RENDER_FIELDS = [str('kind'), str('id'), str('title'), str('url'), str('st
  * `attribution` columns (E13's enriched index); `without` leaves named
  * columns out, to model an index that is not one.
  * `duplicate` repeats one collection's row at the end, as the live index does for some.
- * @param {{ withRender?: boolean, without?: string[], duplicate?: string }} [opts]
+ * `edit(rows)` may change or add rows before they are written (a missing field is null).
+ * @param {{ withRender?: boolean, without?: string[], duplicate?: string, edit?: (rows: object[]) => void }} [opts]
  */
-export function buildIndex({ withRender = false, without = [], duplicate } = {}) {
+export function buildIndex({ withRender = false, without = [], duplicate, edit } = {}) {
   // Text that does not compress away, so the two fat columns really are fat
   // (in the registry's index they are 12.5 MB and 5.6 MB of 20). A reader
   // merges a read with a small neighbour; it must not do that to these.
@@ -127,6 +128,7 @@ export function buildIndex({ withRender = false, without = [], duplicate } = {})
     })),
   ];
   if (duplicate) rows.push({ ...rows.find((r) => r.type === 'Collection' && r.id === duplicate) });
+  edit?.(rows);
   let columns = [
     str('type'), str('id'), str('href'),
     list('links', group('element', [str('rel'), str('href'), str('type'), str('title')])),

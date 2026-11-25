@@ -231,7 +231,7 @@ const { results, total, facets } = await index.search({
   license: 'CC-BY-4.0',
   limit: 50,
 });
-results[0];      // { key, id, title, description, href, license, keywords, catalog, bbox, start, end, kinds, thumbnail, score, fit }
+results[0];      // { key, id, title, description, href, license, keywords, catalog, catalogs, bbox, start, end, kinds, thumbnail, score, fit }
 facets.license;  // [{ value: 'CC-BY-4.0', count: 87 }, …]
 ```
 
@@ -241,13 +241,19 @@ The URL may also be a `catalog.json` that links to its index with
 **What it reads.** The registry's index is 20 MB, of which 12.5 MB is each
 collection's whole JSON (`original`) and 5.6 MB its `links`. Neither is ever
 read. Titles, descriptions, keywords, extents and licences are 2.1 MB in six
-requests (measured), and the rows are then searched in memory.
+requests (measured in Node; seven in a browser on a host that hides
+`Content-Range`, GitHub Pages among them), and the rows are then searched in
+memory.
 
 **Search.**
 
 - `text`: every word must be found, in the title, keywords, id or
-  description; the last may be unfinished, as it is while typing, and a small
-  misspelling is forgiven. A title match counts for more.
+  description; the last may be unfinished, as it is while typing. Accents do
+  not matter (`baume` finds `Bäume`). A word of six letters or more may be
+  one letter off, which is what lets `buildings` find `Building`; a short
+  word must match as typed, because one letter off a short word is another
+  word (`Bäume`, trees; `Räume`, rooms). Only when nothing matches at all is
+  a looser spelling tried. A title match counts for more.
 - `area`: keeps collections whose extent intersects it, on either side of the
   antimeridian. A collection with no extent is in no area.
 - `time`: keeps collections whose own span overlaps the window. A start with
@@ -266,15 +272,30 @@ requests (measured), and the rows are then searched in memory.
 
 **Things the live index taught it.**
 
-- `id` is not unique across catalogs; `key` (the collection's URL) is.
-- 108 of 7,049 collection rows repeat another row's URL. One collection is
-  one entry; `index.duplicates` says how many were left out.
+- `id` is not unique across catalogs; `key` (the collection's URL) is. 23 ids
+  are shared by two or more *drawable* collections, so a layer's id is not
+  proof of which dataset it is (`CatalogSearchControl` compares sources).
+- 108 of 7,049 collection rows repeat another row's URL: the same collection,
+  registered under a second catalog. One collection is one entry, and
+  `catalogs` lists every catalog it is under — the `catalog` filter and facet
+  match any of them. (Keeping only the first hid one registered catalog
+  entirely: all 79 of its collections are listed under another first.)
+  `index.duplicates` counts the folded rows.
 - Its host, GitHub Pages, misreports the file's size to a `HEAD` request;
   `@cngeo/extract-core` no longer asks that way.
+- `href`, a parent's `href` and `thumbnail` may be relative to the index
+  file; entries carry them absolute. A row whose `href` is not then http(s)
+  is left out.
+
+**Time limits.** `timeoutMs` (60 s; 0 for none) bounds every request the
+index makes: each read while loading, the `catalog.json` it may start from,
+and the collection document `resolve()` fetches. A host that never answers
+is `NETWORK` or `LAYER_LOAD_FAILED`, retryable, and is not remembered.
 
 **Text search is [MiniSearch](https://github.com/lucaong/minisearch)** (MIT),
 loaded from a pinned URL (`MINISEARCH_URL`) the first time a search has words
-in it — about 0.8 s to index the registry, then 1–3 ms a search. In Node, or
+in it — about 0.8 s to index the registry, then 1–35 ms a search (measured:
+the long end is a one-letter last word, which matches thousands). In Node, or
 inside a bundler, hand it in:
 
 ```js

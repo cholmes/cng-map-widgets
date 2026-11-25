@@ -71,9 +71,14 @@ function cancellationOf(cause, signal, what) {
  *   3. A 200 means the server ignores `Range`; its `Content-Length` is the
  *      best there is.
  *
+ * `fetchImpl` must be the plain fetch, never one that reads a whole body
+ * before returning (`requestTimeoutMs`'s wrapper does): step 2 depends on
+ * hanging up at the headers. `timeoutMs` bounds the wait for those headers
+ * instead, and does not rely on `fetchImpl` honouring its signal.
+ *
  * @param {string} url
  * @param {typeof fetch} fetchImpl
- * @param {{ signal?: AbortSignal }} [opts]
+ * @param {{ signal?: AbortSignal, timeoutMs?: number }} [opts]
  * @returns {Promise<number>}
  */
 export async function remoteByteLength(url, fetchImpl, opts = {}) {
@@ -82,19 +87,36 @@ export async function remoteByteLength(url, fetchImpl, opts = {}) {
     const n = Number(res.headers?.get?.('content-length'));
     return Number.isFinite(n) && n > 0 ? n : null;
   };
+  const ms = opts.timeoutMs > 0 && Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 0;
   /** One request whose body is dropped as soon as its headers have been read. */
   const ask = async (range) => {
     const own = new AbortController();
     const onOuter = () => own.abort(opts.signal.reason);
     if (opts.signal?.aborted) own.abort(opts.signal.reason);
     else opts.signal?.addEventListener('abort', onOuter, { once: true });
-    try {
+    let timer;
+    const limit = ms
+      ? new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            const timeout = new Error(`No answer after ${ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`}: ${url}`);
+            timeout.name = 'TimeoutError';
+            own.abort(timeout);
+            reject(timeout);
+          }, ms);
+        })
+      : null;
+    const answer = (async () => {
       const res = await fetchImpl(url, { headers: new Headers({ Range: range }), cache: 'no-store', signal: own.signal });
       const seen = { status: res.status, total: /\/(\d+)\s*$/.exec(res.headers?.get?.('content-range') ?? '')?.[1] ?? null, length: lengthOf(res) };
       own.abort(); // nothing of the body is wanted
       res.body?.cancel?.().catch(() => {});
       return seen;
+    })();
+    answer.catch(() => {}); // when the limit wins, this one's later rejection is nobody's
+    try {
+      return await (limit ? Promise.race([answer, limit]) : answer);
     } finally {
+      clearTimeout(timer);
       opts.signal?.removeEventListener('abort', onOuter);
     }
   };
@@ -105,7 +127,9 @@ export async function remoteByteLength(url, fetchImpl, opts = {}) {
     if (first.status === 200 && first.length !== null) return first.length;
     if (first.status === 206) {
       const whole = await ask('bytes=0-');
-      if (whole.status === 206 && whole.length !== null) return whole.length;
+      // 206 is the expected answer; a 200 means this request's range was
+      // ignored, and its Content-Length is then the whole file's just the same.
+      if ((whole.status === 206 || whole.status === 200) && whole.length !== null) return whole.length;
       throw failed(whole.status, `HTTP ${whole.status} with no usable Content-Length`);
     }
   } catch (cause) {
@@ -127,7 +151,9 @@ export async function openParquetFile(url, fetchImpl, opts = {}) {
   const { hyparquet } = await loadHyparquet();
   const timed = withRequestTimeout(fetchImpl, opts.requestTimeoutMs);
   // The size first, by a ranged request: given it, hyparquet makes no HEAD.
-  const byteLength = await remoteByteLength(url, timed, { signal: opts.signal });
+  // With the PLAIN fetch: `timed` reads a whole body before it returns, and
+  // the probe's second step is an open-ended range it hangs up on.
+  const byteLength = await remoteByteLength(url, fetchImpl, { signal: opts.signal, timeoutMs: opts.requestTimeoutMs });
   let file;
   try {
     file = await hyparquet.asyncBufferFromUrl({

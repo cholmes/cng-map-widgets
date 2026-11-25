@@ -14,6 +14,23 @@ const count = (n) => Number(n).toLocaleString('en-US');
 const plural = (n, word) => `${count(n)} ${word}${n === 1 ? '' : 's'}`;
 const boxRing = (w, s, e, n) => [[w, s], [e, s], [e, n], [w, n], [w, s]];
 
+const isDuplicate = (error) => error?.code === 'LAYER_INVALID' && error?.context?.reason === 'duplicate';
+/** Two specs for one dataset: the same kind, drawn from the same source. Their ids do not say. */
+const sameLayer = (a, b) => Boolean(a && b) && a.kind === b.kind && JSON.stringify(a.source) === JSON.stringify(b.source);
+/** A few characters that differ for different strings (djb2), to tell two layers of one name apart. */
+function tagOf(text) {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+/** The ids a result's layer may take on the map, plainest first. */
+function idsFor(spec, result) {
+  const ids = [spec.id];
+  if (result?.catalog) ids.push(`${result.catalog}/${spec.id}`);
+  ids.push(`${spec.id} (${tagOf(String(result?.key ?? spec.id))})`);
+  return ids;
+}
+
 /**
  * What a catalog search panel should say for a state. It reads only what the
  * words depend on -- never the hovered result or what was added -- so a view
@@ -131,20 +148,35 @@ export function createCatalogSearchModel(options) {
     emit();
   });
 
-  /** One layer onto the map. Resolves true when it is there (now, or already). */
-  async function addLayer(spec) {
-    try {
-      await manager.add(spec);
-      return true;
-    } catch (error) {
-      if (!(error?.code === 'LAYER_INVALID' && error?.context?.reason === 'duplicate')) throw error;
-      // Already in the stack. If it is there as a layer that failed to load,
-      // this is "try again": replace it. Otherwise it is simply there.
-      if (manager.get?.(spec.id)?.status !== 'error') return true;
-      manager.remove?.(spec.id);
-      await manager.add(spec);
-      return true;
+  /**
+   * One layer onto the map, under an id of its own. Resolves the id it is
+   * there as -- now, or already.
+   *
+   * A layer's id is its collection's id, and those are not unique across
+   * catalogs (the registry has 23 shared by drawable collections: two
+   * `place`, two `land_use`...). So an id already in the stack means "this
+   * layer is already on the map" only when what is there has the same
+   * SOURCE. Otherwise it is another dataset, and this one takes the next
+   * name: `<catalog>/<id>`, then one tagged with its own collection.
+   */
+  async function addLayer(spec, result) {
+    for (const id of idsFor(spec, result)) {
+      const there = manager.get?.(id);
+      if (there) {
+        if (!sameLayer(there.spec, spec)) continue; // that name is another dataset's
+        if (there.status !== 'error') return id; // already on the map
+        manager.remove?.(id); // there, but it failed to load: this is "try again"
+      }
+      try {
+        await manager.add(id === spec.id ? spec : { ...spec, id });
+        return id;
+      } catch (error) {
+        if (!isDuplicate(error)) throw error;
+        // Taken after all -- two different ids can be one name on the map,
+        // which `get()` cannot see. The next name.
+      }
     }
+    throw new Error('A different layer with the same name is already on the map.');
   }
 
   return {
@@ -241,8 +273,7 @@ export function createCatalogSearchModel(options) {
         let failed = false;
         for (const spec of drawable) {
           try {
-            await addLayer(spec);
-            track(key, spec.id);
+            track(key, await addLayer(spec, result));
             added += 1;
           } catch (error) {
             failed = true;

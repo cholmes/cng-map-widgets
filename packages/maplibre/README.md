@@ -558,6 +558,11 @@ its `load()`, `search()` and `resolve()`.
   nothing here draws **says so on its card** instead of adding nothing in
   silence; one that is partly drawable adds what it can and names the rest.
 - A result whose layers are removed from the map can be added again.
+- **Collection ids repeat across catalogs** (the registry has 23 shared by
+  drawable collections: two `place`, two `land_use`…), and a layer is named
+  after its collection. So a layer already on the map counts as "this one"
+  only when its *source* is the same; a different dataset with the same id is
+  added beside it as `<catalog>/<id>`.
 
 `control.search(text)` runs a search; `control.show()` opens the panel and
 focuses its box; `control.model` is the state. Like the imagery search, it

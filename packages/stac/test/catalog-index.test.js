@@ -27,6 +27,7 @@ test('load() reads the light columns once and gives collections and catalogs apa
     license: 'CC-BY-4.0',
     keywords: ['transport', 'roads'],
     catalog: 'kenya',
+    catalogs: ['kenya'],
     parents: [{ id: 'kenya', href: 'https://data.invalid/kenya/catalog.json' }],
     bbox: [33.9, -4.7, 41.9, 5.5],
     start: '2020-01-01T00:00:00.000Z',

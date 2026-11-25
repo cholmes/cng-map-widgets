@@ -11,6 +11,8 @@
 // Usage: node experiments/e13-render-column/measure.mjs [--sample 60] [--seed 13]
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { zstdCompressSync } from 'node:zlib';
 import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
@@ -85,12 +87,29 @@ const plain = await load('collections.parquet');
 const rich = await load('collections.render.parquet');
 console.log(`index.load(), live index:  ${plain.stats.requests} requests, ${mb(plain.stats.bytes)} read, ${plain.index.entries.length.toLocaleString()} collections, hasRender ${plain.index.hasRender}`);
 console.log(`index.load(), built index: ${rich.stats.requests} requests, ${mb(rich.stats.bytes)} read, ${rich.index.entries.length.toLocaleString()} collections, hasRender ${rich.index.hasRender}`);
-// A like-for-like estimate of the three columns under the live file's codec: the
-// column's VALUES as JSON lines, zstd level 3. Not a parquet page, so a bound, not a size.
+// The three columns under the live file's codec, MEASURED: the built index
+// re-encoded as zstd parquet by DuckDB (hyparquet-writer cannot write zstd),
+// and its column chunks read back. This is the figure to quote.
+//
+// The first version of this script quoted an estimate instead -- each column's
+// values as JSON lines under zstd -- and called it a bound. It is not one: the
+// review measured the real pages at about 45% more. The estimate is still
+// printed, labelled, so the two can be seen side by side.
+let zstdParquet = null;
+try {
+  const path = (name) => fileURLToPath(new URL(name, OUT)).replaceAll("'", "''");
+  execFileSync('duckdb', ['-c', `COPY (SELECT * FROM read_parquet('${path('collections.render.parquet')}')) TO '${path('collections.render.zstd.parquet')}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 1000000)`], { stdio: 'pipe' });
+  const z = columnSizes('collections.render.zstd.parquet');
+  zstdParquet = { bytes: z.bytes, codec: z.codec, writer: execFileSync('duckdb', ['--version'], { encoding: 'utf8' }).trim(), searchColumns: sum(z, LIGHT, 'compressed'), newColumns: sum(z, NEW, 'compressed'), ...Object.fromEntries(NEW.map((c) => [c, z.sizes[c].compressed])) };
+  console.log(`  as zstd parquet (${zstdParquet.writer}): render ${kb(zstdParquet.render)}, thumbnail ${kb(zstdParquet.thumbnail)}, attribution ${kb(zstdParquet.attribution)} = ${kb(zstdParquet.newColumns)}`);
+  console.log(`    against the search columns: ${pct(zstdParquet.newColumns, zstdParquet.searchColumns)} more in this writer (${mb(zstdParquet.searchColumns)}), ${pct(zstdParquet.newColumns, sum(live, LIGHT, 'compressed'))} of the live file's ${mb(sum(live, LIGHT, 'compressed'))}`);
+} catch (err) {
+  console.log(`  (not measured as zstd parquet: DuckDB is not on the PATH, or failed -- ${String(err.message).split('\n')[0].slice(0, 120)})`);
+}
 const zstd = (values) => zstdCompressSync(Buffer.from(values.map((v) => JSON.stringify(v ?? null)).join('\n'))).byteLength;
 const zstdEstimate = { render: zstd(rich.index.entries.map((e) => e.render)), thumbnail: zstd(rich.index.entries.map((e) => e.thumbnail)), attribution: zstd(rich.index.entries.map((e) => e.attribution)) };
-console.log(`  estimate under zstd (values as JSON lines, level 3): render ${kb(zstdEstimate.render)}, thumbnail ${kb(zstdEstimate.thumbnail)}, attribution ${kb(zstdEstimate.attribution)}`);
-results.bytes = { live, built, liveLoad: plain.stats, builtLoad: rich.stats, zstdEstimate, searchColumnsLive: sum(live, LIGHT, 'compressed'), searchColumnsBuilt: sum(built, LIGHT, 'compressed') };
+console.log(`  (for comparison only, NOT a size: the values as JSON lines under zstd level 3: render ${kb(zstdEstimate.render)}, thumbnail ${kb(zstdEstimate.thumbnail)}, attribution ${kb(zstdEstimate.attribution)})`);
+results.bytes = { live, built, liveLoad: plain.stats, builtLoad: rich.stats, zstdParquet, zstdEstimate, searchColumnsLive: sum(live, LIGHT, 'compressed'), searchColumnsBuilt: sum(built, LIGHT, 'compressed') };
 
 // --- 2. coverage ------------------------------------------------------------------------------
 const coverage = JSON.parse(readFileSync(new URL('coverage.json', OUT), 'utf8'));
@@ -104,7 +123,56 @@ console.log('  kind combinations:', JSON.stringify(coverage.byKindSet));
 console.log('  why unsupported:', JSON.stringify(Object.entries(coverage.unsupportedReasons).sort((a, b) => b[1] - a[1]).slice(0, 6)));
 results.coverage = coverage;
 
+// --- 3a. is the column lossless? every row, offline ------------------------------------------------
+//
+// `render` (with the row's own extent, dates, thumbnail and attribution) is
+// meant to stand in for the collection's JSON. The index carries that JSON
+// too, in `original` -- so the question can be asked of EVERY collection
+// with no network: do the layers rebuilt from the columns equal the layers
+// derived from `original`, in everything a map uses?
+{
+  const file = readFileSync(new URL('collections.parquet', OUT));
+  const buffer = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength);
+  const rows = await hyparquet.parquetReadObjects({ file: buffer, columns: ['type', 'href', 'original'], compressors, utf8: true });
+  const originals = new Map(rows.filter((r) => r.type === 'Collection' && r.original).map((r) => [r.href, r.original]));
+  const FIELDS = ['kind', 'id', 'title', 'source', 'attribution', 'bbox', 'temporal', 'thumbnail'];
+  // Compared as VALUES: object keys in one order, and an instant as an instant
+  // ("2020-01-01T00:00:00Z" and "2020-01-01T00:00:00.000Z" are the same one).
+  const canonical = (v) => (Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])])) : v);
+  const instant = (t) => (typeof t === 'string' && Number.isFinite(Date.parse(t)) ? Date.parse(t) : t ?? null);
+  const view = (l) => canonical({ ...l, temporal: Array.isArray(l.temporal) ? l.temporal.map(instant) : l.temporal, source: l.kind === 'unsupported' ? { reason: l.source?.reason } : l.source });
+  const lossless = { compared: 0, same: 0, differing: {}, examples: [], unparsed: 0 };
+  for (const entry of rich.index.entries) {
+    const original = originals.get(entry.href);
+    if (!original) continue;
+    let a;
+    let b;
+    try {
+      a = layersFromRender(entry).map(view);
+      // `original` is a JSON-typed column: the reader hands it over already parsed.
+      b = layersFromCollection(typeof original === 'string' ? JSON.parse(original) : original, { baseUrl: entry.href }).map(view);
+    } catch {
+      lossless.unparsed += 1;
+      continue;
+    }
+    lossless.compared += 1;
+    const differs = a.length !== b.length ? ['count'] : FIELDS.filter((f) => a.some((layer, i) => JSON.stringify(layer[f] ?? null) !== JSON.stringify(b[i][f] ?? null)));
+    if (!differs.length) lossless.same += 1;
+    else {
+      for (const f of differs) lossless.differing[f] = (lossless.differing[f] ?? 0) + 1;
+      if (lossless.examples.length < 5) lossless.examples.push({ href: entry.href, fields: differs, render: differs.map((f) => a[0]?.[f]), original: differs.map((f) => b[0]?.[f]) });
+    }
+  }
+  console.log(`\n== 3a. lossless? every collection, against its own \`original\` (no network) ==`);
+  console.log(`compared ${lossless.compared.toLocaleString()} on ${FIELDS.join(', ')}: ${lossless.same.toLocaleString()} identical, ${(lossless.compared - lossless.same).toLocaleString()} differ ${JSON.stringify(lossless.differing)}; ${lossless.unparsed} could not be derived`);
+  for (const d of lossless.examples) console.log(`  differs in ${d.fields.join(', ')}: ${d.href}\n    render   ${JSON.stringify(d.render).slice(0, 200)}\n    original ${JSON.stringify(d.original).slice(0, 200)}`);
+  results.lossless = lossless;
+}
+
 // --- 3 and 4. agreement, and time, over a seeded sample -----------------------------------------
+//
+// What 3a cannot say: whether the index is STALE -- whether a collection has
+// changed since the registry last read it. That needs the live document.
 let seed = SEED;
 const random = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
 const pool = [...rich.index.entries];
@@ -118,7 +186,12 @@ const essence = (layers) => layers.map((l) => ({ kind: l.kind, id: l.id, title: 
 const agreement = { same: 0, different: [], unreachable: [] };
 const fetchMs = [];
 const renderUs = [];
-console.log(`\n== 3. agreement, ${sample.length} collections (seed ${SEED}) ==`);
+const sampleHosts = {};
+for (const entry of sample) sampleHosts[new URL(entry.href).host] = (sampleHosts[new URL(entry.href).host] ?? 0) + 1;
+const allHosts = new Set(rich.index.entries.map((e) => new URL(e.href).host));
+console.log(`\n== 3. agreement with the live documents, ${sample.length} collections (seed ${SEED}) ==`);
+console.log(`the sample: ${Object.keys(sampleHosts).length} hosts ${JSON.stringify(sampleHosts)}, ${new Set(sample.map((e) => e.catalog)).size} catalogs, kinds ${JSON.stringify(sample.reduce((n, e) => ({ ...n, [e.kinds[0] ?? 'none']: (n[e.kinds[0] ?? 'none'] ?? 0) + 1 }), {}))}; the whole registry is on ${allHosts.size} hosts`);
+results.sampleShape = { hosts: sampleHosts, catalogs: new Set(sample.map((e) => e.catalog)).size, registryHosts: allHosts.size };
 for (const entry of sample) {
   const r0 = performance.now();
   const fromRender = layersFromRender(entry);

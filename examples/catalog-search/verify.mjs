@@ -150,17 +150,25 @@ async function runPass(pass, indexUrl) {
         `"damage sites tonga cyc" (the last word unfinished): ${s.total} results, ${cards} cards; first: "${s.results[0]?.title}"; ${off.length} without the words`);
     }
 
-    // --- 3. A typed search is superseded cleanly -----------------------------------------------
+    // --- 3. A search made while another is in flight supersedes it -------------------------------
+    //
+    // Once the index is in memory a search is over in a few milliseconds and
+    // two calls in a row never overlap (the first version of this check made
+    // exactly those two calls, and could not fail). So the index is forgotten
+    // first: the next search has to read it again, and is still doing that
+    // when the one after it is made.
     {
       const out = await page.evaluate(async () => {
         const D = window.DEMO;
-        const a = D.control.search('roads');
-        const b = D.control.search('mangrove country');
-        await Promise.all([a, b]);
-        return { text: D.model.state.text, titles: D.model.state.results.map((r) => r.title) };
+        D.index.close();
+        const first = D.index.search({ text: 'roads' });
+        const second = D.control.search('mangrove country');
+        const a = await first;
+        await second;
+        return { superseded: a.superseded === true, firstResults: a.results.length, entries: D.index.entries.length, text: D.model.state.text, status: D.model.state.status, titles: D.model.state.results.map((r) => r.title) };
       });
-      check(pass, 'the last search typed is the one shown', out.text === 'mangrove country' && out.titles.length > 0 && out.titles.every((t) => /mangrove/i.test(t)),
-        `${out.titles.length} results for "${out.text}": ${out.titles.slice(0, 3).join(' | ')}`);
+      check(pass, 'a search made while another is still loading supersedes it; only the last is shown', out.superseded && out.firstResults === 0 && out.entries > 5000 && out.status === 'done' && out.text === 'mangrove country' && out.titles.length > 0 && out.titles.every((t) => /mangrove/i.test(t)),
+        `the first resolved ${out.superseded ? 'superseded and empty' : `with ${out.firstResults} results`} after the index was read again (${out.entries.toLocaleString()} collections); shown: ${out.titles.length} results for "${out.text}": ${out.titles.slice(0, 3).join(' | ')}`);
     }
 
     // --- 4. "Only this map area" ------------------------------------------------------------------
@@ -292,6 +300,36 @@ async function runPass(pass, indexUrl) {
         mixed ? `"${mixed.title}": ${part.layers - layersBefore} layer added; the card says "${part.text.slice(0, 130)}"` : 'the collection was not found by the search');
     }
 
+    // --- 7b. Two collections with the same id are two layers (review, Critical 1) --------------------------
+    //
+    // A layer is named after its collection, and collection ids repeat across
+    // catalogs. The second of two said "Added" and put nothing on the map.
+    {
+      const s = await search('land use');
+      const byId = new Map();
+      for (const r of s.results) byId.set(r.id, [...(byId.get(r.id) ?? []), r]);
+      const pair = [...byId.values()].find((group) => group.length >= 2)?.slice(0, 2) ?? null;
+      const before = await page.evaluate(() => window.DEMO.manager.list().map((e) => e.id));
+      let out = { layers: [], added: [], buttons: [], notes: [] };
+      if (pair) {
+        for (const r of pair) {
+          await cardOf(r.key).locator('[data-role="add"]').click();
+          await page.waitForFunction((k) => window.DEMO.model.state.added.has(k) || window.DEMO.model.state.addNote?.id === k, r.key, { timeout: 120_000 }).catch(() => {});
+        }
+        out = await page.evaluate(([keys, had]) => {
+          const D = window.DEMO;
+          return {
+            layers: D.manager.list().filter((e) => !had.includes(e.id)).map((e) => ({ id: e.id, url: e.spec.source?.url ?? null, status: e.status })),
+            added: keys.filter((k) => D.model.state.added.has(k)),
+            buttons: keys.map((k) => document.querySelector(`.cng-cs-card[data-key="${k}"] [data-role="add"]`)?.textContent),
+            notes: keys.map((k) => document.querySelector(`.cng-cs-card[data-key="${k}"] .cng-cs-note`)?.textContent ?? ''),
+          };
+        }, [pair.map((r) => r.key), before]);
+      }
+      check(pass, 'two collections that share an id are two layers, each from its own file', Boolean(pair) && out.layers.length === 2 && new Set(out.layers.map((l) => l.url)).size === 2 && out.added.length === 2 && out.buttons.every((b) => b === 'Added'),
+        pair ? `"${pair[0].id}" from ${pair.map((r) => r.catalog).join(' and ')}: ${out.layers.length} layers added (${out.layers.map((l) => l.id).join(' | ')}); buttons ${out.buttons.join(', ')}${out.notes.some(Boolean) ? `; notes: ${out.notes.filter(Boolean).join(' / ').slice(0, 160)}` : ''}` : 'no two results of "land use" share an id today');
+    }
+
     // --- 8. With a render column: kinds on the cards and in a menu -----------------------------------------
     if (first.hasRender) {
       const s = await search('buildings');
@@ -334,14 +372,16 @@ async function runPass(pass, indexUrl) {
         const loaded = new Promise((resolve) => D.map.once('style.load', resolve));
         D.map.setStyle(D.styleUrl, { diff: false });
         await loaded;
-        await new Promise((resolve) => D.map.once('idle', resolve));
+        // Bounded: a layer whose tiles never arrive keeps a map from ever
+        // going idle, and this check then hung the whole run instead of failing.
+        const idle = await Promise.race([new Promise((resolve) => D.map.once('idle', () => resolve(true))), new Promise((resolve) => setTimeout(() => resolve(false), 45_000))]);
         await D.settle();
         const all = D.map.getLayersOrder();
         const label = all.find((id) => !id.startsWith('cng-layer-') && !id.startsWith('deck-maplibre-layer-group') && D.map.getLayer(id)?.type === 'symbol');
-        return { source: Boolean(D.map.getSource('cng-layer-catalog-extent')), fill: all.indexOf('cng-layer-catalog-extent--fill'), line: all.indexOf('cng-layer-catalog-extent--line'), label: all.indexOf(label), layers: D.manager.list().map((e) => `${e.id}=${e.status}`), same: D.manager.list().map((e) => e.id).join() === layersBefore.join() };
+        return { idle, source: Boolean(D.map.getSource('cng-layer-catalog-extent')), fill: all.indexOf('cng-layer-catalog-extent--fill'), line: all.indexOf('cng-layer-catalog-extent--line'), label: all.indexOf(label), layers: D.manager.list().map((e) => `${e.id}=${e.status}`), same: D.manager.list().map((e) => e.id).join() === layersBefore.join() };
       });
-      check(pass, 'after map.setStyle() the extent layers and the added layers are back, in place', out.source && out.fill >= 0 && out.line === out.fill + 1 && out.label === out.line + 1 && out.same,
-        `extent fill ${out.fill}, line ${out.line}, first label ${out.label}; ${out.layers.length} layers restored`);
+      check(pass, 'after map.setStyle() the extent layers and the added layers are back, in place', out.idle && out.source && out.fill >= 0 && out.line === out.fill + 1 && out.label === out.line + 1 && out.same,
+        `${out.idle ? '' : 'the map did not go idle within 45 s; '}extent fill ${out.fill}, line ${out.line}, first label ${out.label}; ${out.layers.length} layers restored`);
     }
     {
       const out = await page.evaluate(async () => {

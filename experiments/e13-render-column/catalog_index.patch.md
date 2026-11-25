@@ -132,8 +132,8 @@ registry on 2026-11-25 with no failure).
 - **`read_index`** returns `None` for "another layout" (line 479). Adding
   columns is another layout: the first build after this change starts from
   nothing, as intended, and should be watched.
-- **The comment at line 49** says the file is about 9 MB. It is 20.4 MB now;
-  these columns add about 0.3 MB.
+- **The comment at line 50** says the file is about 9 MB. It is 20.4 MB now;
+  these columns add about 0.45 MB as zstd parquet (measured with DuckDB; see RESULTS.md).
 - **Clients that read the index today** (the Portolan browser, DuckDB users):
   three extra nullable columns should break none of them, but nobody has
   checked.

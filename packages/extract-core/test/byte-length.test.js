@@ -106,3 +106,51 @@ test('an aborted signal rejects CANCELLED', async () => {
   const host = pagesLikeHost(buildParquet());
   await assert.rejects(openParquetFile(URL_, host.fetch, { signal: AbortSignal.abort() }), (e) => e.code === 'CANCELLED');
 });
+
+// --- Review (Phase 3), Important 1: the probe behind a request timeout --------
+//
+// `requestTimeoutMs` wraps `fetch` in a reader that takes the WHOLE body before
+// it returns, so that a stalled body is caught. Handed to the size probe, that
+// turned "ask `bytes=0-` and hang up at the headers" into "download the file".
+
+test('with a request timeout, the size probe still does not download the file', async () => {
+  const bytes = buildParquet({ groups: 40, rowsPerGroup: 50 });
+  const host = pagesLikeHost(bytes, { exposeContentRange: false });
+  const handle = await openParquetFile(URL_, host.fetch, { requestTimeoutMs: 5000, initialFetchSize: 4096 });
+  assert.equal(handle.byteLength, bytes.byteLength);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(host.bodyBytes() < bytes.byteLength / 2, `${host.bodyBytes()} bytes were read of a ${bytes.byteLength}-byte file`);
+});
+
+test('a host that never answers the size probe is given up on after the request timeout', async () => {
+  // A fetch that ignores its signal entirely: the limit must not depend on it.
+  const never = () => new Promise(() => {});
+  const started = Date.now();
+  await assert.rejects(openParquetFile(URL_, never, { requestTimeoutMs: 40 }), (e) => e.code === 'NETWORK' && e.retryable === true);
+  assert.ok(Date.now() - started < 2000);
+});
+
+test('a server that answers an open-ended range with 200 and a Content-Length gives that length', async () => {
+  // 206 to `bytes=0-0` with Content-Range hidden, then 200 to `bytes=0-`.
+  const bytes = buildParquet({ groups: 2, rowsPerGroup: 4 });
+  const fetch = async (url, init = {}) => {
+    const range = new Headers(init.headers ?? {}).get('Range');
+    if (range === 'bytes=0-0') return new Response(bytes.slice(0, 1), { status: 206, headers: { 'content-length': '1' } });
+    return new Response(bytes, { status: 200, headers: { 'content-length': String(bytes.byteLength) } });
+  };
+  assert.equal(await remoteByteLength(URL_, fetch), bytes.byteLength);
+});
+
+// --- Review (Phase 3), Important 2: the other place a parquet file is opened ---
+
+test('a collection-mirror on a host whose HEAD misreports is enumerated, with no HEAD', async () => {
+  const { enumeratePartitions } = await import('../src/partitions.js');
+  const bytes = buildParquet({ groups: 2, rowsPerGroup: 3 });
+  const host = pagesLikeHost(bytes, { exposeContentRange: false });
+  const { parts } = await enumeratePartitions(
+    { kind: 'hive', scheme: 'hive', glob: 'https://pages.invalid/year=*/d.parquet', keys: [{ name: 'year', type: 'int' }], enumeration: { kind: 'collection-mirror', url: URL_ } },
+    { fetch: host.fetch },
+  );
+  assert.equal(parts.length, 6, 'one part per row of the mirror');
+  assert.deepEqual(host.log.filter((r) => r.method === 'HEAD'), []);
+});

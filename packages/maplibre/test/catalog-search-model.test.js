@@ -60,7 +60,11 @@ function stubManager() {
     entries,
     async add(spec) {
       if (entries.has(spec.id)) throw Object.assign(new Error('duplicate'), { code: 'LAYER_INVALID', context: { reason: 'duplicate', id: spec.id } });
-      entries.set(spec.id, { id: spec.id, status: 'ready' });
+      // As the real manager: two ids that become one name on the map clash too ("a b" and "a/b").
+      const slug = (id) => id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const clash = [...entries.keys()].find((id) => slug(id) === slug(spec.id));
+      if (clash) throw Object.assign(new Error(`too close to "${clash}"`), { code: 'LAYER_INVALID', context: { reason: 'duplicate', id: spec.id, clashesWith: clash } });
+      entries.set(spec.id, { id: spec.id, spec, status: 'ready' });
       manager.added.push(spec.id);
       return entries.get(spec.id);
     },
@@ -253,6 +257,79 @@ test('a layer already on the map counts as added; one removed from the map can b
   assert.equal(model.state.added.size, 0);
   await model.add('a');
   assert.deepEqual([...model.state.added], ['a']);
+});
+
+// --- Review (Phase 3), Critical 1 -------------------------------------------------------------
+//
+// A layer's id is its collection's id, and collection ids are not unique
+// across catalogs: the live registry has 23 shared by two or more drawable
+// collections (Overture's `place` and TIGER's `place`, two `land_use`...).
+// The second one said "Added" and put nothing on the map.
+
+/** An index whose every result resolves to a layer with the SAME id, each from its own file. */
+const sameIdIndex = (id = 'place') => ({
+  async resolve(r) {
+    const spec = { ...layer(id), title: r.title, source: { url: `https://data.invalid/${r.key}/${id}.pmtiles` } };
+    return { layers: [spec], source: 'render', drawable: [spec], undrawable: [] };
+  },
+});
+
+test('two collections that share a layer id are two layers on the map', async () => {
+  const { manager, model } = await searched([result('overture', { catalog: 'overture' }), result('tiger', { catalog: 'tiger' })], sameIdIndex());
+  await model.add('overture');
+  await model.add('tiger');
+  assert.equal(manager.added.length, 2, 'both were really added');
+  assert.equal(manager.added[0], 'place', 'the first keeps the plain id');
+  assert.notEqual(manager.added[1], 'place');
+  const sources = manager.added.map((id) => manager.get(id).spec.source.url);
+  assert.deepEqual(sources, ['https://data.invalid/overture/place.pmtiles', 'https://data.invalid/tiger/place.pmtiles']);
+  assert.deepEqual([...model.state.added].sort(), ['overture', 'tiger']);
+  assert.equal(model.state.addNote, null);
+});
+
+test('each of the two is removed, and added again, on its own', async () => {
+  const { manager, model } = await searched([result('overture', { catalog: 'overture' }), result('tiger', { catalog: 'tiger' })], sameIdIndex());
+  await model.add('overture');
+  await model.add('tiger');
+  manager.remove(manager.added[1]);
+  assert.deepEqual([...model.state.added], ['overture']);
+  manager.remove('place');
+  assert.equal(model.state.added.size, 0);
+  await model.add('tiger');
+  assert.deepEqual([...model.state.added], ['tiger']);
+  assert.equal(manager.get(manager.added.at(-1)).spec.source.url, 'https://data.invalid/tiger/place.pmtiles');
+});
+
+test('a layer of the same id put on the map by something else is not mistaken for this one', async () => {
+  const { manager, model } = await searched([result('tiger', { catalog: 'tiger' })], sameIdIndex());
+  await manager.add({ ...layer('place'), source: { url: 'https://elsewhere.invalid/place.pmtiles' } });
+  await model.add('tiger');
+  assert.equal(manager.added.length, 2);
+  assert.equal(manager.get(manager.added[1]).spec.source.url, 'https://data.invalid/tiger/place.pmtiles');
+  assert.deepEqual([...model.state.added], ['tiger']);
+});
+
+test('two ids that become one name on the map are two layers too', async () => {
+  // The manager refuses "land use" beside "land/use": `get()` finds neither, and the refusal was read as "already there".
+  let n = 0;
+  const { manager, model } = await searched([result('a'), result('b')], {
+    async resolve(r) {
+      const spec = { ...layer(n++ === 0 ? 'land/use' : 'land use'), source: { url: `https://data.invalid/${r.key}/landuse.pmtiles` } };
+      return { layers: [spec], source: 'render', drawable: [spec], undrawable: [] };
+    },
+  });
+  await model.add('a');
+  await model.add('b');
+  assert.equal(manager.added.length, 2);
+  assert.deepEqual([...model.state.added].sort(), ['a', 'b']);
+});
+
+test('the same collection found again (same source) is simply there, and not added twice', async () => {
+  const { manager, model } = await searched([result('tiger', { catalog: 'tiger' })], sameIdIndex());
+  await manager.add({ ...layer('place'), source: { url: 'https://data.invalid/tiger/place.pmtiles' } });
+  await model.add('tiger');
+  assert.equal(manager.added.length, 1);
+  assert.deepEqual([...model.state.added], ['tiger']);
 });
 
 test('a result with two layers stays added until both are removed', async () => {

@@ -1176,12 +1176,24 @@ file's *gzip encoding* (`Content-Encoding: gzip`: 19,030,300 for a file of
 script cannot read cross-origin and an encoding it cannot decline. The footer
 is then looked for in the wrong place: `parquet file invalid (footer != PAR1)`.
 
-A request that carries a `Range` is served unencoded, so this package never
-sends a `HEAD`. `remoteByteLength(url, fetch)` asks for one byte
+A request that carries a `Range` is served unencoded, so a parquet file is
+never **opened** with a `HEAD` here — a data file, or a collection-mirror
+being enumerated. `remoteByteLength(url, fetch)` asks for one byte
 (`Range: bytes=0-0`) and reads the total from `Content-Range`; where a host
 does not expose that header to scripts — GitHub Pages again — it asks for
 `bytes=0-` and reads `Content-Length`, which is always readable, then drops
 the body. One request where there used to be one; two on such a host.
+
+Give `remoteByteLength` the plain `fetch`. A wrapper that reads a whole body
+before returning (this package's own `requestTimeoutMs` does) turns the
+second step into a download of the file; `{ timeoutMs }` bounds the wait for
+headers instead.
+
+**One `HEAD` is left**, on purpose: the raw passthrough (`parquet-raw`) sizes
+a file that declares no size with a `HEAD`. Nothing is opened at that size —
+it feeds the estimate and the ceiling — and a failure there is already
+"size unknown", not an error. On a host that gzip-encodes, that figure is the
+encoded length: about 7% low for the registry's index.
 
 If you write your own reader with hyparquet, pass it `byteLength` found this
 way: given a length, `asyncBufferFromUrl` makes no `HEAD` of its own.

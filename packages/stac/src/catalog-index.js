@@ -35,7 +35,8 @@ const WHY_NOT = {
  * @property {string} href     The collection's JSON.
  * @property {string|null} license
  * @property {string[]} keywords
- * @property {string|null} catalog   The catalog it was registered under.
+ * @property {string|null} catalog   The catalog it was registered under (the first, when there are several).
+ * @property {string[]} catalogs     Every catalog it is listed under. The `catalog` filter and facet match any of them.
  * @property {{ id: string, href: string }[]} parents
  * @property {[number, number, number, number]|null} bbox  `[w, s, e, n]`; `w > e` across the antimeridian.
  * @property {string|null} start     ISO 8601.
@@ -80,11 +81,18 @@ function invalid(message, context) {
   return new CngError(message, 'CATALOG_INDEX_INVALID', { retryable: false, context });
 }
 
-/** One index row -> one entry. */
-function entryFromRow(row) {
-  const parents = (Array.isArray(row.parents) ? row.parents : []).filter(isObject).map((p) => ({ id: text(p.id), href: text(p.href) }));
+/** The catalog a row was registered under: the registry's own column, else its first parent. */
+const catalogOf = (row) => text(row['portolan_registry:id']) || (Array.isArray(row.parents) ? text(row.parents.find(isObject)?.id) : '') || null;
+
+/**
+ * One index row -> one entry. `href` is the collection's URL, already made
+ * absolute: the index may give it relative to itself, and so may give a
+ * parent's link and a thumbnail.
+ */
+function entryFromRow(row, href, indexUrl) {
+  const parents = (Array.isArray(row.parents) ? row.parents : []).filter(isObject).map((p) => ({ id: text(p.id), href: httpUrl(p.href, indexUrl) ?? '' }));
   const render = Array.isArray(row.render) ? row.render.filter((r) => isObject(r) && typeof r.kind === 'string') : null;
-  const href = text(row.href);
+  const catalog = catalogOf(row);
   return {
     key: href,
     id: text(row.id),
@@ -93,17 +101,54 @@ function entryFromRow(row) {
     href,
     license: text(row.license) || null,
     keywords: (Array.isArray(row.keywords) ? row.keywords : []).filter((k) => typeof k === 'string' && k),
-    catalog: text(row['portolan_registry:id']) || parents[0]?.id || null,
+    catalog,
+    catalogs: catalog ? [catalog] : [],
     parents,
     bbox: bboxOf(row.bbox),
     start: isoTime(row.start_datetime),
     end: isoTime(row.end_datetime),
     kinds: render ? [...new Set(render.map((r) => r.kind))] : [],
-    thumbnail: httpUrl(row.thumbnail),
+    thumbnail: httpUrl(row.thumbnail, indexUrl),
     render: render && render.length ? render : null,
     attribution: Array.isArray(row.attribution) && row.attribution.some(isObject) ? row.attribution.filter(isObject) : null,
   };
 }
+
+const within = (ms) => (ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`);
+
+/**
+ * `fetch(url)` and its JSON body, given up on after `ms` -- whether or not
+ * the fetch honours its signal. Rejects with a `TimeoutError` then.
+ * @returns {Promise<{ res: Response, json: any }>} `json` is null when the response is not ok.
+ */
+async function fetchJsonWithin(fetchImpl, url, ms) {
+  const controller = new AbortController();
+  let timer;
+  const limit =
+    ms > 0 && Number.isFinite(ms)
+      ? new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            const timeout = new Error(`${url} did not answer within ${within(ms)}`);
+            timeout.name = 'TimeoutError';
+            controller.abort(timeout);
+            reject(timeout);
+          }, ms);
+        })
+      : null;
+  const work = (async () => {
+    const res = await fetchImpl(url, { signal: controller.signal });
+    return { res, json: res.ok ? await res.json() : null };
+  })();
+  work.catch(() => {}); // when the limit wins, this one's later rejection is nobody's
+  try {
+    return await (limit ? Promise.race([work, limit]) : work);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** A word as it is indexed and as it is looked for: lower case, accents off ("Bäume" and "baume" are one word). */
+const foldTerm = (term) => term.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 export class CatalogIndex {
   /**
@@ -170,28 +215,36 @@ export class CatalogIndex {
     const entries = [];
     const catalogs = [];
     // A collection is one entry however often the index lists it (the live
-    // registry repeats 108 of 7,049): its URL is its identity, and the first
-    // row wins.
-    const seen = new Set();
+    // registry repeats 108 of 7,049): its URL is its identity. The first row
+    // describes it; a later one only adds the catalog IT was listed under,
+    // so a catalog whose collections are all listed elsewhere first (live:
+    // all 79 of `harmonized-field-data`) is still there to filter by.
+    const seen = new Map();
     let duplicates = 0;
     for (const row of rows) {
       if (typed && row.type !== 'Collection') {
-        if (row.type === 'Catalog') catalogs.push({ id: text(row.id), title: text(row.title) || text(row.id), href: text(row.href) });
+        if (row.type === 'Catalog') catalogs.push({ id: text(row.id), title: text(row.title) || text(row.id), href: httpUrl(row.href, indexUrl) ?? text(row.href) });
         continue;
       }
-      const href = text(row.href);
+      // Absolute, or relative to the index file. Anything that is not then
+      // http(s) is not something to offer a person to fetch.
+      const href = httpUrl(row.href, indexUrl);
       if (!href) continue;
-      if (seen.has(href)) {
+      const earlier = seen.get(href);
+      if (earlier) {
         duplicates += 1;
+        const also = catalogOf(row);
+        if (also && !earlier.catalogs.includes(also)) earlier.catalogs.push(also);
         continue;
       }
-      seen.add(href);
-      entries.push(entryFromRow(row));
+      const entry = entryFromRow(row, href, indexUrl);
+      seen.set(href, entry);
+      entries.push(entry);
     }
     this.indexUrl = indexUrl;
     this.entries = entries;
     this.catalogs = catalogs;
-    /** How many collection rows repeated an earlier row's URL and were left out. */
+    /** How many collection rows repeated an earlier row's URL and were folded into its entry. */
     this.duplicates = duplicates;
     this.hasRender = names.includes('render');
   }
@@ -207,11 +260,12 @@ export class CatalogIndex {
     if (/\.(parquet|pq)$/i.test(pathname)) return this.url;
     let catalog;
     try {
-      const res = await fetchImpl(this.url);
+      const { res, json } = await fetchJsonWithin(fetchImpl, this.url, this._timeoutMs);
       if (!res.ok) throw new CngError(`The catalog returned HTTP ${res.status}: ${this.url}`, 'NETWORK', { retryable: res.status >= 500 || res.status === 429, context: { url: this.url, status: res.status } });
-      catalog = await res.json();
+      catalog = json;
     } catch (cause) {
       if (cause instanceof CngError) throw cause;
+      if (cause?.name === 'TimeoutError') throw new CngError(`The catalog did not answer within ${within(this._timeoutMs)}: ${this.url}`, 'NETWORK', { retryable: true, cause, context: { url: this.url, reason: 'timeout' } });
       throw new CngError(`Couldn't read the catalog: ${this.url}`, 'NETWORK', { cause, context: { url: this.url } });
     }
     const links = Array.isArray(catalog?.links) ? catalog.links.filter(isObject) : [];
@@ -266,7 +320,15 @@ export class CatalogIndex {
       const mini = await this._textIndex();
       if (generation !== this._generation) return superseded();
       textScores = new Map();
-      const hits = mini.search(words, { boost: { title: 3, keywords: 2, id: 2 }, prefix: (term, i, terms) => i === terms.length - 1, fuzzy: 0.2, combineWith: 'AND' });
+      const how = { boost: { title: 3, keywords: 2, id: 2 }, prefix: (term, i, terms) => i === terms.length - 1, combineWith: 'AND' };
+      // One letter of give, and only on a word of six letters or more:
+      // enough for "buildings" to find "Building" and for a slip of the
+      // finger, not enough for "Bäume" (trees) to bring "Räume" (rooms) --
+      // which a flat 20% did, for every five-letter word.
+      let hits = mini.search(words, { ...how, fuzzy: (term) => (term.length >= 6 ? 1 : false) });
+      // More give is offered only when nothing matches at all (the
+      // geocoder's rule too).
+      if (!hits.length && words.length >= 3) hits = mini.search(words, { ...how, fuzzy: 0.2 });
       for (const hit of hits) textScores.set(hit.id, hit.score);
     }
 
@@ -277,7 +339,7 @@ export class CatalogIndex {
     const chosen = { license: asSet(query.license), catalog: asSet(query.catalog), kinds: asSet(query.kinds) };
     const facetOk = {
       license: (e) => !chosen.license || chosen.license.has(e.license),
-      catalog: (e) => !chosen.catalog || chosen.catalog.has(e.catalog),
+      catalog: (e) => !chosen.catalog || e.catalogs.some((c) => chosen.catalog.has(c)),
       kinds: (e) => !chosen.kinds || e.kinds.some((k) => chosen.kinds.has(k)),
     };
 
@@ -298,7 +360,7 @@ export class CatalogIndex {
       // entry if every OTHER facet's choice allows it.
       const ok = { license: facetOk.license(entry), catalog: facetOk.catalog(entry), kinds: facetOk.kinds(entry) };
       if (ok.catalog && ok.kinds) bump(counts.license, entry.license);
-      if (ok.license && ok.kinds) bump(counts.catalog, entry.catalog);
+      if (ok.license && ok.kinds) for (const catalog of entry.catalogs) bump(counts.catalog, catalog);
       if (ok.license && ok.catalog) for (const kind of entry.kinds) bump(counts.kinds, kind);
       if (!ok.license || !ok.catalog || !ok.kinds) return;
       const text = textScores ? textScores.get(position) : 1;
@@ -367,11 +429,12 @@ export class CatalogIndex {
       new CngError(`Couldn't read "${result.title}": ${why}.`, 'LAYER_LOAD_FAILED', { retryable, context: { collection: result.id, url: result.href, ...extra }, ...(cause ? { cause } : {}) });
     let collection;
     try {
-      const res = await fetchImpl(result.href);
+      const { res, json } = await fetchJsonWithin(fetchImpl, result.href, this._timeoutMs);
       if (!res.ok) throw failed(`its collection document returned HTTP ${res.status}`, { status: res.status }, res.status >= 500 || res.status === 429 || res.status === 404 || res.status === 408);
-      collection = await res.json();
+      collection = json;
     } catch (cause) {
       if (cause instanceof CngError) throw cause;
+      if (cause?.name === 'TimeoutError') throw failed(`its host did not answer within ${within(this._timeoutMs)}`, { reason: 'timeout' }, true, cause);
       throw failed('its collection document could not be fetched', {}, true, cause);
     }
     try {
@@ -391,6 +454,7 @@ export class CatalogIndex {
           idField: 'n',
           fields: ['title', 'keywords', 'id', 'description'],
           storeFields: [],
+          processTerm: foldTerm,
           extractField: (doc, field) => (field === 'keywords' ? doc.keywords.join(' ') : doc[field]),
         });
         mini.addAll(entries.map((e, n) => ({ n, title: e.title, keywords: e.keywords, id: e.id, description: e.description })));

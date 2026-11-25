@@ -100,6 +100,29 @@ test('a .pmtiles source url with no pmtiles:// scheme is still read as PMTiles',
   assert.equal(plan.sources['cng-layer-x--tilejson'].url, 'https://storage.googleapis.com/carto-open-catalogs/ocha-cod-jamaica/main/parishes/styles/tiles.json');
 });
 
+// Found live (Overture's land_use on nlebovits.github.io, 2026-11-25): a style
+// that names its tiles the way the PMTiles protocol also allows, as a tile
+// template under the archive. `new URL('pmtiles://https://host/…')` reads
+// "https" as a HOST and drops the colon, and the tiles were then asked for at
+// `<this page>/https//host/…`: 404 on every tile, under a layer that said "ready".
+test('a tiles template in pmtiles:// form keeps its inner URL whole', () => {
+  const plan = planStyle({
+    slug: 'x',
+    styleUrl: 'https://nlebovits.github.io/overture-portolan/base/land_use/styles/default.json',
+    styleJson: {
+      version: 8,
+      sources: {
+        overture: { type: 'vector', tiles: ['pmtiles://https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-11-18.0/base.pmtiles/{z}/{x}/{y}'], maxzoom: 13 },
+        relative: { type: 'vector', tiles: ['pmtiles://../land_use.pmtiles/{z}/{x}/{y}'] },
+      },
+      layers: [],
+    },
+  });
+  assert.deepEqual(plan.sources['cng-layer-x--overture'].tiles, ['pmtiles://https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-11-18.0/base.pmtiles/{z}/{x}/{y}']);
+  assert.equal(plan.sources['cng-layer-x--overture'].maxzoom, 13);
+  assert.deepEqual(plan.sources['cng-layer-x--relative'].tiles, ['pmtiles://https://nlebovits.github.io/overture-portolan/base/land_use/land_use.pmtiles/{z}/{x}/{y}']);
+});
+
 test('a layer naming a missing source is dropped, with a note', () => {
   const style = unosatStyle();
   style.layers.push({ id: 'orphan', type: 'line', source: 'nope' });
