@@ -33,10 +33,16 @@ import { registerLayerRenderer } from './layer-manager.js';
 import { pmtilesVectorRenderer } from './renderers/pmtiles-vector.js';
 import { geojsonRenderer } from './renderers/geojson.js';
 import { cogRenderer } from './renderers/cog.js';
+import { timelineRenderer } from './timeline/timeline-renderer.js';
 
 registerLayerRenderer('pmtiles-vector', pmtilesVectorRenderer);
 registerLayerRenderer('geojson', geojsonRenderer);
 registerLayerRenderer('cog', cogRenderer);
+// `@cngeo/timeline` itself is fetched only when a timeline layer is added.
+registerLayerRenderer('timeline', timelineRenderer);
+export { registerChunkFormat } from './timeline/timeline-renderer.js';
+export { TimelineControl } from './timeline-control.js';
+export { createTimelineModel, timelineStatusOf, presetsFor, inputsFor, selectionTotal, notLoadedBuckets } from './timeline-model.js';
 export {
   DECK_BUNDLE_URL,
   DECK_REQUIRED_EXPORTS,

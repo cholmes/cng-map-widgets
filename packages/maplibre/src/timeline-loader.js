@@ -13,7 +13,7 @@
 import { CngError } from '@cngeo/spec';
 
 /** What this package uses of `@cngeo/timeline`. */
-export const TIMELINE_REQUIRED_EXPORTS = Object.freeze(['createChunkSet', 'createPlayback', 'TimelineCanvas', 'validateChunks', 'COUNT_RAMP', 'TIMELINE_THEME_DARK', 'TIMELINE_THEME_LIGHT', 'formatKey', 'keyToISO', 'isoToKey', 'addDays', 'keyIndex']);
+export const TIMELINE_REQUIRED_EXPORTS = Object.freeze(['createChunkSet', 'createPlayback', 'TimelineCanvas', 'validateChunks', 'COUNT_RAMP', 'TIMELINE_THEME_DARK', 'TIMELINE_THEME_LIGHT', 'formatKey', 'keyToISO', 'isoToKey', 'addDays', 'keyIndex', 'dayRangeOfKey', 'bucketKeyOfDay']);
 
 let injected = null;
 let loading = null;

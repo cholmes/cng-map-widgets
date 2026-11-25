@@ -579,6 +579,87 @@ checked in a browser by `examples/catalog-search/verify.mjs` rather than in
 stack (footprints, an extent). `LayerManager.setTopLayers(ids, owner)` is per
 owner for that reason: one declaring does not undo the other.
 
+### A timeline layer, and `new TimelineControl({ manager, layer, metricLabel?, autoplay?, speed?, loop?, theme? })`
+
+A histogram of time under the map, with a selection that decides what the
+map draws, over data published as **chunks** — files that each cover a span
+of time. The chunks are one layer:
+
+```js
+import { chunksFromTemplate } from '@cngeo/timeline';
+import { LayerManager, LayerControl, TimelineControl } from '@cngeo/maplibre';
+
+const BASE = 'https://data.source.coop/portolan-mirrors/firms-catalog/detections';
+const fires = {
+  spec: 'cng-layer/1.0',
+  id: 'fires',
+  title: 'Active fires',
+  kind: 'timeline',
+  source: {
+    chunks: [
+      ...chunksFromTemplate({ template: `${BASE}/year={YYYY}/fire-{YYYY}.pmtiles`, period: 'year', start: '2000-11-01' }),
+      { id: 'alltime', start: '20001101', end: today, unit: 'month', url: `${BASE}/alltime.pmtiles` },
+    ],
+    aggregate: { layer: 'aggregate', idProperty: 'a5_cell' },   // cells with a count_YYYYMMDD column per day
+    points: { layer: 'features', property: 'day' },             // features that each carry their own day
+  },
+  attribution: [{ text: 'NASA FIRMS' }],
+};
+
+const manager = new LayerManager(map);
+map.addControl(new TimelineControl({ manager, layer: fires, metricLabel: 'detections' }), 'bottom-left');
+map.addControl(new LayerControl({ manager }), 'top-right');   // the timeline is one entry in it
+```
+
+The page must be able to resolve **`@cngeo/timeline`** (one more line in the
+import map): this package loads it the first time a timeline layer is added,
+and not before, so a page with no timeline never needs it. In Node or a
+bundler: `setTimelineModules(await import('@cngeo/timeline'))`.
+
+**The layer** (`kind: 'timeline'`). `source`:
+
+| | |
+|---|---|
+| `chunks` | Chunk descriptors: `{ id, start, end, unit, format, url, priority? }`. See [`@cngeo/timeline`](../timeline/README.md); `chunksFromStac` in `@cngeo/stac` builds them from a collection. |
+| `aggregate` | `{ layer?, prefix = 'count_', idProperty?, maxzoom? }` — a vector layer whose features have a count per bucket. The selection is the **sum of its columns**, so moving it recolours the map and fetches nothing. `false` when the archive has none. |
+| `points` | `{ layer, property, minzoom?, color? }` — a layer of features that each carry their own day (`20240105`, or an ISO date). The selection filters them on the GPU. |
+| `stops` | Cell colours by count: `[[1, '#2c3d5a'], …]`. Default: `@cngeo/timeline`'s `COUNT_RAMP`. |
+| `cap` | Most big chunks a view loads. Default 3. |
+| `open` | `{ selectDays = 5, viewDays = 100 }`: where it opens, counted back from the end of the record. |
+
+An archive's time axis is read from its own metadata — a `cng:timeline`
+(or `firms:timeline`) declaration `{ unit, min, max }`, else the bucket
+columns its `vector_layers` declare — never from a sampled feature.
+
+However many chunks are mounted, the layer manager has **one entry**: hide,
+fade, reorder and remove act on all of it. `manager.handle(id)` is its
+**session** — `state`, `on('change')`, `setView()`, `setSelection()`,
+`retry()`, `tiles()` — for a host that wants its own controls. A chunk that
+will not load is a note on the layer and a gap in the track; the layer fails
+only when nothing can be loaded.
+
+**The control.** Drag the selection or its handles; drag elsewhere to pan;
+wheel or pinch to zoom; shift-drag to draw a selection; arrow keys move it.
+Spans (7 days … All), zoom and fit buttons, two date inputs, step and
+play / pause with a speed. Zoom out far enough and the track changes from
+days to months, when the chunk set has a monthly chunk to show them with; in
+again and it changes back. What is not loaded is hatched, not drawn as zero,
+and the status line says how much of the selection that is.
+
+- `layer` is the id of a timeline layer already in the manager, or a spec to
+  add. Removing the control leaves the layer.
+- Playback holds while the next chunk is loading. With
+  `prefers-reduced-motion` nothing plays by itself and nothing runs faster
+  than a step a second.
+- `control.ready`, `control.session`, `control.play()`, `control.pause()`.
+- It survives `map.setStyle()` and being removed and added again. Its DOM is
+  checked in a browser by `examples/timeline-firms/verify.mjs`.
+
+**Another chunk format.** `pmtiles` is built in. `registerChunkFormat(name,
+factory)` adds one for `chunk.format: name`: a `ChunkFormat` from
+`@cngeo/timeline` whose mounts also return `layers(state, beforeId)` (deck.gl
+layers). `pmtilesChunkFormat()` is exported as the example.
+
 ### Loaders
 
 Three third-party modules load lazily, each from an exact pinned URL, each
