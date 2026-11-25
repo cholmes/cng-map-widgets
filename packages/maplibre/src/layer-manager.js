@@ -81,12 +81,15 @@ export class LayerManager {
    * @param {Function} [options.addProtocol] MapLibre's `addProtocol`. Default: `globalThis.maplibregl.addProtocol`.
    * @param {Record<string, (ctx: RendererContext) => LayerRenderer>} [options.renderers] Per-instance
    *   renderers, consulted before the registry.
+   * @param {() => Promise<any>} [options.loadDeck] How deck.gl is obtained. Default: this package's
+   *   `loadDeck()` (the bundle, or whatever `setDeckModules()` injected).
    */
   constructor(map, options = {}) {
     this._map = map;
     this._beforeId = options.beforeId;
     this._addProtocol = options.addProtocol ?? globalThis.maplibregl?.addProtocol?.bind(globalThis.maplibregl);
     this._renderers = options.renderers ?? {};
+    this._loadDeck = options.loadDeck ?? loadDeck;
     /** @type {any[]} bottom-first */
     this._entries = [];
     this._handlers = { change: new Set(), error: new Set() };
@@ -305,7 +308,7 @@ export class LayerManager {
   }
 
   async _deck() {
-    const mods = await loadDeck();
+    const mods = await this._loadDeck();
     if (!this._overlay && !this._destroyed) {
       this._overlay = new mods.MapLibreOverlay({ interleaved: true, layers: [] });
       this._map.addControl(this._overlay);

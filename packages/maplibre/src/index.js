@@ -18,9 +18,11 @@ export { planStyle, defaultVectorStyle, opacityPaint } from './renderers/style-p
 import { registerLayerRenderer } from './layer-manager.js';
 import { pmtilesVectorRenderer } from './renderers/pmtiles-vector.js';
 import { geojsonRenderer } from './renderers/geojson.js';
+import { cogRenderer } from './renderers/cog.js';
 
 registerLayerRenderer('pmtiles-vector', pmtilesVectorRenderer);
 registerLayerRenderer('geojson', geojsonRenderer);
+registerLayerRenderer('cog', cogRenderer);
 export {
   DECK_BUNDLE_URL,
   DECK_REQUIRED_EXPORTS,
