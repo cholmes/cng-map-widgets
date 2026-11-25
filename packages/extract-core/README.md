@@ -177,7 +177,9 @@ decoding geometry:
 | `{ kind: 'none' }` | No covering. Pruning cannot narrow the read, and the estimate says so (`no-covering`). |
 
 Omit `table` entirely and it is inferred from the first file's parquet schema —
-`geometry` if present, a `bbox` struct if present, otherwise nothing.
+`geometry` if present, a `bbox` struct if present, and STAC's time columns by
+name: `datetime` becomes the `timeColumn`, and a `start_datetime` /
+`end_datetime` pair becomes `timeInterval` (below). Otherwise nothing.
 
 ### `FilterSpec` — which rows and columns
 
@@ -212,6 +214,16 @@ before 0.3.0 that was all that ran, so a download carried every row of any
 group that merely overlapped it. A row whose time is null is in no window.
 With no declared `timeColumn` there is nothing to test per row; the
 estimate says so with `no-statistics`.
+
+**Interval data.** A table whose rows cover a span declares
+`table.timeInterval: { start, end }` beside `timeColumn` (found by name, as
+above, or from a collection's `table:columns`). A row's span is then
+`start ?? timeColumn` … `end ?? timeColumn`, each side falling back on its
+own, and the row matches when that span **overlaps** the window — STAC
+API's `datetime` semantics. This is what makes a time filter work on
+OpenAerialMap, whose items have a start and an end and a null `datetime`:
+the single-column test rejects a null, so before 0.4.0 a time filter there
+matched nothing. Row groups are pruned only when no row's span can overlap.
 
 ### `OutputRequest` + `DownloadRequest`
 
@@ -517,6 +529,67 @@ result.rows;        // 25
 result.truncated;   // true -- `limit` bound
 ```
 
+### `queryRows(dataset, area, filter, options?) => Promise<{ rows, truncated, plan }>`
+
+The same resolve → prune → read pipeline as `download()`, with the matched
+rows handed back as objects instead of written to a file. It is what a
+search calls.
+
+```js
+import { queryRows, createPlanCache } from '@cngeo/extract-core';
+
+const cache = createPlanCache();                 // keep it for the session
+const { rows, truncated, plan } = await queryRows(dataset, area, filter, {
+  cache,
+  geometry: 'geojson',                           // 'geojson' (default) | 'wkb' | 'none'
+  onPlan: (plan) => show(plan.requests, plan.prune),
+  onRows: (rows) => append(rows),                // per row group, in file order; awaited
+  signal,
+});
+rows[0];            // { id: '…', datetime: '…', 'eo:cloud_cover': 3.2, geometry: { type: 'Polygon', … } }
+plan.rowGroups;     // { total: 825, selected: 27 }
+```
+
+- A row holds the **output** columns; `filter.columns` projects exactly as it
+  does for a download. `BigInt` values are coerced — to a number when that is
+  exact, otherwise to a decimal string — so a row always survives
+  `JSON.stringify`.
+- `geometry: 'none'` leaves the geometry out, and does not read it unless the
+  spatial filter needs it. `'wkb'` returns what the file holds.
+- `filter.limit` is honoured and `truncated` reports it. There is **no
+  ceiling** here — there is no output file to size — so bound a query with
+  `limit`, and read `plan.requests` before deciding it is worth the wait.
+- Cancelling rejects with `CANCELLED`.
+
+### `createPlanCache(options?) => PlanCache`
+
+Planning learns which files a dataset is made of and what is in each file's
+footer, and without a cache it learns both again on every call: measured on
+Sentinel-2, 13 listing requests and a 7.9 MB footer before each search read a
+row. Pass one cache as `options.cache` to `queryRows()` and `estimate()` and
+both are kept. With none, nothing changes.
+
+```js
+const cache = createPlanCache({ maxAgeMs: 600_000 });   // the default: 10 minutes
+cache.stats();        // { partListings, footers, hits, misses }
+cache.evict(url);     // forget one file's footer
+cache.clear();
+```
+
+- It holds metadata only — part lists and decoded footers — never rows.
+- Concurrent plans share one load. A failed load is not kept.
+- A cached footer costs **no** request, not even a `HEAD`.
+- A load runs without the caller's abort signal: a search superseded
+  mid-plan leaves its footers for the search that superseded it. The
+  superseded caller is still released at once, with `CANCELLED`.
+- **Published files get rewritten.** Every range read made against a kept
+  footer checks the file's current size (from `Content-Range`); if it has
+  changed, the footer is dropped and the read fails as a retryable
+  `DATASET_UNRESOLVED` with `context.reason: 'file-changed'`, before a byte
+  is decoded. `queryRows()` then re-plans once by itself, provided it has
+  delivered no rows yet. A rewrite to exactly the same size is not caught by
+  this; `maxAgeMs` is the bound on that.
+
 ### `resolveDataset(descriptor, options?) => Promise<DatasetDescriptor>`
 
 Turns a `portolan-collection` source into a concrete one. Every other kind is
@@ -541,6 +614,11 @@ dataset.table.rowCount;           // 632471436
 dataset.attribution[0].license;   // 'CC0-1.0'
 dataset.source.glob;              // 's3://portolan-mirrors/…'  <-- see the gotcha
 ```
+
+A collection that is **not** partitioned but publishes its STAC items as one
+parquet file — a `collection-mirror` asset, as OpenAerialMap does — resolves
+to that file, `{ kind: 'parquet', url }`. Before 0.4.0 it resolved to
+nothing and the collection was reported unsupported.
 
 ### `descriptorFromCollection(collection, options?)` / `collectionDownloadSupport(collection, options?)`
 

@@ -137,10 +137,48 @@ async function openCachedParquetFile(url, fetchImpl, opts) {
   const file = await hyparquet.asyncBufferFromUrl({
     url,
     byteLength: footer.byteLength,
-    fetch: fetchImpl,
+    fetch: sizeCheckedFetch(fetchImpl, url, footer.byteLength, opts.cache),
     requestInit: { cache: 'no-store', signal: opts.signal },
   });
   return { url, file, metadata: footer.metadata, rowGroups: footer.rowGroups, byteLength: footer.byteLength, signal: opts.signal, fromCache: !loadedHere };
+}
+
+/** `context.reason` on the error a read raises when its file is not the one that was planned. */
+export const FILE_CHANGED = 'file-changed';
+
+/** @param {unknown} err */
+export function isFileChanged(err) {
+  return /** @type {any} */ (err)?.code === 'DATASET_UNRESOLVED' && /** @type {any} */ (err)?.context?.reason === FILE_CHANGED;
+}
+
+/**
+ * A `fetch` for reads made against a KEPT footer. A footer is a map of byte
+ * offsets, and it is only right for the file it was read from: published
+ * files are rewritten (Sentinel-2's "live" parts, as scenes arrive), and a
+ * read at old offsets into a new file decodes garbage, or decodes plausibly
+ * wrong rows.
+ *
+ * Every range response states the file's current total size
+ * (`Content-Range: bytes a-b/TOTAL`). When that is not the size the footer
+ * was read at -- or the range no longer exists (416) -- the footer is evicted
+ * and the read fails as retryable, `context.reason: 'file-changed'`, before a
+ * byte is decoded. A rewrite to exactly the same size is not caught here;
+ * the cache's `maxAgeMs` is the bound on that.
+ */
+function sizeCheckedFetch(fetchImpl, url, plannedBytes, cache) {
+  return async (input, init) => {
+    const res = await fetchImpl(input, init);
+    const total = /\/(\d+)\s*$/.exec(res.headers?.get?.('content-range') ?? '')?.[1];
+    const actualBytes = total === undefined ? null : Number(total);
+    if (res.status === 416 || (actualBytes !== null && actualBytes !== plannedBytes)) {
+      cache.evict(url);
+      throw new CngError(`${url} changed after it was planned; its footer has been dropped from the cache.`, 'DATASET_UNRESOLVED', {
+        retryable: true,
+        context: { url, reason: FILE_CHANGED, plannedBytes, actualBytes },
+      });
+    }
+    return res;
+  };
 }
 
 /** @param {any} metadata @returns {RowGroupInfo[]} */
@@ -221,9 +259,11 @@ export async function readRows(handle, range) {
       utf8: false,
     });
   } catch (cause) {
-    throw (
-      cancellationOf(cause, handle.signal, 'reading parquet row data') ??
-      new CngError('Failed to read parquet row data.', 'DATASET_UNRESOLVED', { cause })
-    );
+    const cancelled = cancellationOf(cause, handle.signal, 'reading parquet row data');
+    if (cancelled) throw cancelled;
+    // Already the right error, raised by `sizeCheckedFetch`: keep its
+    // `retryable` and its context rather than burying them in a `cause`.
+    if (isFileChanged(cause)) throw cause;
+    throw new CngError('Failed to read parquet row data.', 'DATASET_UNRESOLVED', { cause });
   }
 }

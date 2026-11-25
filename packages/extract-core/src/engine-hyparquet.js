@@ -212,13 +212,23 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
   const spanOk = timeInterval ? timeSpanPredicate(filter.time, { instant: timeColumn, ...timeInterval }) : null;
   const timeOk = !timeInterval && timeColumn ? timeRowPredicate(filter.time) : null;
 
+  // Whether a row's bbox can be known at all from what this plan reads. It
+  // cannot when the geometry was dropped from the output, there is no area
+  // to need it, and no covering columns stand in for it. Then "no bbox" says
+  // nothing about the row, and must not be read as "has no geometry": that
+  // dropped EVERY row of such a request.
+  const rowCovering = coveringPaths(covering);
+  const bboxKnowable =
+    !readColumns || readColumns.includes(geometryColumn) || Boolean(rowCovering && !rowCovering.native && bboxColumnNamesOf(covering).every((c) => readColumns.includes(c)));
+  const requireBBox = Boolean(area) || bboxKnowable;
+
   /** The per-row filter the old sequential loop ran inline. Pure; no awaits. */
   function matchRows(decoded) {
     const cache = new WeakMap();
     const matched = [];
     for (const row of decoded) {
-      const featureBBox = rowBBox(row, covering, geometryColumn, cache);
-      if (!featureBBox) continue; // no geometry at all: can never match a spatial filter
+      const featureBBox = requireBBox ? rowBBox(row, covering, geometryColumn, cache) : null;
+      if (requireBBox && !featureBBox) continue; // no geometry at all: can never match a spatial filter
       if (area) {
         const featureGeometry = filter.spatial.mode === 'intersects' ? decodedGeometry(row, geometryColumn, cache) : undefined;
         const ok = rowMatchesArea({ featureBBox, featureGeometry }, area, filter.spatial);
@@ -342,7 +352,10 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
       let matched = slot.matched;
       if (limit !== undefined && rows + matched.length > limit) matched = matched.slice(0, Math.max(0, limit - rows));
       if (matched.length > 0) {
-        await onBatch(buildBatch(matched, outputColumns, geometryColumn));
+        // `rowFormat: 'objects'` (queryRows) takes the matched rows as they
+        // were read -- every READ column, geometry still WKB -- instead of
+        // the columnar batch a format writer wants. No writer sets it.
+        await onBatch(ctx.rowFormat === 'objects' ? { rows: matched.length, objects: matched } : buildBatch(matched, outputColumns, geometryColumn));
         rows += matched.length;
       }
 
@@ -378,6 +391,12 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
   if (signal?.aborted) throw new CancelledError();
 
   return { rows, readBytes, requests };
+}
+
+/** The top-level columns a row-level covering is read from. */
+function bboxColumnNamesOf(covering) {
+  if (covering.kind === 'struct') return [covering.column];
+  return [covering.xmin, covering.ymin, covering.xmax, covering.ymax];
 }
 
 function sumColumnBytes(rg, columnNames) {
