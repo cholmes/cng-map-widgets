@@ -9,6 +9,16 @@ export { fitAreaBounds } from './fit-bounds.js';
 export { LayerManager, registerLayerRenderer } from './layer-manager.js';
 export { PMTILES_CDN, loadPmtiles, setPmtilesModules, clearPmtilesModules } from './pmtiles-loader.js';
 export { planStyle, defaultVectorStyle, opacityPaint } from './renderers/style-plan.js';
+export { LayerControl } from './layer-control.js';
+export { createControlAdapter, applyPanelOrder } from './layer-control-adapter.js';
+export { urlAddProvider, specsFromUrl, addFromUrl } from './add-providers.js';
+export {
+  LAYER_CONTROL_VERSION,
+  LAYER_CONTROL_CDN,
+  loadLayerControl,
+  setLayerControlModules,
+  clearLayerControlModules,
+} from './layer-control-loader.js';
 
 // The built-in renderers. Registered as a side effect of importing this
 // module (the way @cngeo/extract-core registers its built-in formats), so a
