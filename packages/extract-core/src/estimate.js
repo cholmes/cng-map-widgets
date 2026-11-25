@@ -94,11 +94,18 @@ export function inferTableFromSchema(metadata) {
   const geometryColumn = names.includes('geometry') ? 'geometry' : names[names.length - 1];
   const bboxCol = topLevel.find((c) => c.name === 'bbox');
   const bbox = bboxCol?.isStruct ? { kind: 'struct', column: 'bbox' } : { kind: 'none' };
+  // STAC's own column names for time. Without this a bare item table (NAIP's,
+  // OpenAerialMap's) had no time column at all, and a time filter on it was
+  // silently not applied (E14, conclusion 5).
+  const timeColumn = names.includes('datetime') ? 'datetime' : undefined;
+  const timeInterval = names.includes('start_datetime') && names.includes('end_datetime') ? { start: 'start_datetime', end: 'end_datetime' } : undefined;
   return {
     geometryColumn,
     geometryEncoding: 'WKB',
     crs: 'OGC:CRS84',
     bbox,
+    ...(timeColumn ? { timeColumn } : {}),
+    ...(timeInterval ? { timeInterval } : {}),
     columns: topLevel.map((c) => ({ name: c.name, type: c.isStruct ? 'struct' : 'unknown' })),
   };
 }
@@ -173,7 +180,7 @@ export async function planRequest(dataset, area, filter, options = {}) {
     }
     allRowGroupsTotal += handle.rowGroups.length;
     const bboxPrune = pruneRowGroupsByBBox(handle.rowGroups, covering, areaBBoxes, geometryColumn);
-    const timePrune = pruneRowGroupsByTime(bboxPrune.selected, table.timeColumn ?? null, filter.time);
+    const timePrune = pruneRowGroupsByTime(bboxPrune.selected, table.timeColumn ?? null, filter.time, table.timeInterval ?? null);
     // `where[]` pushdown runs last in the row-group cascade: it is the
     // cheapest stage to report honestly (statistics it cannot decide
     // simply keep the row group) and it narrows what the bbox/time stages
@@ -196,7 +203,7 @@ export async function planRequest(dataset, area, filter, options = {}) {
   // without it. See `columns.js`'s `geometryNeededForFilter` doc comment
   // for the exact rule and the design decision behind it.
   const needsGeometryForFilter = geometryNeededForFilter(area, covering, filter.spatial);
-  const readColumns = resolveReadColumns(outputColumns, filter, table.timeColumn ?? null, bboxCols, geometryColumn, needsGeometryForFilter);
+  const readColumns = resolveReadColumns(outputColumns, filter, table.timeColumn ?? null, bboxCols, geometryColumn, needsGeometryForFilter, table.timeInterval ?? null);
 
   const rowGroupBboxStage = {
     stage: 'row-group-bbox',
@@ -213,7 +220,11 @@ export async function planRequest(dataset, area, filter, options = {}) {
     stage: 'row-group-stats',
     before: perPart.reduce((n, p) => n + p.timePrune.stage.before, 0),
     after: perPart.reduce((n, p) => n + p.timePrune.stage.after, 0),
-    basis: filter.time ? `time ${table.timeColumn ?? '(none declared)'} window` : 'no time filter',
+    basis: !filter.time
+      ? 'no time filter'
+      : table.timeInterval
+        ? `time span ${table.timeInterval.start}…${table.timeInterval.end} overlaps the window`
+        : `time ${table.timeColumn ?? '(none declared)'} window`,
   };
   const rowGroupWhereStage = {
     stage: 'row-group-where',

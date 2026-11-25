@@ -165,6 +165,15 @@ function deriveSource(collection, assets, originalSource, columns) {
     };
   }
 
+  // A STAC item table published as ONE file: a `collection-mirror` asset on a
+  // collection that is not partitioned (OpenAerialMap). It is plain parquet
+  // to read -- deliberately not `stac-geoparquet`, whose enumeration treats a
+  // mirror as a LIST of partition files and would read every item as a part.
+  // Before this it matched nothing below (its role is not `data`) and the
+  // collection resolved as unsupported.
+  const itemTable = assets.find((a) => (a.roles ?? []).includes('collection-mirror') && /parquet/i.test(`${a.type ?? ''} ${a.href ?? ''}`));
+  if (itemTable?.href) return { kind: 'parquet', url: itemTable.href };
+
   const dataAssets = assets.filter((a) => (a.roles ?? []).includes('data'));
   const parquetAsset =
     dataAssets.find((a) => a.type === 'application/vnd.apache.parquet') ??
@@ -203,6 +212,10 @@ function deriveTable(collection, columns) {
   const geometryColumn = collection['table:primary_geometry'] ?? geoparquetMeta?.primary_column ?? 'geometry';
   const bbox = deriveCovering(geoparquetMeta, columns, geometryColumn);
   const timeColumn = deriveTimeColumn(columns);
+  const names = new Set((columns ?? []).map((c) => c?.name));
+  // STAC items that cover a span carry it in these two columns, often with a
+  // null `datetime`. Declaring them is what lets a time filter match by span.
+  const timeInterval = names.has('start_datetime') && names.has('end_datetime') ? { start: 'start_datetime', end: 'end_datetime' } : undefined;
   const crs = geoparquetMeta?.columns?.[geometryColumn]?.crs ? 'OGC:CRS84' : undefined;
 
   const hasAnything = columns || collection['table:row_count'] !== undefined || bbox.kind !== 'none';
@@ -214,6 +227,7 @@ function deriveTable(collection, columns) {
     crs: crs ?? 'OGC:CRS84',
     bbox,
     timeColumn,
+    ...(timeInterval ? { timeInterval } : {}),
     rowCount: collection['table:row_count'],
     columns,
   };

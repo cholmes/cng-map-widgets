@@ -7,7 +7,7 @@ import { planRequest } from './estimate.js';
 import { readRows } from './parquet-io.js';
 import { rowMatchesArea } from './spatial.js';
 import { evaluateWhere } from './predicate.js';
-import { coveringPaths, timeRowPredicate } from './prune.js';
+import { coveringPaths, timeRowPredicate, timeSpanPredicate } from './prune.js';
 import { decodeWkbGeometry, bboxOfAnyGeometry } from './wkb-geometry.js';
 
 export const HYPARQUET_ENGINE_ID = 'hyparquet';
@@ -206,7 +206,11 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
   // `resolveReadColumns` added to the read set, and without one there is
   // no cell to test (`finalizeEstimate` already warns `no-statistics`).
   const timeColumn = plan.table?.timeColumn ?? null;
-  const timeOk = timeColumn ? timeRowPredicate(filter.time) : null;
+  // A table whose rows carry start/end columns is tested by SPAN overlap
+  // (its instant is often null, which the single-column test rejects).
+  const timeInterval = plan.table?.timeInterval ?? null;
+  const spanOk = timeInterval ? timeSpanPredicate(filter.time, { instant: timeColumn, ...timeInterval }) : null;
+  const timeOk = !timeInterval && timeColumn ? timeRowPredicate(filter.time) : null;
 
   /** The per-row filter the old sequential loop ran inline. Pure; no awaits. */
   function matchRows(decoded) {
@@ -221,6 +225,7 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
         if (!ok) continue;
       }
       if (timeOk && !timeOk(row[timeColumn])) continue;
+      if (spanOk && !spanOk(row)) continue;
       if (!evaluateWhere(filter.where, row)) continue;
       matched.push(row);
       // No single row group can contribute more than `limit` rows to the
