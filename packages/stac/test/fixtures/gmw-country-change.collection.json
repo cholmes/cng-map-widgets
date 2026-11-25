@@ -1,0 +1,146 @@
+{
+  "type": "Collection",
+  "id": "country-statistics/country-change",
+  "stac_version": "1.1.0",
+  "description": "Mangrove gain and loss in hectares for 127 countries and territories, between every baseline year from 1985 to 2024 and every later year to 2025, with lower and upper 95% confidence bounds. Join to the vectors or to the country extent table on `cntry_iso3`. Read [AGENTS.md](AGENTS.md) for queries.",
+  "links": [
+    {
+      "rel": "root",
+      "href": "../../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "license",
+      "href": "https://creativecommons.org/licenses/by/4.0/",
+      "title": "License"
+    },
+    {
+      "rel": "via",
+      "href": "https://zenodo.org/records/21346457",
+      "type": "text/html",
+      "title": "Original source"
+    },
+    {
+      "rel": "agents",
+      "href": "./AGENTS.md",
+      "type": "text/markdown",
+      "title": "Agent/LLM usage guide"
+    },
+    {
+      "rel": "describedby",
+      "href": "./README.md",
+      "type": "text/markdown",
+      "title": "Human-readable documentation"
+    }
+  ],
+  "updated": "2026-11-20T11:29:32Z",
+  "title": "Mangrove gain and loss by country",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180.0,
+          -39.0,
+          180.0,
+          35.0
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "1985-01-01T00:00:00Z",
+          "2025-12-31T23:59:59Z"
+        ]
+      ]
+    }
+  },
+  "license": "CC-BY-4.0",
+  "providers": [
+    {
+      "name": "Global Mangrove Watch",
+      "description": "Bunting et al. (Aberystwyth University, Wetlands International, and partners) produced the v4.1.12 timeseries and published it on Zenodo under CC BY 4.0.",
+      "roles": [
+        "producer",
+        "licensor"
+      ],
+      "url": "https://www.globalmangrovewatch.org"
+    },
+    {
+      "name": "Portolan Mirrors",
+      "description": "Maintains this Portolan mirror: the COG mosaics, GeoParquet, PMTiles, tidy statistics tables, styles, and documentation.",
+      "roles": [
+        "host"
+      ],
+      "url": "https://source.coop/portolan-mirrors/global-mangrove-watch"
+    }
+  ],
+  "assets": {
+    "gmw-v4112-country-change": {
+      "href": "./gmw-v4112-country-change.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data"
+      ],
+      "file:size": 3903356,
+      "file:checksum": "12207d3cead47efc80f8aee925731e70831b138bed2254562aae3dd35224739964be",
+      "title": "Mangrove gain and loss by country",
+      "description": "One row per country, gain or loss, baseline year, and year, with the area in hectares and its 95% confidence interval."
+    }
+  },
+  "table:columns": [
+    {
+      "name": "cntry_iso3",
+      "type": "string",
+      "description": "ISO 3166-1 alpha-3 code, or one of the four producer territory codes."
+    },
+    {
+      "name": "cntry_name",
+      "type": "string",
+      "description": "English name of the country or territory."
+    },
+    {
+      "name": "change",
+      "type": "string",
+      "description": "'gain' or 'loss'."
+    },
+    {
+      "name": "baseline_year",
+      "type": "int16",
+      "description": "Year the change is measured from: 1985 to 2024."
+    },
+    {
+      "name": "year",
+      "type": "int16",
+      "description": "Year the change is measured to, after baseline_year."
+    },
+    {
+      "name": "area_ha",
+      "type": "float64",
+      "description": "Area gained or lost between baseline_year and year, in hectares, corrected for map error by the producer. The 1985 baseline is shifted by one year; read AGENTS.md."
+    },
+    {
+      "name": "area_ha_lower95",
+      "type": "float64",
+      "description": "Lower bound of the 95% confidence interval of area_ha, in hectares."
+    },
+    {
+      "name": "area_ha_upper95",
+      "type": "float64",
+      "description": "Upper bound of the 95% confidence interval of area_ha, in hectares."
+    }
+  ],
+  "table:row_count": 208280,
+  "stac_extensions": [
+    "https://stac-extensions.github.io/table/v1.2.0/schema.json",
+    "https://stac-extensions.github.io/file/v2.1.0/schema.json",
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/version/v1.2.0/schema.json"
+  ],
+  "version": "4.1.12"
+}

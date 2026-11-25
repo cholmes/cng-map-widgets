@@ -8,7 +8,7 @@
 
 export const VERSION = '0.3.1';
 
-export { resolveDataset, descriptorFromCollection, collectionDownloadSupport } from './dataset-resolve.js';
+export { resolveDataset, descriptorFromCollection, collectionDownloadSupport, attributionFromCollection } from './dataset-resolve.js';
 export { CDN, loadHyparquet, loadHyparquetWriter, setHyparquetModules, clearHyparquetModules } from './cdn.js';
 export { download, downloadRequest } from './download.js';
 export { registerFormat, registerLazyFormat, formats, resolveFormat, getFormat, formatLoadState, onFormatState, registerEngine, engines } from './registry.js';
