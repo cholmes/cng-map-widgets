@@ -17,6 +17,7 @@
  *   'CEILING_EXCEEDED'|'FORMAT_UNAVAILABLE'|'FORMAT_CAPABILITY'|
  *   'FORMAT_LOAD_FAILED'|
  *   'DECK_LOAD_FAILED'|'DECK_MODULES_INVALID'|
+ *   'LAYER_INVALID'|'LAYER_UNSUPPORTED'|'LAYER_LOAD_FAILED'|
  *   'SINK_PERMISSION_DENIED'|'SINK_QUOTA_EXCEEDED'|'SINK_UNSUPPORTED'|
  *   'NETWORK'|'CORS'|'HTTP_STATUS'|'CANCELLED'|'INTERNAL'|
  *   'GEOCODER_NOT_LOADED'} CngErrorCode
@@ -37,6 +38,10 @@ const RETRYABLE_DEFAULTS = new Set([
   // fetch under its own name. (Its sibling DECK_MODULES_INVALID is not
   // retryable: the same modules fail the same way.)
   'DECK_LOAD_FAILED',
+  // A layer's style, tiles or collection document could not be fetched.
+  // (LAYER_INVALID and LAYER_UNSUPPORTED describe the layer itself and
+  // are not retryable.)
+  'LAYER_LOAD_FAILED',
 ]);
 
 export class CngError extends Error {

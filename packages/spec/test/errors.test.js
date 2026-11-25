@@ -12,3 +12,9 @@ test('DECK_LOAD_FAILED is retryable by default: it is a network fetch', () => {
 test('DECK_MODULES_INVALID is not retryable: the same modules fail the same way', () => {
   assert.equal(new CngError('stale', 'DECK_MODULES_INVALID').retryable, false);
 });
+
+test('LAYER_LOAD_FAILED is retryable by default; a bad or unsupported layer is not', () => {
+  assert.equal(new CngError('404', 'LAYER_LOAD_FAILED').retryable, true);
+  assert.equal(new CngError('bad', 'LAYER_INVALID').retryable, false);
+  assert.equal(new CngError('zarr', 'LAYER_UNSUPPORTED').retryable, false);
+});

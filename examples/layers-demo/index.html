@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cng-map-widgets — layer manager demo</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
+  #map { position: absolute; inset: 0; }
+  #info {
+    position: absolute; left: 10px; top: 10px; z-index: 5; width: 330px; padding: 12px 14px; border-radius: 8px;
+    background: rgba(255, 255, 255, 0.96); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  }
+  #info h1 { font-size: 15px; margin: 0 0 4px; }
+  #info p { font-size: 12px; color: #555; margin: 0 0 8px; }
+  #info label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; color: #555; margin-bottom: 3px; }
+  #addUrl { width: 100%; box-sizing: border-box; padding: 6px; font-size: 12px; }
+  #status { font-size: 12px; color: #555; margin-top: 8px; }
+  @media (prefers-color-scheme: dark) {
+    #info { background: rgba(30, 31, 34, 0.96); color: #e8e8e6; }
+    #info p, #info label, #status { color: #a3a3a0; }
+  }
+</style>
+<!--
+  Zero-build ESM. Map every @cngeo package this page reaches, including the
+  ones only reached transitively (@cngeo/stac imports @cngeo/extract-core).
+  deck.gl, pmtiles and the layer panel are NOT in this map: @cngeo/maplibre
+  loads each lazily, from a pinned URL, the first time a layer needs it.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/extract-core": "../../packages/extract-core/src/index.js",
+    "@cngeo/stac": "../../packages/stac/src/index.js",
+    "@cngeo/maplibre": "../../packages/maplibre/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="info">
+  <h1>Layer manager</h1>
+  <p>
+    Three layers over Jamaica in one stack: an OpenAerialMap image (a COG, drawn by deck.gl-raster), the
+    country's parishes (PMTiles, with the collection's own style) and a drawn box (GeoJSON). The panel at the
+    right toggles, fades, reorders and removes them; right-click a row, or press Shift+F10 on it, for more.
+  </p>
+  <label for="addUrl">Add a layer by URL</label>
+  <input id="addUrl" type="url" placeholder="collection.json, .pmtiles, .tif or .geojson — then Enter" />
+  <div id="status" role="status">Loading…</div>
+</div>
+
+<script type="module">
+import { layerSlug } from '@cngeo/spec';
+import { layersFromCollection } from '@cngeo/stac';
+import { LayerManager, LayerControl, urlAddProvider, addFromUrl } from '@cngeo/maplibre';
+
+const statusEl = document.getElementById('status');
+const setStatus = (text) => { statusEl.textContent = text; };
+const verifying = new URLSearchParams(location.search).has('verify');
+
+const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+const PARISHES = 'https://storage.googleapis.com/carto-open-catalogs/ocha-cod-jamaica/main/parishes/collection.json';
+// One OpenAerialMap scene north-west of Kingston: an 8-bit RGB COG, JPEG
+// compressed with a mask, in UTM zone 18N -- so it is reprojected in the
+// browser. (A 16-bit scene would need EXT_texture_norm16, which headless
+// Chrome lacks; that is imagery work for a later phase.)
+const IMAGERY = {
+  spec: 'cng-layer/1.0',
+  id: 'imagery',
+  title: 'Satellite image, St Catherine (OpenAerialMap)',
+  kind: 'cog',
+  source: { url: 'https://oin-hotosm-temp.s3.us-east-1.amazonaws.com/690b1275f30af1193ef09646/0/690b1275f30af1193ef09647.tif' },
+  bbox: [-77.032975, 18.031424, -76.982262, 18.079933],
+  attribution: [{ text: 'OpenAerialMap / Vantor open data program', license: 'CC-BY-4.0', shareAlike: false, share_alike: false }],
+};
+const AOI = {
+  spec: 'cng-layer/1.0',
+  id: 'aoi',
+  title: 'Area of interest',
+  kind: 'geojson',
+  source: {
+    data: {
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Polygon', coordinates: [[[-77.05, 18.02], [-76.965, 18.02], [-76.965, 18.09], [-77.05, 18.09], [-77.05, 18.02]]] },
+    },
+  },
+  bbox: [-77.05, 18.02, -76.965, 18.09],
+};
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: STYLE_URL,
+  center: [-77.0076, 18.0557],
+  zoom: 11.8,
+  // Only so verify.mjs can read pixels back; a real page leaves this off.
+  ...(verifying ? { canvasContextAttributes: { preserveDrawingBuffer: true }, fadeDuration: 0 } : {}),
+});
+
+try {
+  await new Promise((resolve) => map.once('load', resolve));
+
+  // The stack sits under the basemap's labels by default.
+  const manager = new LayerManager(map);
+  const deps = { layersFromCollection };
+  const control = new LayerControl({ manager, basemapStyleUrl: STYLE_URL, addProviders: [urlAddProvider(deps)] });
+  map.addControl(control, 'top-right');
+
+  manager.on('error', ({ id, error }) => setStatus(`error: ${error.code} — ${id}: ${error.message}`));
+
+  // A STAC collection becomes LayerSpecs with no further request.
+  const collection = await fetch(PARISHES).then((r) => r.json());
+  const [parishes] = layersFromCollection(collection, { baseUrl: PARISHES });
+
+  // Bottom to top.
+  await manager.add(IMAGERY);
+  await manager.add(parishes);
+  await manager.add(AOI);
+  await control.ready;
+
+  const report = () => {
+    const list = manager.list();
+    if (list.some((e) => e.status === 'error')) return;
+    setStatus(list.every((e) => e.status === 'ready') ? `ready: ${list.length} layers` : `loading: ${list.length} layers`);
+  };
+  manager.on('change', report);
+  report();
+
+  // The same code path the panel's Add button uses -- and the one automation can drive.
+  const addInput = document.getElementById('addUrl');
+  addInput.addEventListener('keydown', async (event) => {
+    if (event.key !== 'Enter' || !addInput.value) return;
+    setStatus('adding…');
+    try {
+      const { added, skipped } = await addFromUrl(manager, addInput.value, deps);
+      addInput.value = '';
+      if (skipped.length) setStatus(`${added.length} added; not added: ${skipped.map((s) => `${s.title} (${s.reason})`).join('; ')}`);
+      else report();
+    } catch (err) {
+      setStatus(`error: ${err.code ?? 'UNEXPECTED'} — ${err.message}`);
+    }
+  });
+
+  // --- Hooks for verify.mjs ---------------------------------------------------
+  const settle = () => new Promise((resolve) => {
+    map.triggerRepaint();
+    const done = () => requestAnimationFrame(() => requestAnimationFrame(resolve));
+    const timer = setTimeout(done, 2000);
+    map.once('idle', () => { clearTimeout(timer); done(); });
+  });
+  const grab = (bbox, inset = 0.3) => {
+    const a = map.project([bbox[0], bbox[3]]), b = map.project([bbox[2], bbox[1]]);
+    const w = b.x - a.x, h = b.y - a.y;
+    const rect = { x: a.x + w * inset, y: a.y + h * inset, w: w * (1 - 2 * inset), h: h * (1 - 2 * inset) };
+    const canvas = map.getCanvas(), scale = canvas.width / canvas.getBoundingClientRect().width;
+    const out = document.createElement('canvas'); out.width = 48; out.height = 48;
+    const ctx = out.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(canvas, rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale, 0, 0, 48, 48);
+    return Array.from(ctx.getImageData(0, 0, 48, 48).data);
+  };
+  /** The deck.gl layers currently handed to the overlay. */
+  const deckLayers = () => manager.deckLayers().map((l) => ({ id: l.id, opacity: l.props.opacity, visible: l.props.visible, beforeId: l.props.beforeId }));
+  /**
+   * Does the map's REAL draw order agree with manager.list()?
+   *
+   * `map.getLayersOrder()` is MapLibre's own answer, and unlike `getStyle()`
+   * it includes custom layers -- which is how interleaved deck.gl draws: one
+   * custom layer per slot, named `deck-maplibre-layer-group-before:<id>`.
+   * Nothing here reads LayerManager's bookkeeping: where each layer SHOULD
+   * be is worked out again from `list()` and compared with where MapLibre
+   * says it IS. (An earlier version took the raster's position from the
+   * manager itself, and so could not see the raster in the wrong place.)
+   */
+  const DECK_GROUP = 'deck-maplibre-layer-group-before:';
+  const orderCheck = () => {
+    const order = map.getLayersOrder();
+    const firstLabel = order.find((id) => !id.startsWith('cng-layer-') && !id.startsWith(DECK_GROUP) && map.getLayer(id)?.type === 'symbol');
+    const list = manager.list();
+    const ownLayers = (entry) => {
+      const prefix = `cng-layer-${layerSlug(entry.id)}`;
+      return order.filter((id) => id === prefix || id.startsWith(`${prefix}--`));
+    };
+    let previous = -1;
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      const own = ownLayers(entry);
+      let position;
+      if (own.length) position = order.indexOf(own[0]);
+      else {
+        // A deck.gl layer belongs just below the lowest style layer of the
+        // nearest style entry above it, or below the labels.
+        let expectedBefore = firstLabel;
+        for (let j = i + 1; j < list.length; j++) {
+          const above = ownLayers(list[j]);
+          if (above.length) { expectedBefore = above[0]; break; }
+        }
+        position = order.indexOf(`${DECK_GROUP}${expectedBefore}`);
+        if (position === -1) {
+          const groups = order.filter((id) => id.startsWith(DECK_GROUP)).join(', ') || 'none';
+          return { ok: false, why: `${entry.id}: no deck.gl layer group sits below "${expectedBefore}" (groups on the map: ${groups})` };
+        }
+        if (position !== order.indexOf(expectedBefore) - 1) return { ok: false, why: `${entry.id}: its deck.gl group is not directly below "${expectedBefore}"` };
+      }
+      if (position <= previous) return { ok: false, why: `${entry.id} is drawn at ${position}, not above the layer before it (${previous})` };
+      if (position >= order.indexOf(firstLabel)) return { ok: false, why: `${entry.id} is drawn above the labels` };
+      previous = position;
+    }
+    return { ok: true, why: '' };
+  };
+  const firstFillOf = (id) => map.getStyle().layers.find((l) => l.id.startsWith(`cng-layer-${layerSlug(id)}--`) && l.type === 'fill')?.id;
+
+  window.DEMO = {
+    map, manager, control, settle, grab,
+    styleUrl: STYLE_URL,
+    ids: { imagery: IMAGERY.id, parishes: parishes.id, aoi: AOI.id },
+    bbox: { imagery: IMAGERY.bbox, aoi: AOI.bbox },
+    slug: layerSlug,
+    /**
+     * Pixels where ONE layer is the thing that changes: the middle of the
+     * image for the raster; for the box, a strip inside the box but west of
+     * the image, where only the box (and the basemap) is drawn.
+     */
+    grabFor: (which) => (which === 'aoi' ? grab([-77.048, 18.03, -77.036, 18.08], 0) : grab(IMAGERY.bbox)),
+    addUrl: (url) => addFromUrl(manager, url, deps),
+    fillOpacity: (id) => map.getPaintProperty(firstFillOf(id), 'fill-opacity') ?? null,
+    /** How many features of a layer's vector tiles are actually on screen. */
+    renderedFeatures: (id) => {
+      const prefix = `cng-layer-${layerSlug(id)}--`;
+      const layers = map.getStyle().layers.map((l) => l.id).filter((lid) => lid.startsWith(prefix));
+      return layers.length ? map.queryRenderedFeatures({ layers }).length : 0;
+    },
+    /** Layout visibility of every style layer a LayerSpec made, as the map has it. */
+    visibilityOnMap: (id) => {
+      const prefix = `cng-layer-${layerSlug(id)}--`;
+      return map.getStyle().layers.filter((l) => l.id.startsWith(prefix)).map((l) => map.getLayoutProperty(l.id, 'visibility') ?? 'visible');
+    },
+    /** Everything this library put in MapLibre's real layer order: our style layers and deck.gl's groups. */
+    oursInRealOrder: () => map.getLayersOrder().filter((id) => id.startsWith('cng-layer-') || id.startsWith(DECK_GROUP)),
+    /** The text of every attribution box on the map. */
+    credits: () => [...document.querySelectorAll('.maplibregl-ctrl-attrib')].filter((el) => !el.hidden).map((el) => el.textContent.trim()).join(' || '),
+    snapshot() {
+      const order = orderCheck();
+      return {
+        list: manager.list().map((e) => ({ id: e.id, title: e.title, kind: e.kind, status: e.status, visible: e.visible, opacity: e.opacity, note: e.note ?? null, error: e.error?.message ?? null })),
+        deck: deckLayers(),
+        ours: map.getLayersOrder().filter((id) => id.startsWith('cng-layer-') || id.startsWith(DECK_GROUP)),
+        orderMatches: order.ok,
+        orderWhy: order.why,
+      };
+    },
+  };
+} catch (err) {
+  setStatus(`error: ${err?.code ?? 'UNEXPECTED'} — ${err?.message ?? err}`);
+  throw err;
+}
+</script>
+</body>
+</html>

@@ -323,6 +323,117 @@ measured weight that comparison was based on.
 
 ---
 
+## Layers
+
+A layer stack for a map: styled vector tiles, COGs and GeoJSON in one ordered
+list, with a panel to drive it. Working example:
+[`examples/layers-demo`](../../examples/layers-demo/index.html).
+
+```js
+import { LayerManager, LayerControl, urlAddProvider } from '@cngeo/maplibre';
+import { layersFromCollection } from '@cngeo/stac';
+
+const manager = new LayerManager(map);                 // the stack sits under the basemap's labels
+map.addControl(new LayerControl({
+  manager,
+  basemapStyleUrl: STYLE_URL,                          // groups the basemap's layers under one row
+  addProviders: [urlAddProvider({ layersFromCollection })],
+}), 'top-right');
+
+const url = 'https://storage.googleapis.com/carto-open-catalogs/ocha-cod-jamaica/main/parishes/collection.json';
+const [parishes] = layersFromCollection(await fetch(url).then((r) => r.json()), { baseUrl: url });
+await manager.add(parishes);                           // drawn with the collection's own style
+
+await manager.add({
+  spec: 'cng-layer/1.0', id: 'image', kind: 'cog',
+  source: { url: 'https://example.org/scene.tif' },    // read by range request, reprojected in the browser
+});
+manager.move('image', 0);                              // to the bottom; the map follows
+```
+
+### `new LayerManager(map, options?)`
+
+One bottom-first array of [`LayerSpec`s](../spec/README.md#layers) is the
+truth; the map is made to agree with it.
+
+| member | notes |
+|---|---|
+| `add(spec, { visible?, opacity?, index? })` | `Promise<LayerEntry>`. Rejects `LAYER_INVALID` (bad spec; an id already in the stack, or one that becomes the same map id, e.g. `"a b"` and `"a/b"`) or `LAYER_UNSUPPORTED` (a `table`, an `unsupported` layer, a kind with no renderer, a PMTiles archive of raster tiles). A load failure rejects with `LAYER_LOAD_FAILED`, and the layer **stays in the list** with `status: 'error'`. Called before the map's style has loaded, it waits for it. |
+| `remove(id)` | Safe while the layer is still loading. |
+| `setVisible(id, bool)` / `setOpacity(id, 0..1)` | Opacity is clamped, and always scaled from what the layer's style defined. |
+| `move(id, toIndex)` | Index in the bottom-first list. |
+| `list()` / `get(id)` | Copies: `{ id, title, kind, visible, opacity, status, error?, note?, bbox?, attribution, spec }`. |
+| `on('change' \| 'error', fn)` | Returns an unsubscribe. `change`: `{ type, id }`, type one of `add ready remove move visible opacity note error`. `error`: `{ id, error }`. |
+| `attribution({ deckOnly? })` | What must be credited for the layers currently shown: each credit with its layer's `id` and `title`. |
+| `settled()` | Resolves when no add or rebuild is in flight. |
+| `deckLayers()` | The deck.gl layer objects currently on the map. |
+| `destroy()` | Takes everything off the map. |
+
+Options: `beforeId` — the MapLibre layer the stack sits just below (default:
+the basemap's first symbol layer; `null` for above everything);
+`addProtocol` — MapLibre's `addProtocol`, needed for PMTiles (default:
+`globalThis.maplibregl.addProtocol`, so pass it when MapLibre is an ES-module
+import); `renderers`, `loadDeck` — per-instance overrides.
+
+A `note` is something worth telling the user that is not a failure: a
+published style that could not be loaded (the layer is drawn with a default
+style), a tile that failed.
+
+**A layer can become an error after it was ready.** deck.gl reports a file it
+cannot open (a 404) or cannot draw (a single-band Float32 COG has no default
+rendering) some time after the layer was handed over. The entry then turns to
+`status: 'error'` with the reason, `error` and `change` fire, and nothing of
+it stays on the map. A PMTiles archive is checked before anything is added:
+one that cannot be read is `LAYER_LOAD_FAILED`.
+
+**Credit.** A layer's `attribution` is put on its MapLibre sources, so
+MapLibre's own attribution control shows it while the layer is shown. deck.gl
+layers have no source, so their credits appear in a second small box in the
+same corner. The text is escaped and a credit links only to an `http(s)` URL
+(`attributionHtml()` is exported for a host that wants to render credits itself).
+
+Not yet handled: a 16-bit image shows nothing in a browser without
+`EXT_texture_norm16` and nothing reports it (`deckSupport()` tells you
+whether the browser has it). Stretches and band composites are imagery work
+for a later phase.
+
+**What draws what.** `pmtiles-vector` and `geojson` are MapLibre style layers.
+`cog` is drawn by Development Seed's deck.gl-raster in one shared, interleaved
+deck.gl overlay, so a raster can sit *between* two vector layers. deck.gl
+arrives as one prebuilt module the first time a raster is added (446 KB gzip;
+see [`vendor/README.md`](vendor/README.md)); a page with only vector layers
+never loads it. `registerLayerRenderer(kind, factory)` adds or replaces a renderer.
+
+After `map.setStyle()`, which drops every added layer, the stack is put back
+in the same order and state.
+
+### `new LayerControl({ manager, addProviders?, basemapStyleUrl?, collapsed? })`
+
+The panel: toggle, opacity, drag to reorder, and a menu per row (right-click,
+or Shift+F10) with remove, move and zoom. (Its Rename changes the row's label
+in the panel only; the layer's `title` is not changed.) `control.ready`
+resolves when it is on the map.
+
+It is opengeos'
+[maplibre-gl-layer-control](https://github.com/opengeos/maplibre-gl-layer-control)
+0.18.3, loaded from a pinned URL, with three things added: it is themed by
+the same `--cng-*` tokens as the geocoder, with dark mode; it is
+keyboard-operable (Alt+↑/↓ on a row's checkbox reorders it; the menu takes
+arrow keys, Enter and Escape); and it has an **Add** button.
+
+`addProviders` are what the Add button offers.
+`urlAddProvider({ layersFromCollection })` accepts a `collection.json`,
+`.pmtiles`, `.tif` or `.geojson` URL. Reading a STAC collection is passed in
+because this package does not import `@cngeo/stac`.
+
+### Loaders
+
+Three third-party modules load lazily, each from an exact pinned URL, each
+with an injection seam for a bundled host: `setDeckModules()`,
+`setPmtilesModules()`, `setLayerControlModules()`.
+
+---
+
 ## Dropdown states
 
 Besides plain options, the listbox renders: a spinner row while loading or

@@ -320,6 +320,53 @@ known follow-up.
 | `yieldToMain()` | `() => Promise<void>` | `scheduler.yield()` where available (Chrome 115+), else `setTimeout(0)`. |
 | `forEachChunked(items, fn, opts?)` | `(…) => Promise<void>` | Yields every `opts.chunkSize` (500) items; `opts.signal` aborts. |
 
+### Layers
+
+A `LayerSpec` (`cng-layer/1.0`) is plain JSON describing one thing a map can
+show. `@cngeo/stac` produces them; `@cngeo/maplibre`'s `LayerManager` draws them.
+
+| export | notes |
+|---|---|
+| `LAYER_SPEC` | `'cng-layer/1.0'`. |
+| `LAYER_KINDS` | `['pmtiles-vector','cog','scenes','geojson','timeline','table','unsupported']`, frozen. |
+| `RENDERABLE_KINDS` | The kinds a map can draw: all but `table` and `unsupported`. |
+| `validateLayerSpec(spec)` | Returns a normalised copy (`title` defaults to `id`, `attribution` to `[]`) or throws `LAYER_INVALID` with `context.field`. |
+| `layerSlug(id)` | The id reduced to `[A-Za-z0-9_-]`, for use inside MapLibre layer ids. |
+
+```js
+import { validateLayerSpec } from '@cngeo/spec';
+
+const layer = validateLayerSpec({
+  spec: 'cng-layer/1.0',
+  id: 'damage-sites',
+  kind: 'pmtiles-vector',
+  source: {
+    url: 'https://example.org/damage-sites.pmtiles',
+    layers: ['damage-sites'],                              // vector layer names in the archive
+    style: { url: 'https://example.org/styles/default.json' },   // optional MapLibre style
+  },
+  bbox: [-175.19, -21.39, -174.93, -21.12],
+});
+layer.title;        // 'damage-sites' -- defaulted from id
+layer.attribution;  // []
+```
+
+`source` by kind:
+
+| kind | `source` |
+|---|---|
+| `pmtiles-vector` | `{ url, layers: string[], style?: { url } }` |
+| `cog` | `{ url }` |
+| `geojson` | `{ data }` (a GeoJSON object) or `{ url }` |
+| `scenes` | `{ collectionUrl, items: { kind: 'parquet', url } \| { kind: 'partitioned' }, displayAsset? }` |
+| `table` | `{ url }` — parquet with no geometry; described, not drawn |
+| `unsupported` | `{ reason, assetTypes }` — recognised but not drawable; says why |
+| `timeline` | defined by `@cngeo/timeline` |
+
+Every URL must be absolute `http(s)`: the `source` URLs above, `thumbnail`,
+and each `attribution[].url` (they end up in an `<img src>` and an `href`).
+`bbox` is `[w, s, e, n]` with `w <= e`.
+
 ### Errors
 
 | export | notes |
@@ -332,7 +379,14 @@ known follow-up.
 **The `code` is the API. Messages are for humans and may be reworded; codes may
 not.** `retryable` defaults to `true` for `INDEX_FETCH_FAILED`,
 `DATASET_UNRESOLVED`, `SINK_PERMISSION_DENIED`, `NETWORK`,
-`FORMAT_LOAD_FAILED` and `DECK_LOAD_FAILED`, and `false` otherwise.
+`FORMAT_LOAD_FAILED`, `DECK_LOAD_FAILED` and `LAYER_LOAD_FAILED`, and `false`
+otherwise.
+
+Three codes belong to layers: `LAYER_INVALID` — a `LayerSpec` failed
+validation (`context.field`), or its id is already in the stack
+(`context.reason: 'duplicate'`); `LAYER_UNSUPPORTED` — nothing can draw this
+kind of layer here; `LAYER_LOAD_FAILED` — a layer's style, tiles or
+collection document could not be fetched; retry.
 
 Two codes belong to `@cngeo/maplibre`'s deck.gl loader
 (`packages/maplibre/src/deck-loader.js`): `DECK_LOAD_FAILED` — the deck.gl

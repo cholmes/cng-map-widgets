@@ -241,6 +241,16 @@ function deriveTimeColumn(columns) {
   return timeLike?.name;
 }
 
+/**
+ * A collection's licence and licensor as `Attribution[]` -- the same
+ * derivation `descriptorFromCollection` uses, exported so `@cngeo/stac`'s
+ * `layersFromCollection` credits a layer exactly as a download of it would.
+ * @param {Record<string, any>} collection
+ */
+export function attributionFromCollection(collection) {
+  return deriveAttribution(collection);
+}
+
 function deriveAttribution(collection) {
   const license = collection.license;
   const providers = collection.providers ?? [];
