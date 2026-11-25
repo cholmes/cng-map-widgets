@@ -37,6 +37,8 @@ import { attributionHtml } from './layer-attribution.js';
  * @property {Function|undefined} addProtocol   MapLibre's `addProtocol`, for `pmtiles://`.
  * @property {() => Promise<any>} deck    Loads deck.gl and makes sure the shared overlay exists.
  * @property {(text: string) => void} note   Record something a user should know (a style that could not be loaded).
+ * @property {() => void} redraw          Ask for `deckLayers()` to be read again: the renderer's layers changed by themselves.
+ * @property {(cause: any) => void} fail  Report a failure that arrived after `add()` resolved.
  * @typedef {Object} LayerRenderer
  * @property {(state: LayerState) => Promise<void>} add
  * @property {() => void} remove
@@ -44,6 +46,7 @@ import { attributionHtml } from './layer-attribution.js';
  * @property {(opacity: number) => void} setOpacity
  * @property {() => string[]} [styleLayerIds]   Bottom-first ids of the MapLibre layers it added.
  * @property {(state: LayerState, beforeId: string|undefined) => object[]} [deckLayers]
+ * @property {() => any} [handle]   What a control drives this layer with; see `LayerManager.handle(id)`.
  * @typedef {Object} LayerEntry
  * @property {string} id
  * @property {string} title
@@ -424,6 +427,12 @@ export class LayerManager {
         entry.note = text;
         this._emit('change', { type: 'note', id: entry.id });
       },
+      // For a renderer whose deck.gl layers change on their own (a timeline's
+      // follow its selection): describe them again from `deckLayers()`.
+      redraw: () => {
+        if (entry.removed || this._destroyed) return;
+        this._syncDeck();
+      },
       // For a failure that arrives AFTER add() resolved -- deck.gl reports a
       // file it cannot open or cannot draw through a layer callback, long
       // after the layer object was handed over.
@@ -446,6 +455,16 @@ export class LayerManager {
       this._map.addControl(this._overlay);
     }
     return mods;
+  }
+
+  /**
+   * What a layer's renderer offers a control to drive it with (a timeline
+   * layer's session), or null: most renderers offer nothing.
+   * @param {string} id
+   */
+  handle(id) {
+    const entry = this._find(id);
+    return entry?.renderer?.handle?.() ?? null;
   }
 
   /**
