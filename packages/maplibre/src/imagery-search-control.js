@@ -39,6 +39,8 @@ const CSS = `
 .cng-imagery-search.is-collapsed .cng-is-body { display: none; }
 .cng-imagery-search.is-collapsed .cng-is-header { border-bottom: 0; }
 .cng-is-body { display: flex; flex-direction: column; min-height: 0; }
+/* The form, status and credit keep their height; only the results list gives way and scrolls. */
+.cng-is-header, .cng-is-form, .cng-is-status, .cng-is-credit { flex: none; }
 .cng-is-form { padding: 8px 10px; display: grid; gap: 6px; border-bottom: 1px solid var(--cng-border); }
 .cng-is-form fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .cng-is-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }

@@ -53,6 +53,8 @@ const CSS = `
 .cng-catalog-search.is-collapsed .cng-cs-body { display: none; }
 .cng-catalog-search.is-collapsed .cng-cs-header { border-bottom: 0; }
 .cng-cs-body { display: flex; flex-direction: column; min-height: 0; }
+/* The form and the status keep their height; only the results list gives way and scrolls. */
+.cng-cs-header, .cng-cs-form, .cng-cs-status { flex: none; }
 .cng-cs-form { padding: 8px 10px; display: grid; gap: 6px; border-bottom: 1px solid var(--cng-border); }
 .cng-cs-form input[type="search"], .cng-cs-form select {
   font: inherit; color: var(--cng-ink); background: var(--cng-bg); border: 1px solid var(--cng-border); border-radius: 3px; padding: 4px 6px; width: 100%; min-width: 0;
@@ -435,7 +437,7 @@ export class CatalogSearchControl {
     // Only the hovered result is drawn: fifty overlapping extents, a third of
     // them the whole world, would say nothing.
     const hovered = ['==', ['get', 'hovered'], true];
-    if (!map.getLayer(EXTENT_FILL)) map.addLayer({ id: EXTENT_FILL, type: 'fill', source: EXTENT_SOURCE, filter: hovered, paint: { 'fill-color': this._color, 'fill-opacity': 0.15 } }, before);
+    if (!map.getLayer(EXTENT_FILL)) map.addLayer({ id: EXTENT_FILL, type: 'fill', source: EXTENT_SOURCE, filter: hovered, paint: { 'fill-color': this._color, 'fill-opacity': 0.08 } }, before);
     if (!map.getLayer(EXTENT_LINE)) map.addLayer({ id: EXTENT_LINE, type: 'line', source: EXTENT_SOURCE, filter: hovered, paint: { 'line-color': this._color, 'line-width': 2 } }, before);
     // Above the layer stack is the manager's to keep (see LayerManager.setTopLayers).
     this._manager.setTopLayers?.([EXTENT_FILL, EXTENT_LINE], EXTENT_SOURCE);

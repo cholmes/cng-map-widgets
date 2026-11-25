@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cng-map-widgets — catalog search</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; }
+  #map { position: absolute; inset: 0; }
+  /* Top centre: clear of the search panel (top left), the layer panel (top right) and the credits (bottom). */
+  #info {
+    position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 5; width: min(440px, calc(100vw - 700px));
+    min-width: 260px; padding: 8px 12px; border-radius: 8px; box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.96); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  }
+  #info h1 { font-size: 14px; margin: 0 0 2px; }
+  #info p { font-size: 12px; color: #555; margin: 0; }
+  #status { font-size: 12px; color: #555; margin-top: 6px; overflow-wrap: anywhere; }
+  @media (prefers-color-scheme: dark) {
+    #info { background: rgba(30, 31, 34, 0.96); color: #e8e8e6; }
+    #info p, #status { color: #a3a3a0; }
+  }
+</style>
+<!--
+  Zero-build ESM. Map every @cngeo package this page reaches, including the
+  ones only reached transitively (@cngeo/stac imports @cngeo/extract-core).
+  hyparquet, MiniSearch, deck.gl, pmtiles and the layer panel are NOT in this
+  map: each package loads its own, lazily, from a pinned URL.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/extract-core": "../../packages/extract-core/src/index.js",
+    "@cngeo/stac": "../../packages/stac/src/index.js",
+    "@cngeo/maplibre": "../../packages/maplibre/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="info">
+  <h1>Catalog search</h1>
+  <p>
+    Every collection in the Portolan registry, searched in your browser: the registry publishes its index as
+    one parquet file, and this page reads the tenth of it a search needs. Find a layer, then add it to the map.
+  </p>
+  <div id="status" role="status">Loading…</div>
+</div>
+
+<script type="module">
+import { layerSlug } from '@cngeo/spec';
+import { CatalogIndex, layersFromCollection } from '@cngeo/stac';
+import { LayerManager, LayerControl, CatalogSearchControl, catalogAddProvider, urlAddProvider } from '@cngeo/maplibre';
+
+const statusEl = document.getElementById('status');
+const setStatus = (text) => { statusEl.textContent = text; };
+const params = new URLSearchParams(location.search);
+const verifying = params.has('verify');
+
+// The registry's index, or any other `collections.parquet` (or a catalog.json
+// that links to one): `?index=<url>`.
+const INDEX_URL = params.get('index') ?? 'https://registry.portolan-sdi.org/v0.1/collections.parquet';
+const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: STYLE_URL,
+  center: [10, 25],
+  zoom: 1.6,
+  // Only so verify.mjs can read pixels back; a real page leaves this off.
+  ...(verifying ? { canvasContextAttributes: { preserveDrawingBuffer: true }, fadeDuration: 0 } : {}),
+});
+
+try {
+  await new Promise((resolve) => map.once('load', resolve));
+
+  const index = new CatalogIndex(INDEX_URL);
+  const manager = new LayerManager(map);
+  manager.on('error', ({ id, error }) => setStatus(`error: ${error.code} — ${id}: ${error.message}`));
+
+  const control = new CatalogSearchControl({ index, manager, title: 'Portolan registry' });
+  map.addControl(control, 'top-left');
+  // "Add" in the layer panel leads to the catalog, or takes a URL.
+  map.addControl(new LayerControl({ manager, basemapStyleUrl: STYLE_URL, addProviders: [catalogAddProvider(control), urlAddProvider({ layersFromCollection })] }), 'top-right');
+
+  await control.ready;
+  const state = control.model.state;
+  if (state.status === 'error') setStatus(`error: ${state.error?.code ?? 'UNEXPECTED'} — ${state.error?.message ?? state.error}`);
+  else setStatus(`ready: ${state.count.toLocaleString('en-US')} collections`);
+
+  // --- Hooks for verify.mjs ---------------------------------------------------
+  const settle = () => new Promise((resolve) => {
+    map.triggerRepaint();
+    const done = () => requestAnimationFrame(() => requestAnimationFrame(resolve));
+    const timer = setTimeout(done, 2500);
+    map.once('idle', () => { clearTimeout(timer); done(); });
+  });
+  window.DEMO = {
+    map, manager, index, control, settle,
+    styleUrl: STYLE_URL,
+    /** The control's CURRENT model: it makes a new one if it is removed and added again. */
+    get model() { return control.model; },
+    /** How many features of a layer's vector tiles are actually on screen. */
+    renderedFeatures: (id) => {
+      const prefix = `cng-layer-${layerSlug(id)}--`;
+      const layers = map.getStyle().layers.map((l) => l.id).filter((lid) => lid.startsWith(prefix));
+      return layers.length ? map.queryRenderedFeatures({ layers }).length : 0;
+    },
+    /** The text of every attribution box on the map. */
+    credits: () => [...document.querySelectorAll('.maplibregl-ctrl-attrib')].map((el) => el.textContent.trim()).join(' || '),
+  };
+} catch (err) {
+  setStatus(`error: ${err?.code ?? 'UNEXPECTED'} — ${err?.message ?? err}`);
+  throw err;
+}
+</script>
+</body>
+</html>
