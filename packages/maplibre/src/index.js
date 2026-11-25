@@ -6,6 +6,7 @@ export { GeocoderControl } from './geocoder-control.js';
 export { addAreaLayer } from './area-layer.js';
 export { viewportProvider } from './viewport.js';
 export { fitAreaBounds } from './fit-bounds.js';
+export { LayerManager, registerLayerRenderer } from './layer-manager.js';
 export {
   DECK_BUNDLE_URL,
   DECK_REQUIRED_EXPORTS,
