@@ -66,7 +66,19 @@ async function createSession(ctx) {
   const chunks = T.validateChunks(source.chunks);
 
   let tileErrors = 0;
-  const env = { source, slug, deck: ctx.deck, timeline: T, onTileError: () => { tileErrors += 1; } };
+  let tileNoteTimer = null;
+  // A tile that fails leaves a hole in the map and a short count in the
+  // track, while its chunk is perfectly "loaded". Said on the layer -- once
+  // for a burst, not once a tile.
+  const onTileError = () => {
+    tileErrors += 1;
+    if (tileNoteTimer !== null) return;
+    tileNoteTimer = setTimeout(() => {
+      tileNoteTimer = null;
+      if (!destroyed && started) report(set.state);
+    }, 500);
+  };
+  const env = { source, slug, deck: ctx.deck, timeline: T, onTileError };
   const formats = {};
   for (const name of new Set(chunks.map((c) => c.format))) {
     const factory = FORMATS.get(name);
@@ -101,16 +113,15 @@ async function createSession(ctx) {
   /** A chunk that will not load is a note; nothing loadable at all is a failed layer. */
   const report = (state) => {
     if (!started) return;
-    if (!state.failed.length) {
-      ctx.note('');
-      return;
-    }
-    if (!state.loaded.length && !state.pending.length) {
+    if (state.failed.length && !state.loaded.length && !state.pending.length) {
       const first = state.failed[0].error;
       ctx.fail(first instanceof CngError ? first : new CngError(String(first?.message ?? first), 'LAYER_LOAD_FAILED', { context: { id: spec.id } }));
       return;
     }
-    ctx.note(`Not loaded: ${state.failed.map((f) => `${f.id} (${f.error?.message ?? f.error})`).join('; ')}`);
+    const said = [];
+    if (state.failed.length) said.push(`Not loaded: ${state.failed.map((f) => `${f.id} (${f.error?.message ?? f.error})`).join('; ')}.`);
+    if (tileErrors > 0) said.push(`${tileErrors.toLocaleString('en-US')} tile${tileErrors === 1 ? '' : 's'} could not be loaded: the map and the counts are missing what was in ${tileErrors === 1 ? 'it' : 'them'}.`);
+    ctx.note(said.join(' '));
   };
 
   set.on('change', (state) => {
@@ -178,6 +189,7 @@ async function createSession(ctx) {
       destroyed = true;
       clearTimeout(refreshTimer);
       clearTimeout(startTimer);
+      clearTimeout(tileNoteTimer);
       map.off('moveend', onMoveEnd);
       listeners.clear();
       set.destroy();

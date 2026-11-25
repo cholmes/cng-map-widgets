@@ -622,21 +622,37 @@ bundler: `setTimelineModules(await import('@cngeo/timeline'))`.
 |---|---|
 | `chunks` | Chunk descriptors: `{ id, start, end, unit, format, url, priority? }`. See [`@cngeo/timeline`](../timeline/README.md); `chunksFromStac` in `@cngeo/stac` builds them from a collection. |
 | `aggregate` | `{ layer?, prefix = 'count_', idProperty?, maxzoom? }` — a vector layer whose features have a count per bucket. The selection is the **sum of its columns**, so moving it recolours the map and fetches nothing. `false` when the archive has none. |
-| `points` | `{ layer, property, minzoom?, color? }` — a layer of features that each carry their own day (`20240105`, or an ISO date). The selection filters them on the GPU. |
+| `points` | `{ layer, property, minzoom?, color? }` — a layer of features that each carry their own day (`20240105`, or an ISO date). The selection filters them on the GPU. `color` is an `[r, g, b, a]`, or data: `{ property: 'frp', stops: [[0, '#4a5bd4'], [50, '#c9cf4a'], …] }`. |
 | `stops` | Cell colours by count: `[[1, '#2c3d5a'], …]`. Default: `@cngeo/timeline`'s `COUNT_RAMP`. |
 | `cap` | Most big chunks a view loads. Default 3. |
 | `open` | `{ selectDays = 5, viewDays = 100 }`: where it opens, counted back from the end of the record. |
 
+A `source` is plain data (it is part of a `LayerSpec`), so nothing in it is a
+function.
+
 An archive's time axis is read from its own metadata — a `cng:timeline`
 (or `firms:timeline`) declaration `{ unit, min, max }`, else the bucket
-columns its `vector_layers` declare — never from a sampled feature.
+columns its `vector_layers` declare — never from a sampled feature. A chunk
+whose span is not in its name (a rolling "latest", an overview that lags the
+present) can say its own:
+
+```js
+import { describePmtilesChunk } from '@cngeo/maplibre';
+const latest = { ...(await describePmtilesChunk(`${BASE}/fire-latest.pmtiles`)), id: 'latest', priority: 1 };
+// { unit: 'day', start: '20261118', end: '20261125', url, format: 'pmtiles', id: 'latest', priority: 1 }
+```
+
+A descriptor that claims more than its archive holds shows the difference as
+loaded-and-empty: false zeros.
 
 However many chunks are mounted, the layer manager has **one entry**: hide,
 fade, reorder and remove act on all of it. `manager.handle(id)` is its
 **session** — `state`, `on('change')`, `setView()`, `setSelection()`,
 `retry()`, `tiles()` — for a host that wants its own controls. A chunk that
 will not load is a note on the layer and a gap in the track; the layer fails
-only when nothing can be loaded.
+only when nothing can be loaded. A *tile* that fails is a note too, with how
+many: its chunk is otherwise "loaded", and the hole it leaves in the map and
+the short count in the track would say nothing.
 
 **The control.** Drag the selection or its handles; drag elsewhere to pan;
 wheel or pinch to zoom; shift-drag to draw a selection; arrow keys move it.

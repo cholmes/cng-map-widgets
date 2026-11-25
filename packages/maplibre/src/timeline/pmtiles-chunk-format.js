@@ -31,6 +31,7 @@ import { CngError } from '@cngeo/spec';
 import { loadDeck as defaultLoadDeck } from '../deck-loader.js';
 import { loadPmtiles as defaultLoadPmtiles } from '../pmtiles-loader.js';
 import { layerZooms, timelineFromMetadata, vectorLayers } from './pmtiles-meta.js';
+import { dayNumbersOfBucket, keyOfDayNumber } from './days.js';
 import { DECK_TILE_SIZE, TileCache, countFor, fillFor, pointFilter, tileZoom, windowPlan } from './tile-cells.js';
 
 /** The count ramp of `@cngeo/timeline` (`COUNT_RAMP`), for a format given no stops. */
@@ -77,6 +78,50 @@ export class ByteLru {
   }
 }
 
+/**
+ * A chunk descriptor's `unit`, `start` and `end` for a PMTiles archive, from
+ * what the archive itself declares (see `timelineFromMetadata`) -- for an
+ * archive whose span is not in its name: a rolling "latest", an all-time
+ * overview that lags the present. Add an `id` (and a `priority`) to the result.
+ *
+ * @param {string} url
+ * @param {{ layer?: string, prefix?: string, loadPmtiles?: () => Promise<object> }} [options]
+ * @returns {Promise<{ unit: 'day'|'month', start: string, end: string, url: string, format: 'pmtiles' }>}
+ * @throws {CngError} `TIMELINE_INVALID` when the archive says nothing about time.
+ */
+export async function describePmtilesChunk(url, options = {}) {
+  const pm = await (options.loadPmtiles ?? defaultLoadPmtiles)();
+  const source = new pm.FetchSource(url);
+  source.chromeWindowsNoCache = true;
+  const metadata = await new pm.PMTiles(source).getMetadata();
+  const { unit, min, max } = timelineFromMetadata(metadata, { layer: options.layer, prefix: options.prefix });
+  return { unit, start: keyOfDayNumber(dayNumbersOfBucket(min, unit)[0]), end: keyOfDayNumber(dayNumbersOfBucket(max, unit)[1]), url, format: 'pmtiles' };
+}
+
+const POINT_ALPHA = 235;
+
+/**
+ * A point's fill, from however it was said: nothing (one orange), an
+ * `[r, g, b, a]`, a function of the feature's properties, or -- the form a
+ * LayerSpec can carry, being plain data -- `{ property, stops }`, where each
+ * stop is `[value, '#rrggbb' | [r, g, b]]` and a point takes the colour of the
+ * highest stop its value reaches.
+ */
+function pointColourOf(color) {
+  if (typeof color === 'function') return (f) => color(f.properties);
+  if (Array.isArray(color)) return color;
+  if (color && typeof color.property === 'string' && Array.isArray(color.stops) && color.stops.length) {
+    const stops = color.stops.map(([value, c]) => [value, typeof c === 'string' ? [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16), POINT_ALPHA] : [c[0], c[1], c[2], c[3] ?? POINT_ALPHA]]);
+    return (f) => {
+      const v = f.properties?.[color.property] ?? -Infinity;
+      let out = stops[0][1];
+      for (const [value, rgba] of stops) if (v >= value) out = rgba;
+      return out;
+    };
+  }
+  return [230, 85, 13, POINT_ALPHA];
+}
+
 /** One device pixel, whatever the display: deck.gl's 1px line is two on a 2x screen and cells read as a heavy grid. */
 const hairline = () => Math.max(1 / (globalThis.devicePixelRatio || 1), 1 / 3);
 
@@ -85,8 +130,10 @@ const hairline = () => Math.max(1 / (globalThis.devicePixelRatio || 1), 1 / 3);
  * @param {{ layer?: string, prefix?: string, idProperty?: string|null, maxzoom?: number }|false} [options.aggregate]
  *   The layer of cells with a count per bucket. `layer` defaults to the first that has bucket columns;
  *   `idProperty` names a cell so one split across tiles is counted once. `false` for an archive with no such layer.
- * @param {{ layer: string, property: string, minzoom?: number, color?: number[]|((properties: object) => number[]),
+ * @param {{ layer: string, property: string, minzoom?: number,
+ *   color?: number[]|{ property: string, stops: [number, string|number[]][] }|((properties: object) => number[]),
  *   radiusMeters?: number }} [options.points]  A layer of features that each carry their own day.
+ *   `color` as `{ property, stops }` is plain data, so it can be written in a LayerSpec.
  * @param {[number, string][]|((o: { buckets: number, totalBuckets: number, zoom: number }) => [number, string][])} [options.stops]
  *   Cell colours by count. A function can scale them to how much of the record is selected.
  * @param {number} [options.cellOpacity]  Default 0.74.
@@ -109,7 +156,7 @@ export function pmtilesChunkFormat(options = {}) {
   const loadPmtiles = options.loadPmtiles ?? defaultLoadPmtiles;
   const bytes = new ByteLru(options.byteCacheBytes ?? 64 << 20);
   const stopsFor = (context) => (typeof options.stops === 'function' ? options.stops(context) : options.stops) ?? DEFAULT_STOPS;
-  const pointColour = typeof points?.color === 'function' ? (f) => points.color(f.properties) : (points?.color ?? [230, 85, 13, 235]);
+  const pointColour = pointColourOf(points?.color);
   let pointFilterExtension = null;
 
   return {
@@ -172,10 +219,16 @@ export function pmtilesChunkFormat(options = {}) {
           data = found.data;
           bytes.set(key, data);
         }
-        const features = await deck.MVTLoader.parse(data, { ...fetchContext.loadOptions, worker: false });
+        // The loader is called directly, so nothing merges its defaults in:
+        // without them it has no output shape, and features carry no
+        // `layerName` to be split by. deck.gl's own (coordinates, tileIndex) win.
+        const given = fetchContext.loadOptions ?? {};
+        const parsed = await deck.MVTLoader.parse(data, { ...given, worker: false, mvt: { ...deck.MVTLoader.options?.mvt, ...given.mvt } });
+        // An array of features, or a table that holds one: which, depends on the loader's version and options.
+        const features = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.features) ? parsed.features : [];
         const cells = [];
         const dots = [];
-        for (const f of Array.isArray(features) ? features : []) {
+        for (const f of features) {
           const name = f.properties?.layerName;
           if (points && name === points.layer) dots.push(f);
           else if (!info.aggregateLayer || name === info.aggregateLayer) cells.push(f);

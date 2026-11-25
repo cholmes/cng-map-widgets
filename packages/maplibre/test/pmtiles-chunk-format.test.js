@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isCngError } from '@cngeo/spec';
-import { pmtilesChunkFormat, ByteLru } from '../src/timeline/pmtiles-chunk-format.js';
+import { pmtilesChunkFormat, describePmtilesChunk, ByteLru } from '../src/timeline/pmtiles-chunk-format.js';
 
 const fields = (...names) => Object.fromEntries(names.map((n) => [n, 'Number']));
 const METADATA = {
@@ -60,9 +60,13 @@ function fakes({ metadata = METADATA, tiles = {} } = {}) {
     GeoJsonLayer: class GeoJsonLayer extends Layer {},
     DataFilterExtension,
     MVTLoader: {
+      // The real loader's defaults. Called directly (not through loaders.gl's
+      // `load`), nothing merges these in for us.
+      options: { mvt: { shape: 'geojson', coordinates: 'local', layerProperty: 'layerName' } },
       // The stand-in "parses" by looking the tile up again: the bytes are opaque here.
       parse: async (data, options) => {
         log.parsed += 1;
+        log.parseOptions = options;
         assert.equal(options.worker, false);
         return log.nextFeatures;
       },
@@ -207,6 +211,20 @@ test('points are filtered to the window on the GPU, and only above their zoom', 
   assert.equal(layer.props.renderSubLayers({ id: 't', data: { cells: [], points: [] }, tile: { index: { z: 11 } } }), null, 'an empty tile draws nothing');
 });
 
+// A LayerSpec's source is plain data, so a point's colour has to be sayable
+// without a function: a property and the colour each value of it reaches.
+test('a point\'s colour can be data: a property and stops', async () => {
+  const { mount } = await mounted({ points: { layer: 'features', property: 'day', color: { property: 'frp', stops: [[0, '#4a5bd4'], [10, '#39a0a8'], [50, [201, 207, 74]]] } } });
+  mount.setWindow(DAYS('20240102', '20240105'));
+  const [layer] = mount.layers({ visible: true, opacity: 1 });
+  const [sub] = layer.props.renderSubLayers({ id: 't', data: { cells: [], points: [pointFeature(20240103)] }, tile: { index: { z: 11 } } });
+  const colour = sub.props.getFillColor;
+  assert.deepEqual(colour({ properties: { frp: 12 } }), [0x39, 0xa0, 0xa8, 235]);
+  assert.deepEqual(colour({ properties: { frp: 900 } }), [201, 207, 74, 235]);
+  assert.deepEqual(colour({ properties: {} }), [0x4a, 0x5b, 0xd4, 235], 'no value: the first stop');
+  assert.equal(colour({ properties: { frp: 12 } }), colour({ properties: { frp: 13 } }), 'the same array back: nothing allocated per point');
+});
+
 test('a hidden layer is not visible; a frozen one keeps what it showed', async () => {
   const { mount } = await mounted();
   mount.setWindow(DAYS('20240101', '20240102'));
@@ -225,14 +243,31 @@ test('a tile is fetched from the archive once, parsed without a worker, and spli
   const features = [cellFeature(1, { count_20240101: 3 }), pointFeature(20240101), cellFeature(2, { count_20240102: 1 })];
   const { mount, log } = await mounted({}, { tiles: { '5/1/2': features } });
   const { fetch } = mount.layers({ visible: true, opacity: 1 })[0].props;
-  const out = await fetch('5/1/2', { loadOptions: { mvt: { coordinates: 'local' } }, signal: undefined });
+  // What deck.gl passes for a non-binary MVT layer: no shape, no layer property.
+  const out = await fetch('5/1/2', { loadOptions: { mimeType: 'application/x-protobuf', mvt: { coordinates: 'local', tileIndex: { x: 1, y: 2, z: 5 } }, gis: {} }, signal: undefined });
   assert.deepEqual(out.cells.map((f) => f.properties.a5_cell), [1, 2]);
   assert.equal(out.points.length, 1);
+  // Found live: without the loader's own defaults the parser has no output
+  // shape ("undefined shape") and features carry no `layerName` to split by.
+  assert.deepEqual(log.parseOptions.mvt, { shape: 'geojson', coordinates: 'local', layerProperty: 'layerName', tileIndex: { x: 1, y: 2, z: 5 } });
   assert.deepEqual(log.zxy, ['5/1/2']);
   await fetch('5/1/2', { loadOptions: {} });
   assert.deepEqual(log.zxy, ['5/1/2'], 'the bytes were kept: no second request');
   assert.equal(log.parsed, 2);
   assert.equal(await fetch('5/9/9', { loadOptions: {} }), null, 'no tile there: empty, not an error');
+});
+
+// Found live: the bundled parser hands back a TABLE (`{ shape, features }`),
+// not a bare array. Read only as an array, every tile was empty: tiles
+// loaded, nothing drew, and the histogram said zero.
+test('a parsed tile may be a table of features rather than an array', async () => {
+  const features = [cellFeature(1, { count_20240101: 3 }), pointFeature(20240101)];
+  const m = await mounted({}, { tiles: { '5/1/2': features } });
+  m.deck.MVTLoader.parse = async () => ({ shape: 'geojson-table', type: 'FeatureCollection', features });
+  const { fetch } = m.mount.layers({ visible: true, opacity: 1 })[0].props;
+  const out = await fetch('5/1/2', { loadOptions: {} });
+  assert.equal(out.cells.length, 1);
+  assert.equal(out.points.length, 1);
 });
 
 test('tiles feed the histogram: cells below the points zoom, points above it', async () => {
@@ -264,6 +299,20 @@ test('destroy() lets go of the tiles and their bytes', async () => {
   assert.deepEqual(mount.histogram({ bbox: [-1, -1, 11, 11], zoom: 5 }), {});
   await fetch('5/1/2', { loadOptions: {} });
   assert.deepEqual(log.zxy, ['5/1/2', '5/1/2'], 'its bytes were dropped with it');
+});
+
+// --- describing an archive ----------------------------------------------------------------------------------
+
+test('describePmtilesChunk: a descriptor\'s unit and dates, from what the archive itself declares', async () => {
+  const declared = { ...METADATA, 'firms:timeline': JSON.stringify({ unit: 'day', min: '20261118', max: '20261125', buckets: 8 }) };
+  const a = fakes({ metadata: declared });
+  assert.deepEqual(await describePmtilesChunk('https://data.invalid/fire-latest.pmtiles', { loadPmtiles: a.loadPmtiles }), { unit: 'day', start: '20261118', end: '20261125', url: 'https://data.invalid/fire-latest.pmtiles', format: 'pmtiles' });
+  // A monthly archive covers its months whole: the record below ends in September, not today.
+  const monthly = { vector_layers: [{ id: 'aggregate', fields: fields('count_200011', 'count_202609') }], 'firms:timeline': { unit: 'month', min: '200011', max: '202609' } };
+  const b = fakes({ metadata: monthly });
+  assert.deepEqual(await describePmtilesChunk('https://data.invalid/alltime.pmtiles', { loadPmtiles: b.loadPmtiles }), { unit: 'month', start: '20001101', end: '20260930', url: 'https://data.invalid/alltime.pmtiles', format: 'pmtiles' });
+  const none = fakes({ metadata: {} });
+  await assert.rejects(describePmtilesChunk('https://data.invalid/x.pmtiles', { loadPmtiles: none.loadPmtiles }), (e) => e.code === 'TIMELINE_INVALID');
 });
 
 // --- the byte cache ----------------------------------------------------------------------------------------

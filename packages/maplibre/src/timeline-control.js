@@ -25,6 +25,9 @@ const CSS = `
   width: 320px; /* then the map's own width; see _fit() */
 }
 @media (prefers-color-scheme: dark) { .cng-timeline {${TOKENS_DARK} } }
+/* \`theme: 'dark' | 'light'\` says it outright, whatever the system prefers: the track is a canvas and cannot follow a media query. */
+.cng-timeline.is-light {${TOKENS_LIGHT} color-scheme: light; }
+.cng-timeline.is-dark {${TOKENS_DARK} color-scheme: dark; }
 .cng-timeline * { box-sizing: border-box; }
 .cng-tl-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .cng-tl-title { font-weight: 600; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -173,6 +176,7 @@ export class TimelineControl {
       map.getContainer().style.removeProperty('--cng-timeline-height');
     });
 
+    this._applyTheme();
     this.ready = this._start();
     win.requestAnimationFrame?.(() => this._fit?.());
     return root;
@@ -311,12 +315,15 @@ export class TimelineControl {
     if (this._options.autoplay && !reducedMotion) this._playback.play();
   }
 
+  /** The panel and its track in one scheme: the system's, unless `theme` says which. */
   _applyTheme() {
-    const T = this.session?.timeline;
-    if (!T || !this._canvas) return;
+    if (!this._root) return;
     const wanted = this._options.theme ?? 'auto';
     const dark = wanted === 'dark' || (wanted === 'auto' && Boolean(this._win.matchMedia?.('(prefers-color-scheme: dark)').matches));
-    this._canvas.setTheme(dark ? T.TIMELINE_THEME_DARK : T.TIMELINE_THEME_LIGHT);
+    this._root.classList.toggle('is-dark', wanted === 'dark');
+    this._root.classList.toggle('is-light', wanted === 'light');
+    const T = this.session?.timeline;
+    if (T && this._canvas) this._canvas.setTheme(dark ? T.TIMELINE_THEME_DARK : T.TIMELINE_THEME_LIGHT);
   }
 
   /** Bring the track and the panel in line with the session. */
@@ -326,20 +333,30 @@ export class TimelineControl {
     const T = this.session.timeline;
     const key = `${state.axis.unit}|${state.axis.min}|${state.axis.max}`;
     if (key !== this._axisKey) {
-      const first = this._axisKey === '';
       this._axisKey = key;
+      const unit = state.axis.unit;
+      // A new axis -- the first, or the other unit. The SESSION's dates are
+      // the exact ones (the track's are whole buckets), so the track takes
+      // them from there: a five-day selection that went out to months comes
+      // back as the same five days.
       this._applying = true;
       try {
-        canvas.setAxis(state.axis, { keep: !first });
-        if (first) {
-          // The session already knows what it is showing: take it from there.
-          if (state.view) canvas.setViewDays(state.view.from, state.view.to);
-          if (state.selection) canvas.setSelectionDays(state.selection.from, state.selection.to);
-        }
+        canvas.setAxis(state.axis);
+        if (state.view) canvas.setViewDays(state.view.from, state.view.to);
+        if (state.selection) canvas.setSelectionDays(state.selection.from, state.selection.to);
       } finally {
         this._applying = false;
       }
       this._renderPresets(state);
+      // Where the new axis cannot hold them -- a monthly record that ends
+      // before the days that were selected -- the track shows the nearest it
+      // can, and the session is told, so the map draws what the track says.
+      const whole = (w) => ({ from: T.dayRangeOfKey(T.bucketKeyOfDay(w.from, unit), unit)[0], to: T.dayRangeOfKey(T.bucketKeyOfDay(w.to, unit), unit)[1] });
+      const same = (a, b) => a.from === b.from && a.to === b.to;
+      const selected = canvas.selectionDays();
+      const viewed = canvas.viewDays();
+      if (state.selection && !same(whole(state.selection), selected)) this.session.setSelection(selected);
+      if (state.view && !same(whole(state.view), viewed)) this.session.setView(viewed);
     }
     canvas.setValues(state.histogram);
     canvas.setGaps(state.gaps);

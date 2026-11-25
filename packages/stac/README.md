@@ -372,3 +372,9 @@ chunks[0];   // { id: '2000', start: '20001101', end: '20001231', unit: 'day', f
 - A rolling "latest" file or an all-time overview that the collection links
   to directly is not an item and has no dates here. Add those chunks
   yourself, with a `priority` for the one that should win where it overlaps.
+- **An item's dates are as fresh as the catalog, not as the file.** Measured
+  on the live FIRMS collection (2026-11-25): the item for 2026 says the year
+  ends on 15 September; the archive it points to holds data to 25 November.
+  A chunk that claims less than its file holds hides the difference. Where
+  that matters, ask the file: `describePmtilesChunk(url)` in
+  `@cngeo/maplibre` reads an archive's own span.

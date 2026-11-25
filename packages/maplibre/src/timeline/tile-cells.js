@@ -156,6 +156,10 @@ export function dayNumberOf(properties, property) {
  * be one range; then the accessor itself says in or out, and `trigger`
  * changes with the window so deck.gl recomputes it.
  *
+ * The range is inclusive at both ends (deck.gl tests `min <= value <= max`),
+ * so a one-day window is `[day, day]`. Measured live: 55 detections on one
+ * day lit 513 pixels.
+ *
  * @returns {{ getFilterValue: (feature: object) => number, filterRange: [number, number], trigger: string }}
  */
 export function pointFilter(window, property) {

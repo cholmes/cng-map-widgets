@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cng-map-widgets — a timeline of fires</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #e8e8e6; background: #0b0f15; }
+  #map { position: absolute; inset: 0; }
+  #info {
+    position: absolute; left: 10px; top: 10px; z-index: 5; width: min(360px, calc(100vw - 20px)); padding: 8px 12px; border-radius: 8px;
+    box-sizing: border-box; background: rgba(18, 23, 31, 0.94); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  }
+  #info h1 { font-size: 14px; margin: 0 0 2px; }
+  #info p { font-size: 12px; color: #a3a3a0; margin: 0; }
+  #status { font-size: 12px; color: #a3a3a0; margin-top: 6px; overflow-wrap: anywhere; }
+</style>
+<!--
+  Zero-build ESM. @cngeo/timeline is in this map because this page shows a
+  timeline: @cngeo/maplibre loads it the first time a timeline layer is added.
+  deck.gl and pmtiles are NOT here: the maplibre package loads its own.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "@cngeo/spec": "../../packages/spec/src/index.js",
+    "@cngeo/timeline": "../../packages/timeline/src/index.js",
+    "@cngeo/maplibre": "../../packages/maplibre/src/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="info">
+  <h1>Twenty-six years of fires</h1>
+  <p>
+    Every active fire NASA FIRMS has detected since November 2000, published as one tile archive a year, a
+    rolling week, and a monthly overview. Drag the selection in the timeline; zoom it out to see the whole record.
+  </p>
+  <div id="status" role="status">Loading…</div>
+</div>
+
+<script type="module">
+import { chunksFromTemplate } from '@cngeo/timeline';
+import { LayerManager, LayerControl, TimelineControl, describePmtilesChunk } from '@cngeo/maplibre';
+
+const statusEl = document.getElementById('status');
+const setStatus = (text) => { statusEl.textContent = text; };
+const params = new URLSearchParams(location.search);
+const verifying = params.has('verify');
+
+const BASE = 'https://data.source.coop/portolan-mirrors/firms-catalog/detections';
+const STYLE_URL = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+
+// Everything FIRMS-specific is here, as configuration: layer and property
+// names, and what "hot" looks like (fire radiative power, in megawatts).
+const FRP_STOPS = [[0, '#4a5bd4'], [10, '#39a0a8'], [50, '#c9cf4a'], [200, '#f2b134'], [500, '#e8722c'], [1000, '#d1382a']];
+const AGGREGATE = { layer: 'aggregate', idProperty: 'a5_cell' };
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: STYLE_URL,
+  center: [22, 4],
+  zoom: 2.6,
+  // Only so verify.mjs can read pixels back; a real page leaves this off.
+  ...(verifying ? { canvasContextAttributes: { preserveDrawingBuffer: true }, fadeDuration: 0 } : {}),
+});
+
+try {
+  await new Promise((resolve) => map.once('load', resolve));
+
+  // A chunk a year: the layout is a contract of the catalog, so the list is
+  // one template and the calendar, with no request.
+  const years = chunksFromTemplate({ template: `${BASE}/year={YYYY}/fire-{YYYY}.pmtiles`, period: 'year', start: '2000-11-01' });
+  // Two archives whose span is not in their name: the rolling week (which is
+  // fresher than the year it overlaps, so it wins the days they share) and
+  // the monthly overview (which lags the present by a build). Each says its
+  // own dates.
+  const described = await Promise.allSettled([
+    describePmtilesChunk(`${BASE}/fire-latest.pmtiles`, AGGREGATE),
+    describePmtilesChunk(`${BASE}/alltime.pmtiles`, AGGREGATE),
+  ]);
+  const extra = [];
+  if (described[0].status === 'fulfilled') extra.push({ ...described[0].value, id: 'latest', priority: 1 });
+  if (described[1].status === 'fulfilled') extra.push({ ...described[1].value, id: 'alltime' });
+
+  const fires = {
+    spec: 'cng-layer/1.0',
+    id: 'fires',
+    title: 'Active fires',
+    kind: 'timeline',
+    source: {
+      chunks: [...years, ...extra],
+      cap: 2,
+      aggregate: AGGREGATE,
+      points: { layer: 'features', property: 'day', color: { property: 'frp', stops: FRP_STOPS } },
+    },
+    attribution: [{ text: 'NASA FIRMS', url: 'https://firms.modaps.eosdis.nasa.gov/', license: 'public domain' }],
+  };
+
+  const manager = new LayerManager(map);
+  manager.on('error', ({ id, error }) => setStatus(`error: ${error.code} — ${id}: ${error.message}`));
+  const control = new TimelineControl({ manager, layer: fires, metricLabel: 'detections', autoplay: params.has('autoplay'), theme: 'dark' });
+  map.addControl(control, 'bottom-left');
+  map.addControl(new LayerControl({ manager, basemapStyleUrl: STYLE_URL }), 'top-right');
+
+  await control.ready;
+  const entry = manager.get('fires');
+  if (!control.session) setStatus(`error: ${entry?.error?.code ?? 'UNEXPECTED'} — ${entry?.error?.message ?? 'the timeline could not be started'}`);
+  else setStatus(`ready: ${fires.source.chunks.length} chunks, ${years[0].start.slice(0, 4)}–${years.at(-1).end.slice(0, 4)}`);
+
+  // --- Hooks for verify.mjs ---------------------------------------------------
+  const frames = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  window.DEMO = {
+    map, manager, control,
+    styleUrl: STYLE_URL,
+    chunks: fires.source.chunks,
+    get session() { return control.session; },
+    /** Wait until nothing is loading, then for the map to have drawn it. */
+    async settle(limitMs = 90_000) {
+      const until = Date.now() + limitMs;
+      await new Promise((r) => setTimeout(r, 700)); // past the settle and histogram delays
+      while (Date.now() < until) {
+        const s = control.session?.state;
+        if (s && !s.partial && !s.pending.length && !s.outgoing.length) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      await new Promise((r) => setTimeout(r, 350)); // one more histogram
+      map.triggerRepaint();
+      await frames();
+      const s = control.session?.state;
+      return Boolean(s && !s.partial && !s.pending.length);
+    },
+    /** A small picture of the map, to tell "something changed" from "nothing did". */
+    snapshot() {
+      const size = 48;
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(map.getCanvas(), 0, 0, size, size);
+      return Array.from(g.getImageData(0, 0, size, size).data);
+    },
+    /** The map's pixels at full resolution, and how many of them differ from an earlier such picture. */
+    fullPicture() {
+      const source = map.getCanvas();
+      const c = document.createElement('canvas');
+      c.width = source.width;
+      c.height = source.height;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(source, 0, 0);
+      return g.getImageData(0, 0, c.width, c.height).data;
+    },
+    litAgainst(earlier) {
+      const now = this.fullPicture();
+      let lit = 0;
+      for (let i = 0; i < now.length; i += 4) if (Math.abs(now[i] - earlier[i]) + Math.abs(now[i + 1] - earlier[i + 1]) + Math.abs(now[i + 2] - earlier[i + 2]) > 24) lit += 1;
+      return lit;
+    },
+    credits: () => [...document.querySelectorAll('.maplibregl-ctrl-attrib')].map((el) => el.textContent.trim()).join(' || '),
+  };
+} catch (err) {
+  setStatus(`error: ${err?.code ?? 'UNEXPECTED'} — ${err?.message ?? err}`);
+  throw err;
+}
+</script>
+</body>
+</html>

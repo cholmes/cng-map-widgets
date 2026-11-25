@@ -90,13 +90,16 @@ test('dayNumberOf: a point\'s day, however it was written', () => {
 test('pointFilter: one run is a range the GPU tests; several are tested in JavaScript', () => {
   const day = (y, m, d) => Date.UTC(y, m - 1, d) / 86400000;
   const one = pointFilter({ unit: 'day', ranges: [['20200102', '20200105']] }, 'day');
+  // Inclusive at both ends: deck.gl tests min <= value <= max.
   assert.deepEqual(one.filterRange, [day(2020, 1, 2), day(2020, 1, 5)]);
   assert.equal(one.getFilterValue({ properties: { day: 20200103 } }), day(2020, 1, 3));
   assert.equal(one.trigger, 'day', 'the accessor does not change with the window: only the range does');
+  const single = pointFilter({ unit: 'day', ranges: [['20200103', '20200103']] }, 'day');
+  assert.deepEqual(single.filterRange, [day(2020, 1, 3), day(2020, 1, 3)], 'one day is a range of one day');
   const month = pointFilter({ unit: 'month', ranges: [['202002', '202002']] }, 'day');
   assert.deepEqual(month.filterRange, [day(2020, 2, 1), day(2020, 2, 29)], 'a month is all of its days');
   const two = pointFilter({ unit: 'day', ranges: [['20200101', '20200102'], ['20200110', '20200112']] }, 'day');
-  assert.deepEqual(two.filterRange, [1, 1]);
+  assert.deepEqual(two.filterRange, [1, 1], 'in is 1, out is 0');
   assert.equal(two.getFilterValue({ properties: { day: 20200111 } }), 1);
   assert.equal(two.getFilterValue({ properties: { day: 20200105 } }), 0);
   assert.notEqual(two.trigger, one.trigger);

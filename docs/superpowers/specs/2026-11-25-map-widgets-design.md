@@ -343,6 +343,30 @@ roughly 800 lines (`readArchive`, `widenedExtent`, `splitFetch`, `renderTile`, `
   `examples/timeline-firms/` (distinct from the existing download demo `examples/firms-explorer/`).
 - Tests cover monthly, weekly and mixed-size chunk lists with synthetic fixtures.
 
+**Phase 4 as built, 2026-11-25 — where it differs from the above:**
+- *What draws is every loaded chunk that owns part of the selection*, each given only its own buckets —
+  not "which chunk draws" in the singular. With monthly chunks a single drawing chunk would show a third
+  of a ten-week selection. The cost: an aggregate cell present in two drawing chunks is drawn twice, each
+  coloured by its own share.
+- *`forView` also asks that the finer unit shows at least as much of the window as a coarser one would*,
+  not only "within the cap". Overlay chunks (a rolling week inside its year) do not count against the cap.
+- *`@cngeo/maplibre` loads `@cngeo/timeline` through a seam* (`loadTimeline`), a dynamic import: a static
+  one would have made every existing page map the new package or stop loading. A test holds the line.
+- *The control goes through the layer manager*: a `timeline` renderer, a session at
+  `manager.handle(id)`, and a new `ctx.redraw()` for a renderer whose deck.gl layers change by themselves.
+- *A point's colour can be data* (`{ property, stops }`), because a `LayerSpec` source must be plain data.
+- *`describePmtilesChunk()`*, not planned: a rolling week and an overview do not carry their span in
+  their name, and the live all-time archive ends two months before today.
+- *The histogram counts cells at the current tile zoom*, not across a pyramid band; and whether a view has
+  loaded is read from deck.gl's tile set after the map moves, since deck.gl only says when one finishes.
+- *Not built:* hash state (cut, as allowed); the stats sidecar (the digest of the source found it live,
+  not dead: here the all-time histogram comes from tiles like any other); cumulative columns; a
+  `container` option for the control; a GeoParquet format (by decision).
+- *Found by running it against the live archives:* the bundled MVT parser needs its own defaults merged in
+  when called directly (without them every tile split into nothing).
+- *One pre-existing test suite reads live data inside `npm test`* (two tests against Source Cooperative)
+  and failed three times in this phase on HTTP 520s. Not touched; worth an issue.
+
 ## Phase 5 — docs and release
 
 - `AGENTS.md` recipes for all four widgets, each snippet executed by `docs/verify-snippets.mjs`.

@@ -143,6 +143,33 @@ test('a chunk that will not load is a note on the layer, not a failed layer', as
   assert.ok(!manager.get('fires').note);
 });
 
+// A tile that fails leaves a hole in the map and a short count in the track,
+// and nothing else says so: the chunk itself opened fine.
+test('tiles that fail to load are said on the layer, once, with how many', async () => {
+  let fail;
+  registerChunkFormat('leaky', ({ onTileError }) => {
+    fail = (chunk) => onTileError(chunk, new Error('HTTP 520'));
+    return {
+      async open() { return {}; },
+      mount: (ctx) => ({ setWindow() {}, histogram: () => ({}), freeze() {}, destroy() {}, layers: () => [], tiles: () => ({ selected: 4, loaded: 4, errors: 0 }) }),
+    };
+  });
+  const { manager } = make();
+  await manager.add(spec({ chunks: [chunk('2024', '20240101', '20241210', { format: 'leaky' })] }));
+  await settle();
+  const notes = [];
+  manager.on('change', (e) => { if (e.type === 'note') notes.push(manager.get('fires').note); });
+  fail({ id: '2024' });
+  fail({ id: '2024' });
+  fail({ id: '2024' });
+  await settle(700);
+  assert.equal(manager.get('fires').status, 'ready');
+  assert.match(manager.get('fires').note, /3 tiles/);
+  assert.match(manager.get('fires').note, /could not be loaded/);
+  assert.equal(notes.length, 1, 'said once for the burst, not once a tile');
+  assert.equal(manager.handle('fires').tiles().errors, 3);
+});
+
 test('when nothing at all can be loaded the layer has failed', async () => {
   failing = new Set(['2023', '2024', 'week']);
   const { manager } = make();
