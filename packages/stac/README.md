@@ -210,3 +210,136 @@ dataset is still being prepared.
 order)` reorders scenes already found without reading anything (right only
 when the list is every match — see `truncated`). `close()` stops the search
 and forgets what was cached, unless the cache is one you passed in.
+
+## `CatalogIndex`
+
+Search a catalog of collections, in the browser. A Portolan catalog publishes
+an index of everything in it as one parquet file, `collections.parquet`: a
+row per catalog and per collection.
+
+```js
+import { CatalogIndex } from '@cngeo/stac';
+
+const index = new CatalogIndex('https://registry.portolan-sdi.org/v0.1/collections.parquet');
+await index.load();              // or let the first search do it
+index.entries.length;            // 6,941 collections (2026-11-25)
+
+const { results, total, facets } = await index.search({
+  text: 'buildings',
+  area,                          // an Area: the map view, say
+  time: { start: '2024-01-01T00:00:00Z' },
+  license: 'CC-BY-4.0',
+  limit: 50,
+});
+results[0];      // { key, id, title, description, href, license, keywords, catalog, catalogs, bbox, start, end, kinds, thumbnail, score, fit }
+facets.license;  // [{ value: 'CC-BY-4.0', count: 87 }, …]
+```
+
+The URL may also be a `catalog.json` that links to its index with
+`rel: "data"`.
+
+**What it reads.** The registry's index is 20 MB, of which 12.5 MB is each
+collection's whole JSON (`original`) and 5.6 MB its `links`. Neither is ever
+read. Titles, descriptions, keywords, extents and licences are 2.1 MB in six
+requests (measured in Node; seven in a browser on a host that hides
+`Content-Range`, GitHub Pages among them), and the rows are then searched in
+memory.
+
+**Search.**
+
+- `text`: every word must be found, in the title, keywords, id or
+  description; the last may be unfinished, as it is while typing. Accents do
+  not matter (`baume` finds `Bäume`). A word of six letters or more may be
+  one letter off, which is what lets `buildings` find `Building`; a short
+  word must match as typed, because one letter off a short word is another
+  word (`Bäume`, trees; `Räume`, rooms). Only when nothing matches at all is
+  a looser spelling tried. A title match counts for more.
+- `area`: keeps collections whose extent intersects it, on either side of the
+  antimeridian. A collection with no extent is in no area.
+- `time`: keeps collections whose own span overlaps the window. A start with
+  no end means ongoing. A collection with no dates is in no window.
+- `license`, `catalog`, `kinds`: a value or a list.
+- **Order**: by how well the text matches and, when an area is given, by how
+  much of the collection lies inside it (`fit`, 0..1). A city's own buildings
+  come before a global buildings layer for the same words; with no area the
+  two rank by text alone.
+- **Facets** say what each filter could be set to and how many collections
+  that would leave. Each is counted over the matches of all the *other*
+  filters, so choosing a licence does not empty the list of licences.
+- One search at a time: a new call supersedes the one in flight, which
+  resolves `{ results: [], total: 0, superseded: true }`. Safe on every
+  keystroke.
+
+**Things the live index taught it.**
+
+- `id` is not unique across catalogs; `key` (the collection's URL) is. 23 ids
+  are shared by two or more *drawable* collections, so a layer's id is not
+  proof of which dataset it is (`CatalogSearchControl` compares sources).
+- 108 of 7,049 collection rows repeat another row's URL: the same collection,
+  registered under a second catalog. One collection is one entry, and
+  `catalogs` lists every catalog it is under — the `catalog` filter and facet
+  match any of them. (Keeping only the first hid one registered catalog
+  entirely: all 79 of its collections are listed under another first.)
+  `index.duplicates` counts the folded rows.
+- Its host, GitHub Pages, misreports the file's size to a `HEAD` request;
+  `@cngeo/extract-core` no longer asks that way.
+- `href`, a parent's `href` and `thumbnail` may be relative to the index
+  file; entries carry them absolute. A row whose `href` is not then http(s)
+  is left out.
+
+**Time limits.** `timeoutMs` (60 s; 0 for none) bounds every request the
+index makes: each read while loading, the `catalog.json` it may start from,
+and the collection document `resolve()` fetches. A host that never answers
+is `NETWORK` or `LAYER_LOAD_FAILED`, retryable, and is not remembered.
+
+**Text search is [MiniSearch](https://github.com/lucaong/minisearch)** (MIT),
+loaded from a pinned URL (`MINISEARCH_URL`) the first time a search has words
+in it — about 0.8 s to index the registry, then 1–35 ms a search (measured:
+the long end is a one-letter last word, which matches thousands). In Node, or
+inside a bundler, hand it in:
+
+```js
+import MiniSearch from 'minisearch';
+import { setMinisearchModules } from '@cngeo/stac';
+setMinisearchModules({ MiniSearch });
+```
+
+`kinds` — whether a collection draws as vector tiles, a COG, imagery scenes
+or not at all — is known only when the index has a `render` column, which the
+registry's does not yet (`index.hasRender`). See
+[`experiments/e13-render-column`](../../experiments/e13-render-column/).
+
+**From a result to the map.** `resolve(result)` says what a found collection
+draws as:
+
+```js
+const { drawable, undrawable, source } = await index.resolve(results[0]);
+for (const spec of drawable) await layerManager.add(spec);
+undrawable;   // [{ title, kind: 'table', reason: 'A table with no geometry: there is nothing to draw on a map.' }]
+source;       // 'collection' -- its JSON was fetched -- or 'render'
+```
+
+- With no `render` column, the collection's JSON is fetched (once per
+  collection; kept) and read with `layersFromCollection`.
+- With one, there is no request at all: `layersFromRender(entry)`.
+- `drawable` is what a map can show as one layer today (`pmtiles-vector`,
+  `cog`, `geojson`; pass `drawableKinds` to change that). Everything else is
+  in `undrawable` **with a reason**: a table has no geometry, an imagery
+  collection is searched rather than drawn, an unsupported one says what was
+  found. A result that adds nothing to the map has to be able to say why.
+- A collection whose JSON is gone, or is not a collection, rejects
+  `LAYER_LOAD_FAILED` naming it.
+
+**The `render` column** is a proposal, measured in
+[E13](../../experiments/e13-render-column/RESULTS.md): one short list per
+collection, an entry per layer, nine flat fields (`RENDER_FIELDS`: `kind`,
+`id`, `title`, `url`, `style`, `layers`, `display_asset`, `items`, `reason`).
+It holds only what is specific to drawing; a layer's extent, dates, thumbnail
+and credit come from the row's other columns. `renderFromLayers(layers)`
+writes it and `layersFromRender(entry)` reads it back. Credit matters here:
+an index that says how to draw a collection without fetching its JSON has to
+say whom to credit too, so the same proposal adds an `attribution` column.
+Without one, a layer is credited with the collection's title and licence.
+
+Rejects `CATALOG_INDEX_INVALID` for something that is not a collections
+index. `close()` forgets what was read.

@@ -284,6 +284,10 @@ test('enumeratePartitions: a collection-mirror yields absolute part URLs and rec
       glob: 'https://data.source.coop/ftw/global-data-2e/vector/2019/zone=*/utm*.parquet',
       keys: [{ name: 'zone', type: 'string' }],
       enumeration: { kind: 'collection-mirror', url: FTW_MIRROR },
+    }, {
+      // The mirror's size is asked for before it is opened (one byte); the
+      // injected hyparquet above then reads nothing through this.
+      fetch: async () => new Response(new Uint8Array(1), { status: 206, headers: { 'content-range': 'bytes 0-0/1000', 'content-length': '1' } }),
     });
     assert.equal(requests, 1);
     assert.deepEqual(parts.map((p) => p.url), [

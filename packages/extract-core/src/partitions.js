@@ -12,6 +12,7 @@
 
 import { CngError, bboxesIntersect } from '@cngeo/spec';
 import { loadHyparquet } from './cdn.js';
+import { remoteByteLength } from './parquet-io.js';
 
 const STAC_ITEM_CONCURRENCY = 8;
 const STAC_ITEM_CAP = 200;
@@ -86,7 +87,10 @@ export async function enumeratePartitions(source, options = {}) {
 
   if (enumeration.kind === 'collection-mirror') {
     const { hyparquet, compressors } = await loadHyparquet();
-    const file = await hyparquet.asyncBufferFromUrl({ url: enumeration.url, fetch: fetchImpl, requestInit: { cache: 'no-store', signal: options.signal } });
+    // The size by a ranged request, not hyparquet's own HEAD: see
+    // remoteByteLength (a mirror on GitHub Pages is otherwise unreadable).
+    const byteLength = await remoteByteLength(enumeration.url, fetchImpl, { signal: options.signal });
+    const file = await hyparquet.asyncBufferFromUrl({ url: enumeration.url, byteLength, fetch: fetchImpl, requestInit: { cache: 'no-store', signal: options.signal } });
     // `geoparquet: false` for the same reason as parquet-io.js's
     // openParquetFile: a collection-mirror is itself a STAC-GeoParquet
     // file and may carry a `geo`-tagged footprint geometry column.

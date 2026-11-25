@@ -525,6 +525,60 @@ merely insert under the labels ends up beneath the next image added. Declared,
 the stack is slotted under your layers instead. Declare again after
 `map.setStyle()`; `setTopLayers([])` lets go.
 
+### `new CatalogSearchControl({ index, manager, limit?, collapsed?, useView?, title? })`
+
+Find collections in a catalog and add them to the map. A search box, an
+"only this map area" switch, a menu per facet, and result cards.
+
+```js
+import { CatalogIndex } from '@cngeo/stac';
+import { LayerManager, LayerControl, CatalogSearchControl, catalogAddProvider } from '@cngeo/maplibre';
+
+const index = new CatalogIndex('https://registry.portolan-sdi.org/v0.1/collections.parquet');
+const manager = new LayerManager(map);
+const catalog = new CatalogSearchControl({ index, manager });
+map.addControl(catalog, 'top-left');
+// "Add" in the layer panel leads to it:
+map.addControl(new LayerControl({ manager, addProviders: [catalogAddProvider(catalog)] }), 'top-right');
+```
+
+`index` is injected — a `CatalogIndex` from `@cngeo/stac`, or anything with
+its `load()`, `search()` and `resolve()`.
+
+- **Typing** searches after 200 ms; each search supersedes the last.
+- **Only this map area** keeps what intersects the view and ranks a local
+  collection above a global one for the same words. It follows the map as it
+  moves.
+- **Facets** — catalog, licence, and (when the index has a `render` column)
+  what a collection draws as — each show how many results a choice would
+  leave.
+- **Hovering a card** shows that collection's extent on the map.
+- **Add to map** resolves the collection and adds every layer of it that can
+  be drawn. A collection that is a table, an imagery archive, or something
+  nothing here draws **says so on its card** instead of adding nothing in
+  silence; one that is partly drawable adds what it can and names the rest.
+- A result whose layers are removed from the map can be added again.
+- **Collection ids repeat across catalogs** (the registry has 23 shared by
+  drawable collections: two `place`, two `land_use`…), and a layer is named
+  after its collection. So a layer already on the map counts as "this one"
+  only when its *source* is the same; a different dataset with the same id is
+  added beside it as `<catalog>/<id>`.
+
+`control.search(text)` runs a search; `control.show()` opens the panel and
+focuses its box; `control.model` is the state. Like the imagery search, it
+survives `map.setStyle()` and being removed and added again, and its DOM is
+checked in a browser by `examples/catalog-search/verify.mjs` rather than in
+`npm test`.
+
+`createCatalogSearchModel({ index, manager })` is the same state with no DOM
+(`setText`, `setUseView`, `setArea`, `setFacet`, `run`, `add`, `hover`,
+`on('change')`, `destroy`); `catalogStatusOf(state)` and
+`extentsGeoJson(results, hoveredKey)` are exported too.
+
+**Two search panels on one map** each keep layers of their own above the
+stack (footprints, an extent). `LayerManager.setTopLayers(ids, owner)` is per
+owner for that reason: one declaring does not undo the other.
+
 ### Loaders
 
 Three third-party modules load lazily, each from an exact pinned URL, each

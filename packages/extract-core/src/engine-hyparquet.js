@@ -234,7 +234,14 @@ async function runHyparquetPlan(enginePlan, onBatch, ctx) {
     !readColumns ||
     readColumns.includes(geometryColumn) ||
     Boolean(rowCovering && !rowCovering.native && structIsReal && bboxColumnNamesOf(covering).every((c) => readColumns.includes(c)));
-  const requireBBox = Boolean(area) || bboxKnowable;
+  // For a QUERY (`rowFormat: 'objects'`) with no area there is no spatial
+  // filter at all, so a row with no geometry is a row like any other: a
+  // catalog index is full of them (catalogs, non-spatial tables), and they
+  // were all being dropped. A file WRITER keeps the older rule -- a row with
+  // no geometry is left out -- because that is what downloads have always
+  // produced, and a geometry-less feature is not something every format can
+  // hold.
+  const requireBBox = Boolean(area) || (bboxKnowable && ctx.rowFormat !== 'objects');
 
   /** The per-row filter the old sequential loop ran inline. Pure; no awaits. */
   function matchRows(decoded) {
