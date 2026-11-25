@@ -28,6 +28,7 @@ export { visvalingamRing, ringArea, simplifyToVertexCeiling, vertexCount, totalA
 export { visvalingamRingAsync, simplifyToVertexCeilingAsync } from './simplify-async.js';
 export { yieldToMain, forEachChunked } from './yield.js';
 export { CngError, CancelledError, CeilingExceededError, isCngError } from './errors.js';
+export { LAYER_SPEC, LAYER_KINDS, RENDERABLE_KINDS, validateLayerSpec, layerSlug } from './layer.js';
 
 // §O11: a runtime singleton guard so two different `@cngeo/spec` versions
 // loaded on one zero-build page don't silently diverge on `instanceof`
