@@ -343,3 +343,40 @@ Without one, a layer is credited with the collection's title and licence.
 
 Rejects `CATALOG_INDEX_INVALID` for something that is not a collections
 index. `close()` forgets what was read.
+
+## `chunksFromStac(collection, { baseUrl, fetch?, unit?, format?, assetType? })`
+
+Timeline chunks from a collection whose data is cut by time: one per item
+that has dates and a tiles asset. The result is what
+[`@cngeo/timeline`](../timeline/README.md) takes.
+
+```js
+import { chunksFromStac } from '@cngeo/stac';
+
+const url = 'https://data.source.coop/portolan-mirrors/firms-catalog/detections/collection.json';
+const collection = await fetch(url).then((r) => r.json());
+const { chunks, skipped } = await chunksFromStac(collection, { baseUrl: url });
+chunks[0];   // { id: '2000', start: '20001101', end: '20001231', unit: 'day', format: 'pmtiles',
+             //   url: 'https://…/detections/year=2000/fire-2000.pmtiles', priority: 0 }
+```
+
+- An item's span is its `start_datetime`..`end_datetime` (or its `datetime`),
+  as UTC days. A date-time that names no zone is read as UTC, not in the
+  reader's own zone; an interval that ends at exactly midnight ends the day
+  before (`…/2024-01-01T00:00:00Z` is all of 2023).
+- Its tiles are the asset of `assetType` (default `application/vnd.pmtiles`)
+  with role `tiles`, else `visual`, else the first.
+- An item that cannot be fetched (60 s limit), has no dates, or has no such
+  asset is left out and listed in `skipped`, each with a reason. One bad item
+  does not cost the rest.
+- One request per item, eight at a time. Plain objects come back: this
+  package does not import `@cngeo/timeline`.
+- A rolling "latest" file or an all-time overview that the collection links
+  to directly is not an item and has no dates here. Add those chunks
+  yourself, with a `priority` for the one that should win where it overlaps.
+- **An item's dates are as fresh as the catalog, not as the file.** Measured
+  on the live FIRMS collection (2026-11-25): the item for 2026 says the year
+  ends on 15 September; the archive it points to holds data to 25 November.
+  A chunk that claims less than its file holds hides the difference. Where
+  that matters, ask the file: `describePmtilesChunk(url)` in
+  `@cngeo/maplibre` reads an archive's own span.

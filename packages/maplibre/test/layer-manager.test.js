@@ -442,6 +442,42 @@ test('a renderer can report a failure after it was ready: the entry becomes an e
   assert.deepEqual(overlayOf(map).props.layers, []); // nothing is drawn for a failed layer
 });
 
+// A renderer whose deck.gl layers change on their own -- a timeline, whose
+// layers follow its selection -- has to be able to say "describe me again".
+test('ctx.redraw() hands the renderer\'s current deck layers to the overlay again', async () => {
+  const map = createFakeMap();
+  let ctxOf;
+  let colour = 'red';
+  const manager = new LayerManager(map, {
+    renderers: {
+      cog: (ctx) => {
+        ctxOf = ctx;
+        return { ...deckRenderer()(ctx), deckLayers: (state, beforeId) => [{ id: `cng-layer-${ctx.slug}`, beforeId, colour }] };
+      },
+    },
+  });
+  await manager.add(raster('img'));
+  assert.equal(overlayOf(map).props.layers[0].colour, 'red');
+  colour = 'blue';
+  ctxOf.redraw();
+  assert.equal(overlayOf(map).props.layers[0].colour, 'blue');
+  manager.remove('img');
+  ctxOf.redraw(); // after removal: nothing, and no throw
+  assert.deepEqual(overlayOf(map).props.layers, []);
+});
+
+test('handle(id) is what a renderer offers a control to drive it; null when it offers nothing', async () => {
+  const session = { setSelection() {} };
+  const manager = new LayerManager(createFakeMap(), {
+    renderers: { ...renderers(), cog: (ctx) => ({ ...deckRenderer()(ctx), handle: () => session }) },
+  });
+  await manager.add(raster('img'));
+  await manager.add(vector('plain'));
+  assert.equal(manager.handle('img'), session);
+  assert.equal(manager.handle('plain'), null);
+  assert.equal(manager.handle('nope'), null);
+});
+
 test('a note from a renderer is announced, so a panel can show it at once', async () => {
   let ctxOf;
   const manager = new LayerManager(createFakeMap(), { renderers: { geojson: (ctx) => { ctxOf = ctx; return styleRenderer()(ctx); } } });

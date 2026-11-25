@@ -32,7 +32,8 @@
     "maplibre-gl": "^4.0.0 || ^5.0.0"
   },
   "dependencies": {
-    "@cngeo/spec": "0.3.1"
+    "@cngeo/spec": "0.3.1",
+    "@cngeo/timeline": "0.3.1"
   },
   "publishConfig": {
     "access": "public"

@@ -69,6 +69,20 @@ test('scenes needs a collection url and an items description', () => {
   );
 });
 
+test('timeline needs chunks, each with an id, an http(s) url and its dates', () => {
+  const chunk = { id: '2024', start: '20240101', end: '20241231', url: 'https://example.org/2024.pmtiles' };
+  const spec = (source) => ({ spec: 'cng-layer/1.0', id: 'fires', kind: 'timeline', source });
+  assert.equal(validateLayerSpec(spec({ chunks: [chunk], aggregate: { layer: 'aggregate' } })).source.chunks.length, 1);
+  const refused = (source, field) => assert.throws(() => validateLayerSpec(spec(source)), (e) => e.code === 'LAYER_INVALID' && e.context.field === field);
+  refused({}, 'source.chunks');
+  refused({ chunks: [] }, 'source.chunks');
+  refused({ chunks: 'https://example.org/2024.pmtiles' }, 'source.chunks');
+  refused({ chunks: [{ ...chunk, id: '' }] }, 'source.chunks[0].id');
+  refused({ chunks: [chunk, { ...chunk, id: 'b', url: 's3://bucket/b.pmtiles' }] }, 'source.chunks[1].url');
+  refused({ chunks: [{ ...chunk, start: undefined }] }, 'source.chunks[0].start');
+  refused({ chunks: [{ ...chunk, end: 42 }] }, 'source.chunks[0].end');
+});
+
 test('unsupported carries a reason and the asset types found', () => {
   const out = validateLayerSpec({ ...ok, kind: 'unsupported', source: { reason: 'zarr', assetTypes: ['application/vnd+zarr'] } });
   assert.equal(out.source.reason, 'zarr');

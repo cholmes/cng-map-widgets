@@ -88,8 +88,20 @@ const SOURCE_CHECKS = {
     }
     if (kind === 'parquet') requireUrl(source.items.url, 'source.items.url');
   },
-  timeline() {
-    /* defined by @cngeo/timeline (Phase 4) */
+  // The chunk list is checked in full by `@cngeo/timeline` (`validateChunks`:
+  // dates that are dates, ids that are unique). Here only what makes it a
+  // layer that could be drawn at all: chunks, each with somewhere to fetch.
+  timeline(source) {
+    if (!Array.isArray(source.chunks) || !source.chunks.length) {
+      throw invalid('A timeline LayerSpec needs source.chunks: a non-empty list of chunk descriptors', 'source.chunks');
+    }
+    source.chunks.forEach((chunk, n) => {
+      if (typeof chunk?.id !== 'string' || !chunk.id) throw invalid(`A timeline chunk needs an id (chunk ${n})`, `source.chunks[${n}].id`);
+      requireUrl(chunk.url, `source.chunks[${n}].url`);
+      for (const field of ['start', 'end']) {
+        if (typeof chunk[field] !== 'string' || !chunk[field]) throw invalid(`Timeline chunk "${chunk.id}" needs a ${field} date`, `source.chunks[${n}].${field}`);
+      }
+    });
   },
   table(source) {
     requireUrl(source.url, 'source.url');

@@ -8,6 +8,9 @@ export { viewportProvider } from './viewport.js';
 export { fitAreaBounds } from './fit-bounds.js';
 export { LayerManager, registerLayerRenderer } from './layer-manager.js';
 export { PMTILES_CDN, loadPmtiles, setPmtilesModules, clearPmtilesModules } from './pmtiles-loader.js';
+export { loadTimeline, setTimelineModules, clearTimelineModules, TIMELINE_REQUIRED_EXPORTS } from './timeline-loader.js';
+export { pmtilesChunkFormat, describePmtilesChunk } from './timeline/pmtiles-chunk-format.js';
+export { timelineFromMetadata } from './timeline/pmtiles-meta.js';
 export { planStyle, defaultVectorStyle, opacityPaint } from './renderers/style-plan.js';
 export { attributionHtml } from './layer-attribution.js';
 export { LayerControl } from './layer-control.js';
@@ -30,10 +33,16 @@ import { registerLayerRenderer } from './layer-manager.js';
 import { pmtilesVectorRenderer } from './renderers/pmtiles-vector.js';
 import { geojsonRenderer } from './renderers/geojson.js';
 import { cogRenderer } from './renderers/cog.js';
+import { timelineRenderer } from './timeline/timeline-renderer.js';
 
 registerLayerRenderer('pmtiles-vector', pmtilesVectorRenderer);
 registerLayerRenderer('geojson', geojsonRenderer);
 registerLayerRenderer('cog', cogRenderer);
+// `@cngeo/timeline` itself is fetched only when a timeline layer is added.
+registerLayerRenderer('timeline', timelineRenderer);
+export { registerChunkFormat } from './timeline/timeline-renderer.js';
+export { TimelineControl } from './timeline-control.js';
+export { createTimelineModel, timelineStatusOf, presetsFor, inputsFor, selectionTotal, notLoadedBuckets } from './timeline-model.js';
 export {
   DECK_BUNDLE_URL,
   DECK_REQUIRED_EXPORTS,
