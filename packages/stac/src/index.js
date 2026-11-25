@@ -16,3 +16,4 @@
 export const VERSION = '0.3.1';
 
 export { layersFromCollection } from './layers-from-collection.js';
+export { imageryProfile } from './imagery-profile.js';
