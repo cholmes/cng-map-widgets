@@ -168,6 +168,18 @@ test('close() ends the search in flight the same way', async () => {
   assert.equal((await pending).superseded, true);
 });
 
+test('cancel() ends the search in flight too, and keeps what was cached', async () => {
+  const host = allHost({ delayMs: 5 });
+  const search = new ImagerySearch(naipProfile(), { fetch: host.fetch });
+  await search.search();
+  const pending = search.search();
+  search.cancel();
+  assert.equal((await pending).superseded, true);
+  host.reset();
+  assert.equal((await search.search()).scenes.length, 8);
+  assert.deepEqual(host.overhead(), [], 'nothing was forgotten: the next search pays for rows only');
+});
+
 test('onScenes streams batches before the promise resolves', async () => {
   const host = allHost();
   const batches = [];

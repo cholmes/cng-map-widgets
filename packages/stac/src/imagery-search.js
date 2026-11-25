@@ -430,11 +430,16 @@ export class ImagerySearch {
     });
   }
 
+  /** Stop the search in flight; it resolves superseded. Everything cached is kept. */
+  cancel() {
+    this._generation += 1;
+    this._controller?.abort('cancelled');
+    this._controller = null;
+  }
+
   /** Stop the search in flight (it resolves superseded) and forget what was cached. The object stays usable. */
   close() {
-    this._generation += 1;
-    this._controller?.abort('closed');
-    this._controller = null;
+    this.cancel();
     this._items.clear();
     this._cache.clear();
     this._ready = null;

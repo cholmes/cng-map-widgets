@@ -446,6 +446,59 @@ arrow keys, Enter and Escape); and it has an **Add** button.
 `.pmtiles`, `.tif` or `.geojson` URL. Reading a STAC collection is passed in
 because this package does not import `@cngeo/stac`.
 
+### `new ImagerySearchControl({ search, manager, area?, time?, limit?, collapsed? })`
+
+Find imagery scenes and add them to the map. A panel with where to search,
+a date range, the property filters the collection offers, an order and
+result cards; and on the map, the footprints of what was found.
+
+```js
+import { imageryProfile, ImagerySearch } from '@cngeo/stac';
+import { LayerManager, ImagerySearchControl } from '@cngeo/maplibre';
+
+const search = new ImagerySearch(imageryProfile(collection, { baseUrl: collectionUrl }));
+const manager = new LayerManager(map);
+map.addControl(new ImagerySearchControl({ search, manager }), 'top-left');
+```
+
+`search` is injected — an `ImagerySearch` from `@cngeo/stac`, or anything with
+its `search()` and `layerSpecFor()` — because this package does not import
+that one. The host owns it: call `search.close()` when you are done with it.
+
+- **Where.** "This view" searches the map's bounds (a view of the whole world
+  searches everywhere; one across the antimeridian searches both sides). Pass
+  `area: () => Area | null` — the area your geocoder or draw tool holds — and
+  the panel also offers "Selected area".
+- **When.** Two date inputs; "to" is inclusive. `time: { start, end }`
+  (`YYYY-MM-DD`) sets them initially — worth doing for a deep archive, where
+  a search with no dates has to plan every year of it.
+- **Filters and order** are generated from `profile.filters`: a number input
+  for a `max`/`min` filter, a menu for an `enum` whose values the collection
+  lists, two inputs for a `range`.
+- **Results** stream in as they are read, then settle into the sorted answer.
+  The status line says what is shown out of what matched, and unfolds into
+  how the search ran: requests made, files and row groups read, and each
+  pruning stage.
+- **Add to map** hands the scene to the `LayerManager` as a `cog` layer in
+  the collection's group. A scene that cannot be added says why on its card.
+- **Footprints** are one GeoJSON source and two style layers
+  (`cng-layer-imagery-footprints--fill` / `--line`), kept just above the
+  layer stack and below the labels. Hovering a card highlights its footprint,
+  and the reverse.
+
+`control.search()` runs a search programmatically; `control.model` is the
+state.
+
+Everything from a remote document reaches the panel as text; a thumbnail is
+shown only from an `http(s)` URL, lazily.
+
+**Without the panel.** `createImagerySearchModel({ search, manager })` is the
+same state with no DOM — `setArea`, `setTime`, `setFilter`, `setSort`, `run`,
+`cancel`, `hover`, `add`, `on('change')`, `destroy` — for a host with its own
+UI. `footprintsGeoJson(scenes, hoveredId)` and `areaFromBounds([w, s, e, n])`
+are exported too. `manager.anchor()` is the layer the stack sits below, for
+drawing something of your own just above it.
+
 ### Loaders
 
 Three third-party modules load lazily, each from an exact pinned URL, each

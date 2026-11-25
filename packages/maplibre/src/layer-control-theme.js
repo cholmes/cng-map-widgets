@@ -10,13 +10,13 @@
 // class names, so it tracks version 0.18.3's markup. Several upstream rules
 // use `!important`; the matching ones here must too.
 
-const TOKENS_LIGHT = `
+export const TOKENS_LIGHT = `
   --cng-bg: #fff; --cng-ink: #1a1a1a; --cng-border: #ccc; --cng-focus: #1a73e8;
   --cng-meta: #666; --cng-selected-bg: #e8f0fe; --cng-shadow: rgba(0,0,0,0.15);
   --cng-error: #b3261e; --cng-error-bg: #fdecea; --cng-badge-bg: #f1f1ef; --cng-badge-ink: #777;
   --cng-on-focus: #fff;`;
 
-const TOKENS_DARK = `
+export const TOKENS_DARK = `
   --cng-bg: #1e1f22; --cng-ink: #e8e8e6; --cng-border: #46484d; --cng-focus: #7ab2f5;
   --cng-meta: #a3a3a0; --cng-selected-bg: #2a3a52; --cng-shadow: rgba(0,0,0,0.5);
   --cng-error: #ff8a80; --cng-error-bg: #3a2323; --cng-badge-bg: #2d2f33; --cng-badge-ink: #b0b0ac;

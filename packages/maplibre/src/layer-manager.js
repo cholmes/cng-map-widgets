@@ -448,6 +448,17 @@ export class LayerManager {
     return mods;
   }
 
+  /**
+   * The MapLibre layer id the top of the stack sits just below (the first
+   * label layer by default), or `undefined` when the stack is on top of
+   * everything. For something another control draws that belongs just above
+   * the stack: `map.addLayer(layer, manager.anchor())`.
+   * @returns {string|undefined}
+   */
+  anchor() {
+    return this._anchor();
+  }
+
   /** The layer id the top of the stack sits just below; `undefined` means on top of everything. */
   _anchor() {
     if (this._beforeId === null) return undefined;

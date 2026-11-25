@@ -69,6 +69,14 @@ test('add validates, renders, and lists bottom-first under the labels', async ()
   assert.deepEqual(map.order(), ['background', 'water', 'cng-layer-a', 'cng-layer-b', 'labels']);
 });
 
+// Something drawn by another control that belongs just above the stack (the
+// imagery search's footprints) needs to know where the stack ends.
+test('anchor() is the layer the stack sits just below', () => {
+  assert.equal(new LayerManager(createFakeMap(), { renderers: renderers() }).anchor(), 'labels');
+  assert.equal(new LayerManager(createFakeMap(), { renderers: renderers(), beforeId: null }).anchor(), undefined, 'on top of everything');
+  assert.equal(new LayerManager(createFakeMap(), { renderers: renderers(), beforeId: 'nope' }).anchor(), undefined, 'a slot the style does not have');
+});
+
 test('list() and get() return copies, not the live entries', async () => {
   const manager = new LayerManager(createFakeMap(), { renderers: renderers() });
   await manager.add(vector('a'));
