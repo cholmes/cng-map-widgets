@@ -18,3 +18,4 @@ export const VERSION = '0.3.1';
 export { layersFromCollection } from './layers-from-collection.js';
 export { imageryProfile } from './imagery-profile.js';
 export { ImagerySearch, sortScenes } from './imagery-search.js';
+export { CatalogIndex } from './catalog-index.js';

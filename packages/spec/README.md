@@ -393,6 +393,10 @@ a found scene's files could not be worked out (its row carries no assets,
 and its own STAC item could not be read, or names no such asset).
 `context.scene` is the scene's id. Not retryable.
 
+One belongs to its catalog search: `CATALOG_INDEX_INVALID` — the URL is not
+a collections index: a catalog with no parquet link of `rel: "data"`, or a
+parquet file with no `id` or `href` column (`context.missing`). Not retryable.
+
 Two codes belong to `@cngeo/maplibre`'s deck.gl loader
 (`packages/maplibre/src/deck-loader.js`): `DECK_LOAD_FAILED` — the deck.gl
 bundle could not be fetched; retry — and `DECK_MODULES_INVALID` — the deck.gl
