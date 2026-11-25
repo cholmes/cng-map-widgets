@@ -561,6 +561,19 @@ plan.rowGroups;     // { total: 825, selected: 27 }
   `limit`, and read `plan.requests` before deciding it is worth the wait.
 - Cancelling rejects with `CANCELLED`.
 
+### `describeDataset(dataset, options?) => Promise<{ dataset, parts, columns, table }>`
+
+What is worth knowing before the first query, paid for once: the **resolved**
+descriptor (pass it to `queryRows` so a `portolan-collection` is not fetched
+again by every query), how many files it is made of, and — for a single-file
+dataset — its real top-level columns, `[{ name, struct, fields? }]`, read
+from the footer. With `options.cache`, the listing and the footer land in the
+cache, so the first query does not pay for them again.
+
+A partitioned dataset's footers are per part and can be megabytes each, so
+`columns` is `null` there unless `options.schema: true` asks for the first
+part's. `options.schema: false` never reads a footer.
+
 ### `createPlanCache(options?) => PlanCache`
 
 Planning learns which files a dataset is made of and what is in each file's

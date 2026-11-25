@@ -388,6 +388,11 @@ validation (`context.field`), or its id is already in the stack
 kind of layer here; `LAYER_LOAD_FAILED` — a layer's style, tiles or
 collection document could not be fetched; retry.
 
+One belongs to `@cngeo/stac`'s imagery search: `SCENE_ASSETS_UNAVAILABLE` —
+a found scene's files could not be worked out (its row carries no assets,
+and its own STAC item could not be read, or names no such asset).
+`context.scene` is the scene's id. Not retryable.
+
 Two codes belong to `@cngeo/maplibre`'s deck.gl loader
 (`packages/maplibre/src/deck-loader.js`): `DECK_LOAD_FAILED` — the deck.gl
 bundle could not be fetched; retry — and `DECK_MODULES_INVALID` — the deck.gl

@@ -12,9 +12,10 @@
 
 import { CancelledError } from '@cngeo/spec';
 import { createHyparquetEngine } from './engine-hyparquet.js';
-import { finalizeEstimate } from './estimate.js';
+import { finalizeEstimate, listParts, schemaColumns, inferTableFromSchema } from './estimate.js';
+import { resolveDataset } from './dataset-resolve.js';
 import { decodeWkbGeometry } from './wkb-geometry.js';
-import { isFileChanged } from './parquet-io.js';
+import { isFileChanged, openParquetFile } from './parquet-io.js';
 
 /**
  * @typedef {Object} QueryPlan
@@ -121,6 +122,46 @@ export async function queryRows(dataset, area, filter, options = {}) {
     plan = await attempt();
   }
   return { rows, truncated: effective.limit !== undefined && rows.length >= effective.limit, plan };
+}
+
+/**
+ * Everything worth knowing about a dataset before the first query, paid for
+ * once: the resolved descriptor (so a `portolan-collection` is not fetched
+ * again by every query -- pass `dataset` back to `queryRows`), how many files
+ * it is made of, and, for a single file, its REAL columns.
+ *
+ * With `options.cache` the part listing and the footer land in the cache, so
+ * the first query after this does not pay for them again.
+ *
+ * `options.schema` says whether to read a footer for the columns. It defaults
+ * to "only when the dataset is one file": there the footer is the one every
+ * query needs anyway. A partitioned dataset's footers are per part and can be
+ * megabytes each (Sentinel-2: 7.9 MB), so `columns` is `null` there unless
+ * asked for, and then it describes the first part.
+ *
+ * @param {import('./types.js').DatasetDescriptor} dataset
+ * @param {{ cache?: import('./plan-cache.js').PlanCache, fetch?: typeof fetch, signal?: AbortSignal, schema?: boolean }} [options]
+ * @returns {Promise<{
+ *   dataset: import('./types.js').DatasetDescriptor,
+ *   parts: number,
+ *   columns: { name: string, struct: boolean, fields?: string[] }[]|null,
+ *   table: object|null,
+ * }>}
+ */
+export async function describeDataset(dataset, options = {}) {
+  const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const signal = options.signal;
+  const resolved = await resolveDataset(dataset, { fetch: fetchImpl, signal });
+  const { parts } = await listParts(resolved.source, { fetch: fetchImpl, signal, cache: options.cache });
+  const readSchema = options.schema ?? parts.length === 1;
+  if (!readSchema || parts.length === 0) return { dataset: resolved, parts: parts.length, columns: null, table: resolved.table ?? null };
+  const handle = await openParquetFile(parts[0].url, fetchImpl, { signal, cache: options.cache });
+  return {
+    dataset: resolved,
+    parts: parts.length,
+    columns: schemaColumns(handle.metadata),
+    table: resolved.table ?? inferTableFromSchema(handle.metadata),
+  };
 }
 
 /** One read row -> one output row. */

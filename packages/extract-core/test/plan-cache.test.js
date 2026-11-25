@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import './helpers/hyparquet-setup.js';
 import { createPlanCache } from '../src/plan-cache.js';
 import { planRequest } from '../src/estimate.js';
+import { describeDataset } from '../src/query.js';
 import { openParquetFile, readRows } from '../src/parquet-io.js';
 import { buildParquet, rangeFetch } from './helpers/fake-parquet-host.js';
 
@@ -174,4 +175,47 @@ test('evict() and clear() make the next plan read again', async () => {
   h.reset();
   await planRequest(dataset, null, filter, { fetch: h.fetch, cache });
   assert.equal(h.listings(), 1);
+});
+
+// --- describeDataset: what a search widget asks before its first search -----------
+
+test('describeDataset lists a partitioned dataset once and reads no footer', async () => {
+  const h = host();
+  const cache = createPlanCache();
+  const described = await describeDataset(dataset, { fetch: h.fetch, cache });
+  assert.equal(described.parts, 2);
+  assert.equal(described.columns, null, 'no footer was read, so the real columns are not known');
+  assert.equal(described.dataset.source.kind, 'hive');
+  assert.equal(h.listings(), 1);
+  assert.equal(h.footerReads(), 0);
+  // The listing is now in the cache: a plan does not list again.
+  await planRequest(dataset, null, filter, { fetch: h.fetch, cache });
+  assert.equal(h.listings(), 1);
+});
+
+test('describeDataset reads the one footer of a single-file dataset and reports its real columns', async () => {
+  const h = host();
+  const cache = createPlanCache();
+  const single = { spec: 'cng-dataset/1.0', id: 'one', source: { kind: 'parquet', url: PART(2024) } };
+  const described = await describeDataset(single, { fetch: h.fetch, cache });
+  assert.equal(described.parts, 1);
+  assert.deepEqual(described.columns, [
+    { name: 'id', struct: false },
+    { name: 'n', struct: false },
+    { name: 'cat', struct: false },
+    { name: 'geometry', struct: false },
+  ]);
+  assert.equal(described.table.geometryColumn, 'geometry');
+  // ...and that footer is the one a plan then uses.
+  h.reset();
+  await planRequest(single, null, filter, { fetch: h.fetch, cache });
+  assert.deepEqual(h.log, []);
+});
+
+test('describeDataset with schema: false never reads a footer', async () => {
+  const h = host();
+  const single = { spec: 'cng-dataset/1.0', id: 'one', source: { kind: 'parquet', url: PART(2024) } };
+  const described = await describeDataset(single, { fetch: h.fetch, cache: createPlanCache(), schema: false });
+  assert.equal(described.columns, null);
+  assert.deepEqual(h.log, []);
 });

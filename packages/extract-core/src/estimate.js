@@ -56,11 +56,28 @@ function topLevelSchemaColumns(schema) {
     }
     return size;
   }
+  /** Names of the direct children of the group at `schema[index]`. */
+  function childNames(index) {
+    const names = [];
+    let at = index + 1;
+    for (let seen = 0; seen < (schema[index].num_children ?? 0); seen++) {
+      names.push(schema[at].name);
+      at += subtreeSize(at);
+    }
+    return names;
+  }
   const out = [];
   let i = 1; // schema[0] is the synthetic root
   while (i < schema.length) {
     const el = schema[i];
-    out.push({ name: el.name, isStruct: (el.num_children ?? 0) > 0 });
+    // A LIST or MAP is a group too (`num_children > 0`), but not a struct:
+    // its one child is the repeated wrapper, not a field.
+    const isGroup = (el.num_children ?? 0) > 0;
+    // `isStruct` keeps its long-standing meaning here ("any group"), which
+    // the covering inference relies on; `isPlainStruct` is the strict one.
+    const container = (t) => t === 'LIST' || t === 'MAP' || t === 'MAP_KEY_VALUE';
+    const isPlainStruct = isGroup && !container(el.converted_type) && !container(el.logical_type?.type);
+    out.push({ name: el.name, isStruct: isGroup, isPlainStruct, fields: isPlainStruct ? childNames(i) : [] });
     i += subtreeSize(i);
   }
   return out;
@@ -120,6 +137,39 @@ export function inferTableFromSchema(metadata) {
  * @param {import('./types.js').FilterSpec} filter
  * @param {import('./types.js').DownloadCoreOptions} options
  */
+/**
+ * The files a RESOLVED source is made of, and what finding that out cost.
+ *
+ * With a `cache` the listing is shared and kept (plan-cache.js). It is then
+ * loaded without the caller's signal, so a superseded search still leaves it
+ * for the next one, and `requests` counts it only for the call that paid.
+ * @param {any} src A resolved `DatasetDescriptor.source` (never `portolan-collection`).
+ * @param {{ fetch: typeof fetch, signal?: AbortSignal, cache?: import('./plan-cache.js').PlanCache }} options
+ * @returns {Promise<{ parts: import('./types.js').DatasetPart[], requests: number }>}
+ */
+export async function listParts(src, options) {
+  if (src.kind === 'parquet') return { parts: [{ url: src.url }], requests: 0 };
+  if (src.kind === 'parquet-set') return { parts: src.parts ?? src.urls.map((url) => ({ url })), requests: 0 };
+  if (!options.cache) return enumeratePartitions(src, { fetch: options.fetch, signal: options.signal });
+  let listedHere = false;
+  const shared = options.cache.parts(partListingKey(src), () => {
+    listedHere = true;
+    return enumeratePartitions(src, { fetch: options.fetch });
+  });
+  const en = await raceAbort(shared, options.signal, "listing the dataset's parts");
+  return { parts: en.parts, requests: listedHere ? en.requests : 0 };
+}
+
+/**
+ * A file's real top-level columns, from its footer. `struct` columns carry
+ * the names of their direct fields.
+ * @param {{ schema: readonly { name: string, num_children?: number }[] }} metadata
+ * @returns {{ name: string, struct: boolean, fields?: string[] }[]}
+ */
+export function schemaColumns(metadata) {
+  return topLevelSchemaColumns(metadata.schema).map((c) => ({ name: c.name, struct: c.isPlainStruct, ...(c.isPlainStruct ? { fields: c.fields } : {}) }));
+}
+
 export async function planRequest(dataset, area, filter, options = {}) {
   const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
   const signal = options.signal;
@@ -144,30 +194,9 @@ export async function planRequest(dataset, area, filter, options = {}) {
   }
 
   // --- partition / part enumeration -------------------------------------
-  const src = resolved.source;
-  /** @type {import('./types.js').DatasetPart[]} */
-  let parts;
-  if (src.kind === 'parquet') {
-    parts = [{ url: src.url }];
-  } else if (src.kind === 'parquet-set') {
-    parts = src.parts ?? src.urls.map((url) => ({ url }));
-  } else if (options.cache) {
-    // A listing is shared and kept (plan-cache.js). It is loaded without this
-    // call's signal so a superseded search still leaves it for the next one;
-    // `requests` counts it only for the plan that actually paid.
-    let listedHere = false;
-    const shared = options.cache.parts(partListingKey(src), () => {
-      listedHere = true;
-      return enumeratePartitions(src, { fetch: fetchImpl });
-    });
-    const en = await raceAbort(shared, signal, "listing the dataset's parts");
-    parts = en.parts;
-    if (listedHere) requests += en.requests;
-  } else {
-    const en = await enumeratePartitions(src, { fetch: fetchImpl, signal });
-    parts = en.parts;
-    requests += en.requests;
-  }
+  const listing = await listParts(resolved.source, { fetch: fetchImpl, signal, cache: options.cache });
+  const parts = listing.parts;
+  requests += listing.requests;
 
   const areaBBoxes = area ? area.bboxes : null;
   const { selected: selectedParts, stages: partStages } = partitionPruneCascade(
