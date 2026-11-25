@@ -11,10 +11,10 @@
 
 <!--
   The @cngeo packages are plain ESM with no build step, so an import map is
-  all the wiring there is. Nothing is on npm yet, so these point at this
-  repo's own packages/ directory. When the packages publish, this block is
-  the ONLY thing that changes -- swap each line for
-  https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.1.0/src/index.js
+  all the wiring there is. These point at this repo's own packages/
+  directory. From npm instead, this block is the ONLY thing that changes --
+  swap each line for
+  https://cdn.jsdelivr.net/npm/@cngeo/<name>@<version>/src/index.js
   and the module code below is untouched.
 
   hyparquet is NOT in this map: @cngeo/geocoder-core imports it itself from

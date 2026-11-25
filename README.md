@@ -43,13 +43,15 @@ ESM with JSDoc; an import map is the entire setup.
 The seam that makes this composable is one plain JSON object, the
 [`Area`](packages/spec/README.md#the-area). The geocoder emits one, the upload
 widget emits one, a map draw tool could emit one, and the download widget
-consumes one. Nothing else couples.
+consumes one. The widgets that show data have a second one, the
+[`LayerSpec`](packages/spec/README.md#layers): how to draw one thing, as plain
+JSON. Nothing else couples.
 
-> **Status: experimental.** Nothing is published to npm yet. The APIs work and
-> are verified against live data, but they are not frozen, and this is a
-> research repo graduating toward a public widgets library. See
-> [Installing](#installing) for how to use it before it reaches npm, and
-> [Status](#status) and [Known issues](#known-issues) before depending on it.
+> **Status: experimental.** The packages are on npm as `@cngeo/*`. The APIs
+> work and are verified against live data, but they are not frozen, and this
+> is a research repo graduating toward a public widgets library. See
+> [Installing](#installing), and [Status](#status) and
+> [Known issues](#known-issues) before depending on it.
 
 ---
 
@@ -75,10 +77,9 @@ renders the attribution line, with zero console errors.
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
-<!-- Plain ESM, no bundler. Nothing is on npm yet, so these point at this
-     repo's own packages/. When they publish, this block is the only thing
-     that changes: swap each line for
-     https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.4.0/src/index.js -->
+<!-- Plain ESM, no bundler. These point at this repo's own packages/. From
+     npm instead, this block is the only thing that changes: swap each line
+     for https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.4.0/src/index.js -->
 <script type="importmap">
 {
   "imports": {
@@ -145,7 +146,7 @@ range read into a full download. `serve.py` implements real partial content.
 
 ## Installing
 
-Nothing is on npm yet. Three ways to use it today, best first.
+Three ways, best first for a page with no build step.
 
 ### 1. In a browser, with nothing installed
 
@@ -167,12 +168,19 @@ build:
     "@cngeo/upload-core":     "https://cholmes.github.io/cng-map-widgets/packages/upload-core/src/index.js",
     "@cngeo/extract-core":   "https://cholmes.github.io/cng-map-widgets/packages/extract-core/src/index.js",
     "@cngeo/raster-core":     "https://cholmes.github.io/cng-map-widgets/packages/raster-core/src/index.js",
+    "@cngeo/stac":            "https://cholmes.github.io/cng-map-widgets/packages/stac/src/index.js",
+    "@cngeo/timeline":        "https://cholmes.github.io/cng-map-widgets/packages/timeline/src/index.js",
     "@cngeo/maplibre":        "https://cholmes.github.io/cng-map-widgets/packages/maplibre/src/index.js",
     "@cngeo/openlayers":      "https://cholmes.github.io/cng-map-widgets/packages/openlayers/src/index.js"
   }
 }
 </script>
 ```
+
+For the widgets that show data: `@cngeo/stac` is a line on a page that
+imports it (and it needs `@cngeo/extract-core`); `@cngeo/timeline` is loaded
+by `@cngeo/maplibre` the first time a timeline layer is added, so a page with
+a timeline needs its line and fails *then*, not at load, without it.
 
 Do **not** add `hyparquet` to that map. The packages `import()` it themselves
 from pinned, exact-version CDN URLs (`src/cdn.js` in each).
@@ -189,15 +197,23 @@ tag — same files, reproducible:
 https://cdn.jsdelivr.net/gh/cholmes/cng-map-widgets@v0.4.0/packages/geocoder-core/src/index.js
 ```
 
-### 3. In Node, or inside a bundler — worse, and worth saying so
+or the npm release, by the same CDN:
 
-There is no good path here until this is published. **`npm i` cannot install a
-subdirectory of a git repo**, so `npm i github:cholmes/cng-map-widgets` cannot
-give you `@cngeo/geocoder-core`; the repo is a workspace monorepo and its
-packages are not separately fetchable. Your options are to clone and
-`npm link` the packages you need, or to vendor `packages/` into your tree.
+```
+https://cdn.jsdelivr.net/npm/@cngeo/geocoder-core@0.4.0/src/index.js
+```
 
-Either way, inject hyparquet once, before the first `load()`/`estimate()` —
+### 3. In Node, or inside a bundler
+
+```bash
+npm i @cngeo/geocoder-core @cngeo/extract-core     # and whichever others you use
+```
+
+(`@cngeo/stac` and `@cngeo/timeline` are new in 0.4.0. `npm i
+github:cholmes/cng-map-widgets` does **not** work: npm cannot install a
+subdirectory of a git repository, and this one is a workspace monorepo.)
+
+Inject hyparquet once, before the first `load()`/`estimate()` —
 Node has no network imports, and inside a bundler `import(CDN.hyparquet)` is a
 runtime-computed specifier no bundler can rewrite, so a host app that already
 has hyparquet would otherwise run a second copy off the network:
@@ -284,12 +300,12 @@ Three ideas carry the design:
 
 | package | what it does | size (gz, comments stripped) |
 |---|---|---|
-| [`@cngeo/spec`](packages/spec/README.md) | The `Area` contract, the `CngError` taxonomy, and pure helpers: bbox + antimeridian split, Visvalingam simplify (sync + chunked async), WKB → GeoJSON, name normalization. **No I/O, no dependencies.** | 6.2 KiB |
-| [`@cngeo/geocoder-core`](packages/geocoder-core/README.md) | Manifest + index load (full or HTTP-range), prefix search, ranking with result diversity, geometry resolution → `Area`. No DOM. | 11.0 KiB |
+| [`@cngeo/spec`](packages/spec/README.md) | The `Area` contract, the `CngError` taxonomy, and pure helpers: bbox + antimeridian split, Visvalingam simplify (sync + chunked async), WKB → GeoJSON, name normalization. **No I/O, no dependencies.** | 7.7 KiB |
+| [`@cngeo/geocoder-core`](packages/geocoder-core/README.md) | Manifest + index load (full or HTTP-range), prefix search, ranking with result diversity, geometry resolution → `Area`. No DOM. | 16.1 KiB |
 | [`@cngeo/upload-core`](packages/upload-core/README.md) | GeoJSON file/drop/paste → the same `Area`, with every repair reported. | 4.3 KiB |
-| [`@cngeo/extract-core`](packages/extract-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 19.8 KiB |
+| [`@cngeo/extract-core`](packages/extract-core/README.md) | Collection resolution, the metadata-only pruning cascade, estimates with a ceiling, streaming sinks, `geojson` + `geoparquet` writers. | 41.1 KiB |
 | [`@cngeo/maplibre`](packages/maplibre/README.md) | MapLibre adapter: search combobox control, `Area` outline layer, draw and edit tools, viewport provider, antimeridian-aware fitBounds — and the widgets that show data: `LayerManager` and its panel, the imagery-search, catalog-search and timeline controls, and the renderers behind them. | 60.3 KiB, + a 0.43 MiB (gz) deck.gl bundle the first time a COG or a timeline is drawn |
-| [`@cngeo/openlayers`](packages/openlayers/README.md) | The geocoder control, outline layer and fit in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. (The 0.4.0 widgets are MapLibre only.) | 5.1 KiB |
+| [`@cngeo/openlayers`](packages/openlayers/README.md) | The geocoder control, outline layer and fit in OpenLayers, plus the EPSG:4326 ⇄ view-projection bridge. (The 0.4.0 widgets are MapLibre only.) | 10.6 KiB |
 | [`@cngeo/stac`](packages/stac/README.md) | STAC for the map, headless: a collection → layer specs; imagery search over STAC-GeoParquet; search of a `collections.parquet` index; timeline chunks from a collection's items. | 15.5 KiB |
 | [`@cngeo/timeline`](packages/timeline/README.md) | A timeline over chunked data, with no map library: bucket keys and axis arithmetic, the rules for which chunks a view needs, the orchestrator, a playback clock and the canvas track. Any chunk format plugs in. | 16.3 KiB |
 
@@ -309,13 +325,14 @@ And one package that is not about vectors at all:
 
 | package | what it does | size |
 |---|---|---|
-| [`@cngeo/raster-core`](packages/raster-core/README.md) | Clip a window out of a remote Cloud-Optimized GeoTIFF in the browser, band-subset it from STAC metadata, and save a valid GeoTIFF — windowed range reads, an exact pre-download size estimate, a memory ceiling. | 11.8 KiB |
+| [`@cngeo/raster-core`](packages/raster-core/README.md) | Clip a window out of a remote Cloud-Optimized GeoTIFF in the browser, band-subset it from STAC metadata, and save a valid GeoTIFF — windowed range reads, an exact pre-download size estimate, a memory ceiling. | 11.6 KiB |
 
-Sizes are `cat src/*.js | gzip -9` with comments stripped — the honest stand-in
-for the minified build that does not exist yet. Every core package is inside
-its
-[design-doc §4.5 budget](docs/design/widgets-architecture.md#45-bundle-weight-budget).
-Add `hyparquet` (46.9 KiB gz) and `hyparquet-compressors` (69.1 KiB as
+Sizes are every `.js` file under `src/`, concatenated, comments stripped,
+`gzip -9` — the honest stand-in for the minified build that does not exist
+yet — measured 2026-11-25. Only `spec` and `upload-core` are still inside the
+[design-doc §4.5 budgets](docs/design/widgets-architecture.md#45-bundle-weight-budget),
+which were set before most of this was written; the amendment there has the
+comparison. Add `hyparquet` (46.9 KiB gz) and `hyparquet-compressors` (69.1 KiB as
 fetched) for anything that reads parquet.
 
 Each package's own README is the API reference for it. Any further directory
@@ -473,7 +490,9 @@ Added in 0.4.0, verified against live data on 2026-11-25 (MapLibre only):
 - **Imagery search** — Sentinel-2, NAIP and OpenAerialMap through one
   profile and one search; scenes drawn from their COGs.
 - **Catalog search** — the Portolan registry's `collections.parquet`
-  (6,941 collections): text with typo tolerance, area, time, licence, kind.
+  (6,941 collections): text with typo tolerance, area, time, licence. (The
+  filter by kind needs a `render` column, which the live registry does not
+  have yet; it is verified against a locally built index.)
 - **Timeline** — yearly FIRMS chunks plus a rolling week and a monthly
   overview, live; monthly, weekly and mixed chunk sets in unit tests. PMTiles
   is the one chunk format built; the interface takes others.

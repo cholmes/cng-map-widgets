@@ -83,10 +83,11 @@ lines: like hyparquet, each loads from a pinned URL the first time it is
 needed (deck.gl from a bundle shipped inside `@cngeo/maplibre`).
 
 Do **not** add `hyparquet` to that map. The packages `import()` it themselves
-from pinned absolute CDN URLs (`src/cdn.js` in each). Nothing is on npm yet;
-when it is, each line becomes
-`https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.4.0/src/index.js` and no module
-code changes.
+from pinned absolute CDN URLs (`src/cdn.js` in each). The packages are on
+npm too, so each line can instead be
+`https://cdn.jsdelivr.net/npm/@cngeo/<name>@0.4.0/src/index.js` with no
+module code changed (`@cngeo/stac` and `@cngeo/timeline` from 0.4.0; check
+`npm view @cngeo/<name> version` for what is released).
 
 **Without a clone**, swap the relative paths for the published site — the
 packages are static files, so this works from any page anywhere:
@@ -143,10 +144,10 @@ import MiniSearch from 'minisearch';                       // 7.2.0
 import { setMinisearchModules } from '@cngeo/stac';
 setMinisearchModules({ MiniSearch });                      // catalog search (recipe 8)
 
-// In a browser bundle, from @cngeo/maplibre:
+// In a browser bundle, from @cngeo/maplibre (each exercised by that package's unit tests):
 //   setDeckModules(deckStack)                 deck.gl 9.4.2 + deck.gl-raster, ONE copy on the page
 //   setPmtilesModules(pmtiles)                pmtiles 4.5.0
-//   setLayerControlModules(layerControl)      maplibre-gl-layer-control
+//   setLayerControlModules({ LayerControl })  maplibre-gl-layer-control 0.18.3; its stylesheet is then yours to load
 //   setTimelineModules(await import('@cngeo/timeline'))
 ```
 
@@ -688,7 +689,9 @@ records the assumption), `UPLOAD_TOO_LARGE`, `UPLOAD_UNSUPPORTED_FORMAT`,
 Four widgets, each a headless half you can run anywhere and a MapLibre
 control that drives it. The headless halves below are executed by
 `node docs/verify-snippets.mjs widgets`; a control needs a browser, and is
-verified by the `examples/*/verify.mjs` named beside it.
+driven by the `examples/*/verify.mjs` named beside it (the manager methods
+shown with it are covered by `@cngeo/maplibre`'s unit tests, on a stand-in
+map).
 
 **Add every control after the map's `load` event**, and give them all the
 **same `LayerManager`**: it is the one list of what is on the map.
@@ -737,8 +740,9 @@ manager.attribution();   // every credit owed for what is shown
 
 Hard rules:
 
-- **`baseUrl` is not optional in practice.** Without it relative asset hrefs
-  stay relative and nothing loads.
+- **`baseUrl` is required.** There is nothing else to resolve a relative
+  asset href against, so without it `layersFromCollection` (and
+  `imageryProfile`) throw `LAYER_INVALID` with `context.field: 'baseUrl'`.
 - `add()` rejects with a coded error and, for a load failure
   (`LAYER_LOAD_FAILED`), **leaves the layer in the list** with
   `status: 'error'`. Read `list()`, do not assume.
@@ -782,7 +786,7 @@ In a browser (`examples/imagery-search/verify.mjs`, per collection):
 ```js
 import { LayerManager, ImagerySearchControl } from '@cngeo/maplibre';
 map.addControl(new ImagerySearchControl({ search, manager }), 'top-left');
-// area (the map view, or a drawn one), dates, the profile's filters, cards with
+// area (the map view, or one you hand it: `area: () => Area`), dates, the profile's filters, cards with
 // thumbnails, footprints on the map, and "Add to map" -> manager.add(layerSpecFor(scene))
 ```
 
@@ -794,10 +798,13 @@ Hard rules:
 - **A time filter means "overlaps the window"**, per row, as
   `start_datetime ?? datetime` … `end_datetime ?? datetime`. OpenAerialMap
   items have no `datetime` at all, and are found.
-- The first search of a collection pays for its footers (Sentinel-2: about
-  8 MB, several seconds, more on a slow day — the snippet above measured
-  between 9 and 36 s cold). They are cached for the life of the
-  `ImagerySearch`; call `search.warm()` when the panel opens.
+- The first search of a collection pays for its part listing and footers
+  (Sentinel-2: about 8 MB, several seconds, more on a slow day — the snippet
+  above has measured between 10 and 36 s cold). Both are kept for ten
+  minutes (`options.maxAgeMs`), so a repeated search pays for row reads
+  only. `search.warm()`, when the panel opens, pays for the listing ahead of
+  time — and for the footer too only when the items are one file (NAIP,
+  OpenAerialMap), not a partitioned set (Sentinel-2).
 - **Do not ask for `assets` in a search of Sentinel-2.** It is a JSON string
   of about 18 KB a row. `layerSpecFor(scene)` finds the one asset it needs.
 - `truncated: true` means `limit` cut the list, not that the search failed.
@@ -827,10 +834,20 @@ source;            // 'render' (read from the index) or 'collection' (its JSON w
 ```
 
 `search()` also takes `area` (an `Area`), `time: { start?, end? }`,
-`license`, `kinds` and `within` (a catalog). Results whose extent *fits* the
-area rank above global ones.
+`license`, `catalog` and `kinds`. Results whose extent *fits* the area rank
+above global ones.
 
-In a browser (`examples/catalog-search/verify.mjs`, 42 checks):
+```js
+const one = facets.catalog[0];                                            // { value, count }
+(await index.search({ text: 'buildings', catalog: one.value })).total;   // === one.count
+```
+
+**An option `search()` does not know is ignored, not refused**: `within:
+'unosat'` returns everything, unfiltered. The names are exactly those above.
+
+In a browser (`examples/catalog-search/verify.mjs`: 21 checks against the
+live registry, and the same 21 again against an index with a `render` column
+when `experiments/e13-render-column/build.mjs` has built one locally):
 
 ```js
 import { LayerManager, LayerControl, CatalogSearchControl, catalogAddProvider } from '@cngeo/maplibre';
@@ -843,8 +860,9 @@ map.addControl(new LayerControl({ manager, addProviders: [catalogAddProvider(cat
 
 Hard rules:
 
-- The index is loaded once, light columns only (never `original`, 56.7 MB of
-  text in a 19 MB file). **A file's size is found with a ranged GET, not
+- The index is loaded once, light columns only: of the registry's 20 MB,
+  about 2 MB is read. Never `original` (each collection's whole JSON: 12.5 MB
+  of the file) or `links`. **A file's size is found with a ranged GET, not
   HEAD**: GitHub Pages, which hosts the registry, answers HEAD with the
   length of the file's gzip encoding, and the footer is then looked for in
   the wrong place. `remoteByteLength()` in `@cngeo/extract-core` is the
@@ -853,9 +871,12 @@ Hard rules:
   true }`. Safe on every keystroke.
 - Typos resolve: `"buildngs"` finds buildings (one edit, on words of six
   letters or more).
-- `resolve()` needs one fetch of the collection's JSON unless the index
-  carries a `render` column. The live registry does not yet
-  (`experiments/e13-render-column/` measures what it would cost: 454 KB).
+- **What a result can be drawn as is known only to an index with a `render`
+  column, and the live registry has none** (`index.hasRender === false`). So
+  there: `results[n].kinds` is `[]`, `facets.kinds` is `[]`, a `kinds` filter
+  matches nothing, and `resolve()` costs one fetch of the collection's JSON.
+  (`experiments/e13-render-column/` measures what the column would cost:
+  454 KB.)
 - Two results can share an `id` across catalogs. `key` is unique; layer ids
   are disambiguated when both are added.
 
@@ -1269,6 +1290,46 @@ The live catalogs publish no `cng:catalog_version` footer key, so
 resolution always re-locates rows by key, never by a cached offset — but do not
 rely on the check catching a rebuilt catalog.
 
+### Pitfalls of the map widgets
+
+Same ordering: the first three give a wrong answer with no error.
+
+**W1. An option a search does not know is ignored.** `CatalogIndex.search({
+within: 'unosat' })` returns every catalog's results; the option is
+`catalog`. Nothing validates the query object, so check a name against
+recipe 8 rather than trusting that no error means it was applied.
+
+**W2. A chunk descriptor that claims more than its file holds shows false
+zeros.** The timeline hatches what is *not loaded*; a day a loaded chunk
+claims and has nothing for is drawn as a real zero. `chunksFromTemplate`'s
+`end` defaults to today, which is right only for a file rebuilt today. Ask
+the file (`describePmtilesChunk`) when in doubt, and do not assume a
+catalog's item dates are current either.
+
+**W3. `kinds` is empty on an index with no `render` column** — the live
+registry — so a `kinds` filter there matches nothing rather than failing.
+Check `index.hasRender` before offering one.
+
+**W4. One deck.gl on the page.** COGs and the timeline draw through a
+deck.gl bundle that `@cngeo/maplibre` loads itself, and deck.gl-raster needs
+exactly one copy of `@deck.gl/core`. A host that already bundles deck.gl
+hands its own in with `setDeckModules()` *before* the first such layer;
+adding deck.gl to the page by another route beside the bundle is the thing
+not to do.
+
+**W5. A timeline needs `@cngeo/timeline` in the import map**, and its
+absence shows when the layer is added, as a failed layer — not at page
+load, and not on a page with no timeline.
+
+**W6. A hidden timeline still loads.** Hiding stops the painting, not the
+fetching: the track is about what is in view, drawn or not. Remove the
+layer to stop the requests.
+
+**W7. `add()` can reject and still leave a layer in the list**
+(`LAYER_LOAD_FAILED`, `status: 'error'`), so the panel can show what failed
+and why. There is no retry: `manager.remove(id)`, then `add()` again. Render
+from `manager.list()`, not from which promises resolved.
+
 ---
 
 ## Error handling
@@ -1293,7 +1354,8 @@ try {
 
 **The `code` is the API. Messages are for humans and may be reworded; codes may
 not.** `retryable` is `true` by default for `INDEX_FETCH_FAILED`,
-`DATASET_UNRESOLVED`, `SINK_PERMISSION_DENIED`, `NETWORK`. Full tables:
+`DATASET_UNRESOLVED`, `SINK_PERMISSION_DENIED`, `NETWORK`,
+`FORMAT_LOAD_FAILED`, `DECK_LOAD_FAILED`, `LAYER_LOAD_FAILED`. Full tables:
 [extract-core](packages/extract-core/README.md#error-codes),
 [upload-core](packages/upload-core/README.md#error-codes),
 [spec](packages/spec/README.md#errors).

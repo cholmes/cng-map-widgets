@@ -1204,8 +1204,9 @@ packages, which are not map widgets.
 | `@cngeo/engine-duckdb` | DuckDB-WASM engine plugin + benchmark harness. Opt-in, heavy. Design call #2: never in core. | `@cngeo/spec`; **peer**: `@duckdb/duckdb-wasm` |
 | `@cngeo/stac` | `stacToDescriptor(stacObject)` — the §2.4 derivation as a standalone function over a plain STAC JSON. Extracted so `portolan-browser` and a future `stac-browser` widget share it. | `@cngeo/spec` |
 
-> **Amendment (2026-11-25, the map widgets, 0.4.0).** Three rows above are
-> not what was built. Full account:
+> **Amendment (2026-11-25, the map widgets, 0.4.0).** Two rows above
+> (`@cngeo/stac`, `@cngeo/maplibre`) are not what was built, and one package
+> is missing from the table. Full account:
 > [`docs/superpowers/specs/2026-11-25-map-widgets-design.md`](../superpowers/specs/2026-11-25-map-widgets-design.md).
 >
 > | package | contents, as built | depends on |
@@ -3867,6 +3868,28 @@ zero-build consumption:
    measured sentinel-2 finding: Chrome serializes concurrent reads of one URL
    behind its cache lock, 2.1 s → 0.4 s for the same eight reads).
 
+> **Amendment (2026-11-25, the map widgets): rules 2 and 4 each have one
+> exception now, and "lint-enforced in CI" was never true** — no workflow has
+> ever run a lint for these rules; they are held by review.
+>
+> - **Rule 2.** `@cngeo/maplibre` does `import('@cngeo/timeline')`
+>   (`timeline-loader.js`), a dynamic import of a bare specifier. The
+>   alternative, a static import, would have made every existing page that
+>   uses `@cngeo/maplibre` add `@cngeo/timeline` to its import map or stop
+>   loading. The rule's reason still applies and is paid for knowingly: with
+>   no import-map line the import throws — when the first timeline layer is
+>   added, as a failed layer whose message is the browser's own and names the
+>   specifier. A bundled host
+>   injects the module instead (`setTimelineModules`). This is the one such
+>   import; third-party code is still never imported by bare specifier.
+> - **Rule 4.** `deck-loader.js` resolves the deck.gl bundle with
+>   `new URL('../vendor/deck-stack.js', import.meta.url)`. The rule
+>   anticipated the cost exactly — "the path becomes part of the public
+>   contract" — and it has: `packages/maplibre/vendor/deck-stack.js` is
+>   packed, published and served beside `src/`, and must stay there. It is
+>   that or a consumer-side import-map entry for something a consumer never
+>   names, which rule 2 exists to prevent.
+
 ### 4.5 Bundle-weight budget
 
 Targets for our own code; measured values for existing dependencies. **"min+gz"
@@ -3886,14 +3909,18 @@ is what crosses the wire.** Our packages are budgets to hold, not measurements
 | `@cngeo/openlayers` | — | **≤ 9 KB** | budget | `ol` is a peer, not counted |
 | `@cngeo/stac` | — | **≤ 6 KB** | budget | pure JSON traversal |
 
-> **Amendment (2026-11-25, the map widgets).** Three budgets above no longer
-> describe these packages; these are measurements (`src/**/*.js`
-> concatenated, comments stripped, `gzip -9`, 2026-11-25):
+> **Amendment (2026-11-25, the map widgets).** The budgets above were set
+> before most of the code was written, and by 0.4.0 only `spec` (7.7 KiB of
+> ≤ 10) and `upload-core` (4.3 of ≤ 10) are inside theirs. Measured the same
+> way for all (`src/**/*.js` concatenated, comments stripped, `gzip -9`,
+> 2026-11-25): `geocoder-core` 16.1 KiB (budget 15), `extract-core` 41.1
+> (30), `openlayers` 10.6 (9) — those three had drifted before the widgets —
+> and, from the widgets:
 >
 > | artifact | gz | replaces | why |
 > |---|---|---|---|
 > | `@cngeo/stac` | **15.5 KiB** | "≤ 6 KB, pure JSON traversal" | It is four things, two of which read parquet (through `extract-core`). The 6 KB charter was for one function. |
-> | `@cngeo/timeline` | **16.3 KiB** | — (new) | Includes the canvas track, about half of it. |
+> | `@cngeo/timeline` | **16.3 KiB** | — (new) | Includes the canvas track, about a third of it. |
 > | `@cngeo/maplibre` | **60.3 KiB** | "≤ 8 KB" | Five controls, a layer manager and four renderers, where there was one control. A page that uses only `GeocoderControl` still downloads all of it: the price of fewer packages, accepted (§3.1 amendment). |
 > | deck.gl bundle (`packages/maplibre/vendor/deck-stack.js`) | **0.43 MiB** (1.43 MiB raw) | — | deck.gl core, layers, `MVTLayer`, `DataFilterExtension`, the MapLibre overlay, deck.gl-raster and its decode worker, as ONE module. Fetched the first time a COG or a timeline is drawn; never by a page that draws neither. |
 >

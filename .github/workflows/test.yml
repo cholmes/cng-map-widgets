@@ -1,6 +1,6 @@
-# CI runs ONLY the offline unit test suite (`npm test`, 711/711 passing
-# node --test runs across the workspaces). It deliberately does NOT run the
-# repo's live-data verification scripts:
+# CI runs the unit test suite (`npm test`: 1,400+ tests across the
+# workspaces) and one offline build check (the deck.gl bundle, below). It
+# deliberately does NOT run the repo's live-data verification scripts:
 #   - docs/verify-snippets.mjs
 #   - examples/*/verify.mjs
 #
@@ -12,6 +12,13 @@
 # code. They are documented in CONTRIBUTING.md as the local verification
 # path -- run them by hand (or in a scheduled/manual job) before a release,
 # not on every push/PR.
+#
+# One honest exception, not by design: two integration tests inside
+# `npm test` (packages/extract-core/test/integration.test.js and
+# packages/format-gpkg/test/gpkg-integration.test.js) do read source.coop,
+# and have failed on a developer's machine on that host's HTTP 520s. Re-run
+# before believing a failure in either. They would be better moved out of
+# `npm test`; nobody has yet.
 #
 # If you're a contributor (human or agent) looking at this and thinking
 # "we should run those in CI too" -- please don't, for the reason above.

@@ -19,14 +19,30 @@
 # days, so add the 13 entries just before a release, not in advance.
 #
 # npm cannot attach a trusted publisher to a package that does not exist, so
-# a package's FIRST version goes up with a short-lived granular token. Later
-# versions use this workflow. As of 0.4.0 that is two packages:
-# @cngeo/timeline and @cngeo/stac. Publish those two by hand first
-# (`npm publish --access public` in packages/timeline, then packages/stac),
-# then run this workflow straight away: it skips what is already on the
-# registry and publishes the rest. In between, those two name a version of
-# @cngeo/spec that is not on the registry yet and cannot be installed, so do
-# the two steps back to back. Then add their trusted publishers.
+# a package's FIRST version cannot go up from here. As of 0.4.0 that is two
+# of the thirteen: @cngeo/timeline and @cngeo/stac. For that release:
+#
+#   1. Add the trusted publisher for the eleven packages that exist.
+#   2. Run this workflow. It publishes spec, geocoder-core, upload-core and
+#      extract-core, then stops at `timeline`, which it cannot publish.
+#      Nothing is left broken: the four that went up do not depend on the
+#      two that did not.
+#   3. Publish the two by hand, with a short-lived granular token:
+#      `npm publish --access public` in packages/timeline, then packages/stac.
+#      Everything they depend on (@cngeo/spec and, for stac,
+#      @cngeo/extract-core, at this version) is on the registry by now.
+#   4. Add the trusted publisher for those two, and run this workflow again.
+#      It skips what is there and publishes the rest, maplibre among them.
+#
+# Do NOT publish the two by hand FIRST. They would be `latest` on npm while
+# naming versions of @cngeo/spec and @cngeo/extract-core that do not exist
+# yet -- uninstallable -- until this workflow got through its gates, and
+# those gates read live data from four hosts: one HTTP 520 and the two stay
+# broken until someone re-runs it.
+#
+# (Another way: publish a placeholder version of a new package first --
+# @cngeo/spec has a `0.0.0-stage` on the registry from doing so -- attach its
+# publisher, and let this workflow publish all thirteen in order.)
 #
 # The run publishes nothing when a version is already on the registry, so a
 # re-run after a partial failure is safe.

@@ -18,7 +18,7 @@ Three things live here:
 `geocoder-core` and `extract-core` from a CDN must get **one** `Area`
 implementation, not two. See [Why one copy matters](#why-one-copy-matters).
 
-- **Status:** experimental, pre-npm. See the [root README](../../README.md).
+- **Status:** experimental; on npm. See the [root README](../../README.md).
 - **Normative design:** [`docs/design/widgets-architecture.md`](../../docs/design/widgets-architecture.md) §1 (`Area`), §2 (descriptor/filter), §3.5 (errors).
 - **License:** MIT (code). This package carries no data and imposes no data license.
 
@@ -26,7 +26,7 @@ implementation, not two. See [Why one copy matters](#why-one-copy-matters).
 
 ## Install / import
 
-Nothing is published to npm yet. Today you point an import map at the source:
+In a page with no build step, point an import map at the source:
 
 ```html
 <script type="importmap">
@@ -43,7 +43,7 @@ In Node or a bundler, with this repo as a workspace:
 import { buildArea, normalizeName } from '@cngeo/spec';
 ```
 
-**Coming:** `npm i @cngeo/spec`, and a CDN form —
+From npm: `npm i @cngeo/spec`, or the CDN form —
 `import { buildArea } from 'https://cdn.jsdelivr.net/npm/@cngeo/spec@0.4.0/src/index.js'`.
 The module code never changes between those; only the specifier does.
 

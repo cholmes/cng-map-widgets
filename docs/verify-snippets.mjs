@@ -1386,6 +1386,9 @@ async function groupWidgets() {
     assert.deepEqual(times, [...times].sort().reverse(), 'newest first');
     assert.ok(profile.filters.some((f) => f.column === 'eo:cloud_cover'), 'the filters a panel can offer');
 
+    // Without baseUrl there is nothing to resolve a relative href against: it is refused.
+    assert.throws(() => imageryProfile(collection), (err) => err.code === 'LAYER_INVALID');
+
     const layer = await search.layerSpecFor(scenes[0]);
     assert.equal(layer.kind, 'cog');
     assert.match(layer.source.url, /^https?:\/\//);
@@ -1408,7 +1411,20 @@ async function groupWidgets() {
     const typo = await index.search({ text: 'buildngs', limit: 5 });
     assert.ok(typo.results.length > 0, 'one edit away');
 
-    const drawableResult = results.find((r) => r.kinds?.includes('pmtiles-vector')) ?? results[0];
+    // Narrowed to one catalog. The option is `catalog`: an option the search
+    // does not know (`within`, say) is ignored, and everything comes back.
+    const one = facets.catalog[0];
+    const narrowed = await index.search({ text: 'buildings', catalog: one.value });
+    assert.ok(narrowed.total > 0 && narrowed.total < total, `${narrowed.total} of ${total} are in ${one.value}`);
+    assert.equal(narrowed.total, one.count, 'the facet said how many');
+
+    // What each result can be drawn AS is known only to an index with a
+    // `render` column. The live registry has none: no kinds, so no kind filter.
+    assert.equal(index.hasRender, false);
+    assert.deepEqual(results[0].kinds, []);
+    assert.deepEqual(facets.kinds, []);
+
+    const drawableResult = results[0];
     const { drawable, undrawable, source } = await index.resolve(drawableResult);
     assert.ok(Array.isArray(drawable) && Array.isArray(undrawable));
     assert.ok(source === 'collection' || source === 'render');
@@ -1457,7 +1473,7 @@ async function groupWidgets() {
       { id: '2000', start: '20001101', unit: 'day', format: 'pmtiles' },
     );
     assert.match(chunks[0].url, /^https:\/\/.+\/year=2000\/fire-2000\.pmtiles$/);
-    return `${chunks.length} chunks, ${chunks[0].start}..${chunks.at(-1).end} (a chunk's end is what its ITEM says: see the pitfall)`;
+    return `${chunks.length} chunks, ${chunks[0].start}..${chunks.at(-1).end} (a chunk's end is what its ITEM says, which can lag its file)`;
   });
 
   await snippet('AGENTS.md', 'recipe 9: a chunk format of your own drives the same orchestrator', async () => {

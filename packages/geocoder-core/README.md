@@ -17,7 +17,7 @@ const area = await geocoder.select(results[0]);          // -> an Area
 The `Area` it returns is the same object `@cngeo/upload-core` produces and
 `@cngeo/extract-core` consumes. That is the whole point.
 
-- **Status:** experimental, pre-npm. See the [root README](../../README.md).
+- **Status:** experimental; on npm. See the [root README](../../README.md).
 - **Normative design:** [`docs/design/widgets-architecture.md`](../../docs/design/widgets-architecture.md) §3.2 (API), §6 (index file interface).
 - **UI:** this package has none. Use [`@cngeo/maplibre`](../maplibre/README.md) or [`@cngeo/openlayers`](../openlayers/README.md).
 - **License:** MIT (code). **The data has its own license** — the manifest tells you which, and `Area.provenance.attribution` carries what you must display.
@@ -26,7 +26,7 @@ The `Area` it returns is the same object `@cngeo/upload-core` produces and
 
 ## Install / import
 
-Nothing is published to npm yet. Point an import map at the source:
+In a page with no build step, point an import map at the source:
 
 ```html
 <script type="importmap">
@@ -47,7 +47,7 @@ pinned, exact CDN URL (`src/cdn.js`). In Node or inside a bundler that already
 has hyparquet, hand yours in instead — see
 [Node and bundlers](#node-and-bundlers).
 
-**Coming:** `npm i @cngeo/geocoder-core`, plus a CDN form
+From npm: `npm i @cngeo/geocoder-core`, or the CDN form
 (`https://cdn.jsdelivr.net/npm/@cngeo/geocoder-core@0.4.0/src/index.js`).
 
 ## Size

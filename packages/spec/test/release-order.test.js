@@ -16,13 +16,25 @@ const dirs = readdirSync(packagesDir).filter((d) => existsSync(path.join(package
 const manifests = new Map(dirs.map((d) => [d, JSON.parse(readFileSync(path.join(packagesDir, d, 'package.json'), 'utf8'))]));
 const dirOf = new Map([...manifests].map(([dir, m]) => [m.name, dir]));
 
+/** release.yml with its YAML comments removed: a list in a comment is not the list that runs. */
+function workflowCode() {
+  return readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8')
+    .split('\n')
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n');
+}
+
 /** The `order="…"` list in release.yml: package directories, in publish order. */
 function publishOrder() {
-  const workflow = readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8');
-  const match = /order="([^"]+)"/.exec(workflow);
-  assert.ok(match, 'release.yml has an order="…" list');
-  return match[1].split(/\s+/).filter(Boolean);
+  const code = workflowCode();
+  const lists = [...code.matchAll(/order="([^"]+)"/g)];
+  assert.equal(lists.length, 1, 'release.yml assigns order="…" exactly once, outside a comment');
+  assert.match(code, /for pkg in \$order; do/, 'and the publish loop is over that list');
+  return lists[0][1].split(/\s+/).filter(Boolean);
 }
+
+const EDGES = ['dependencies', 'peerDependencies', 'optionalDependencies'];
+const PINNED = [...EDGES, 'devDependencies'];
 
 test('every package is published, once', () => {
   const order = publishOrder();
@@ -33,7 +45,7 @@ test('every package is published, once', () => {
 test('a package is published after every @cngeo package it depends on', () => {
   const order = publishOrder();
   for (const [dir, manifest] of manifests) {
-    for (const name of Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies })) {
+    for (const name of EDGES.flatMap((kind) => Object.keys(manifest[kind] ?? {}))) {
       if (!name.startsWith('@cngeo/')) continue;
       const needs = dirOf.get(name);
       assert.ok(needs, `${manifest.name} depends on ${name}, which is not a package here`);
@@ -54,15 +66,20 @@ test('one version across the packages, their pins on each other, and their VERSI
   assert.equal(versions.size, 1, `one version, found ${[...versions].join(', ')}`);
   const [version] = versions;
   for (const [dir, manifest] of manifests) {
-    for (const [name, pin] of Object.entries({ ...manifest.dependencies })) {
-      if (name.startsWith('@cngeo/')) assert.equal(pin, version, `${manifest.name} pins ${name} at ${pin}`);
+    // Every pin on a sibling, in whichever section: exact, and this version.
+    for (const kind of PINNED) {
+      for (const [name, pin] of Object.entries(manifest[kind] ?? {})) {
+        if (name.startsWith('@cngeo/')) assert.equal(pin, version, `${manifest.name} ${kind}: ${name} is pinned at ${pin}`);
+      }
     }
-    // Wherever a package states its own version in source.
-    for (const file of ['src/index.js', 'src/geocoder.js']) {
-      const full = path.join(packagesDir, dir, file);
-      if (!existsSync(full)) continue;
-      const said = /export const VERSION = '([^']+)'/.exec(readFileSync(full, 'utf8'));
-      if (said) assert.equal(said[1], version, `${dir}/${file} says VERSION ${said[1]}`);
+    // Every package states its own version in source (design doc 4.4, rule
+    // 5), once, and it is this one. Found wherever under src/ it is declared.
+    const stated = [];
+    for (const file of readdirSync(path.join(packagesDir, dir, 'src')).filter((f) => f.endsWith('.js'))) {
+      const text = readFileSync(path.join(packagesDir, dir, 'src', file), 'utf8');
+      for (const m of text.matchAll(/^export const VERSION = (['"])([^'"]+)\1;/gm)) stated.push({ file, version: m[2] });
     }
+    assert.equal(stated.length, 1, `${dir} declares VERSION exactly once under src/ (found ${stated.length})`);
+    assert.equal(stated[0].version, version, `${dir}/src/${stated[0].file} says VERSION ${stated[0].version}`);
   }
 });

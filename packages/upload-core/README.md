@@ -14,7 +14,7 @@ every single change** so a UI can tell the user what happened to their file.
 const { area, warnings } = await areaFromFile(file);
 ```
 
-- **Status:** experimental, pre-npm. GeoJSON only. See the [root README](../../README.md).
+- **Status:** experimental; on npm. GeoJSON only. See the [root README](../../README.md).
 - **Normative design:** [`docs/design/widgets-architecture.md`](../../docs/design/widgets-architecture.md) §3.3, plus §1.4 (multi-feature) and §1.2 (`AreaRepair`).
 - **License:** MIT (code). No data, no data license.
 

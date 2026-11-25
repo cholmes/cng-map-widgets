@@ -71,7 +71,7 @@
 </p>
 
 <div class="note">
-  <strong>Status: experimental.</strong> Nothing is published to npm yet. The APIs work
+  <strong>Status: experimental.</strong> The packages are on npm as <code>@cngeo/*</code>. The APIs work
   and are verified against live data on every change, but they are not frozen.
   This is place-name and boundary lookup — <em>not</em> address geocoding.
 </div>
@@ -182,7 +182,8 @@ python3 serve.py          <span class="c"># then open http://localhost:8000/exam
 <p>
   The seam that makes these composable is one plain JSON object, the
   <code>Area</code>. The geocoder emits one, the upload widget emits one, a draw tool
-  could emit one, and the download widget consumes one. Nothing else couples.
+  could emit one, and the download widget consumes one. The widgets that show data share a
+  second, the <code>LayerSpec</code>: how to draw one thing, as plain JSON. Nothing else couples.
 </p>
 <table>
   <tr><th>Package</th><th>What it does</th></tr>
@@ -191,7 +192,9 @@ python3 serve.py          <span class="c"># then open http://localhost:8000/exam
   <tr><td><code>@cngeo/upload-core</code></td><td>The same <code>Area</code>, from a dropped GeoJSON file, with repairs reported.</td></tr>
   <tr><td><code>@cngeo/extract-core</code></td><td>Filters a GeoParquet table, STAC collection or hive catalog to an <code>Area</code> and writes a file.</td></tr>
   <tr><td><code>@cngeo/raster-core</code></td><td>Clips a COG to an <code>Area</code>, with band selection and a size estimate.</td></tr>
-  <tr><td><code>@cngeo/maplibre</code>, <code>@cngeo/openlayers</code></td><td>Map adapters: search control, area layer, viewport provider, antimeridian-aware fit.</td></tr>
+  <tr><td><code>@cngeo/maplibre</code>, <code>@cngeo/openlayers</code></td><td>Map adapters: search control, area layer, viewport provider, antimeridian-aware fit. On MapLibre also a layer stack and its panel, and the imagery-search, catalog-search and timeline controls.</td></tr>
+  <tr><td><code>@cngeo/stac</code></td><td>STAC for the map: a collection as layers, imagery search over STAC-GeoParquet, search of a <code>collections.parquet</code> index.</td></tr>
+  <tr><td><code>@cngeo/timeline</code></td><td>A histogram timeline over data published as chunks of time, with no map library.</td></tr>
   <tr><td><code>@cngeo/format-*</code></td><td>Optional output formats — GeoPackage, Shapefile, FlatGeobuf.</td></tr>
 </table>
 

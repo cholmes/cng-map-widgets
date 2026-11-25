@@ -6,6 +6,24 @@ playback clock, and a canvas component. No map library.
 
 Plain ESM + JSDoc. No build step. It imports only `@cngeo/spec`.
 
+## Install / import
+
+```html
+<script type="importmap">
+{
+  "imports": {
+    "@cngeo/spec":      "https://cdn.jsdelivr.net/npm/@cngeo/spec@0.4.0/src/index.js",
+    "@cngeo/timeline":  "https://cdn.jsdelivr.net/npm/@cngeo/timeline@0.4.0/src/index.js"
+  }
+}
+</script>
+```
+
+From npm: `npm i @cngeo/timeline`. On a MapLibre map you do not import it
+yourself: [`@cngeo/maplibre`](../maplibre/README.md) loads it, by this bare
+specifier, the first time a timeline layer is added — so the page's import
+map needs the line above even though no code of yours names it.
+
 Extracted and generalised from
 [firms-catalog](https://github.com/portolan-mirrors/firms-catalog)'s FIRMS
 explorer, whose chunks were calendar years. Here a chunk is any span: a year
